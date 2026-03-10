@@ -1,0 +1,27 @@
+
+### NOTICE
+
+**DSSR-PyMOL Plugins**
+
+Copyright (c) 2026 Eric Chen, Bener Dulger, and Xiang-Jun Lu
+
+This project, **dssr_select**, is a consolidated tool for the selection and visualization of RNA/DNA structural features in PyMOL using DSSR-derived JSON data.
+
+#### **Project History and Coordination**
+
+This project was initiated and coordinated by Xiang-Jun Lu to provide a streamlined, user-friendly interface for the structural biology community. The development followed an iterative, collaborative process involving two primary developers:
+
+- **Bener Dulger**: Developed the foundational structural selection logic and initial JSON parsing framework between December 2025 and February 2026.
+
+- **Eric Chen**: Significantly expanded the structural feature map, optimized selection performance, and developed the comprehensive Qt-based Graphical User Interface (GUI) in February and March 2026.
+
+
+#### **Third-Party Logic and Credits**
+
+This software incorporates functional components and visualization logic from the **'dssr_block'** plugin originally developed by **Thomas Holder (Schrödinger LLC)**.
+
+The original `dssr_block` logic is used to generate schematic rectangular block representations of nucleic acid bases. In accordance with the **BSD 2-Clause License**, the original copyright notice for `dssr_block` is maintained within the source code of this consolidated plugin.
+
+#### **Development Archive**
+
+For educational purposes and to provide a clear picture of the plugin's evolution, the `/archive` directory of this repository contains the incremental versions of the scripts as they were communicated by the developers during the project's timeline.
