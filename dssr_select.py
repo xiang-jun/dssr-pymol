@@ -18,7 +18,7 @@
 
 from pymol import cmd, CmdException
 
-__DSSR_PLUGIN_VERSION__ = 'v1.0.0'
+__DSSR_PLUGIN_VERSION__ = 'v1.0.1'
 
 _hex_color_cache = {}
 selected_features = []
@@ -743,7 +743,7 @@ def _compact_sel_from_residues(residues):
     for c in sorted(by_chain.keys()):
         resis = sorted(by_chain[c], key=_sort_resi_key)
         resi_expr = '+'.join(resis)
-        parts.append('(chain %s and resi %s)' % (c, r))
+        parts.append('(chain %s and resi %s)' % (c, resi_expr))
     return ' or '.join(parts)
 
 def _build_residue_sel_from_dssr(dssr_data, feature, index):
@@ -2226,6 +2226,6 @@ cmd.auto_arg[0].update({'dssr_block': cmd.auto_arg[0]['zoom']})
 cmd.auto_arg[0].update({'dssr_seq': cmd.auto_arg[0]['zoom']})
 
 try:
-    print('Loaded DSSR helper %s' % __DSSR_PLUGIN_VERSION__)
+    print('Loaded DSSR helper %s from: %s' % (__DSSR_PLUGIN_VERSION__, __file__))
 except Exception:
     pass
