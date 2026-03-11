@@ -1,7 +1,3 @@
-Here is the final, comprehensive **README.md** for your repository. It incorporates the synergistic history of the project, the detailed development timeline, installation instructions, and the citation requirements we discussed.
-
----
-
 # dssr_select: RNA/DNA Structural Feature Selection for PyMOL
 
 The **dssr_select** plugin is a powerful tool designed to bridge high-quality structural analysis with 3D visualization. It allows users to leverage [DSSR (Dissecting the Spatial Structure of RNA)](http://x3dna.org/) derived structural features—such as base pairs, stems, hairpins, pseudoknots, and A-minors—directly within [PyMOL](https://pymol.org/).
