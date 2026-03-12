@@ -87,3 +87,10 @@ If you use this plugin in your research, please cite it as follows:
 ### ⚖️ License
 
 This project is licensed under the **BSD 2-Clause License**. See the [LICENSE](./LICENSE) file for the full text. This plugin incorporates components from the `dssr_block` plugin by **Thomas Holder** (c) Schrödinger LLC.
+
+---
+
+### Acknowledgments
+
+* **Funding**: This work is supported by the **NIH R24GM153869** grant on **X3DNA-DSSR**, an NIGMS National Resource for Structural Bioinformatics of Nucleic Acids.
+* **Prior Work**: This plugin incorporates logic from the `dssr_block` plugin by **Thomas Holder** (c) Schrodinger LLC.
