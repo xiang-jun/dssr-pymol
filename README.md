@@ -47,20 +47,19 @@ This plugin is the result of a multi-stage collaborative effort initiated and co
 
 ### 🚀 Installation & Usage
 
-#### Requirements
+#### 1. Requirements
+* **DSSR**: The `x3dna-dssr` executable must be installed and in your system PATH.
+* **PyMOL**: A version of PyMOL that supports `PyMOL.Qt` (standard in most Schrödinger distributions).
 
-1. **DSSR**: The `x3dna-dssr` executable must be installed and in your system PATH.
-2. **PyMOL**: A version of PyMOL that supports `PyMOL.Qt` (standard in most Schrödinger distributions).
+#### 2. Getting Started
+To get the plugin up and running:
 
-## Getting Started
-
-### Installation
 1. **Download**: Save the `dssr_select.py` file from this repository to your computer.
 2. **Install**: In PyMOL, navigate to `Plugin` -> `Plugin Manager`.
 3. **Load**: Select the `Install New Plugin` tab, click `Choose file...`, and select the `dssr_select.py` file you just downloaded.
 4. **Access**: Once installed, a new **DSSR** menu item will appear under the PyMOL `Plugin` menu for easy access in future sessions.
 
-### ⚡ Quick Demo (1-Minute Visualization)
+#### 3. ⚡ Quick Demo (1-Minute Visualization)
 To see the DSSR-PyMOL integration in action:
 
 1. **Fetch a structure**: In the PyMOL console, type `fetch 1ehz`.
