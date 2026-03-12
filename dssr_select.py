@@ -2214,6 +2214,9 @@ def dssr_gui():
     _DSSR_GUI_DIALOG.raise_()
     _DSSR_GUI_DIALOG.activateWindow()
 
+def __init_plugin__(app=None):
+    from pymol.plugins import addmenuitemqt
+    addmenuitemqt('DSSR', dssr_gui)
 
 cmd.extend('dssr_select_v3', dssr_select_v3)
 cmd.extend('dssr_gui', dssr_gui)
