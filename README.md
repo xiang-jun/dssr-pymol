@@ -52,16 +52,22 @@ This plugin is the result of a multi-stage collaborative effort initiated and co
 1. **DSSR**: The `x3dna-dssr` executable must be installed and in your system PATH.
 2. **PyMOL**: A version of PyMOL that supports `PyMOL.Qt` (standard in most Schrödinger distributions).
 
-#### Getting Started
+## Getting Started
 
-1. Download `dssr_select.py` from the root of this repository.
-2. In PyMOL, run `run /path/to/dssr_select.py` or install it via the Plugin Manager.
-3. Launch the interface by typing:
-```python
-dssr_gui
-```
+### Installation
+1. **Download**: Save the `dssr_select.py` file from this repository to your computer.
+2. **Install**: In PyMOL, navigate to `Plugin` -> `Plugin Manager`.
+3. **Load**: Select the `Install New Plugin` tab, click `Choose file...`, and select the `dssr_select.py` file you just downloaded.
+4. **Access**: Once installed, a new **DSSR** menu item will appear under the PyMOL `Plugin` menu for easy access in future sessions.
 
-4. **Note on dssr_block**: The functionality of the `dssr_block` plugin is fully integrated into `dssr_select.py`. You do not need to install it separately.
+### ⚡ Quick Demo (1-Minute Visualization)
+To see the DSSR-PyMOL integration in action:
+
+1. **Fetch a structure**: In the PyMOL console, type `fetch 1ehz`.
+2. **Launch the GUI**: Go to `Plugin` -> `DSSR` (or type `dssr_gui`).
+3. **Generate Blocks**: In the DSSR GUI window, click the **"make blocks"** button.
+
+You will immediately see a schematic representation of the tRNA structure with stylized base blocks, providing a clear view of the RNA architecture.
 
 ---
 
