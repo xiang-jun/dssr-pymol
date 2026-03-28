@@ -826,11 +826,11 @@ def _build_residue_sel_from_dssr(dssr_data, feature, index):
     raise CmdException('Feature "%s" not supported for residue selection' % feature)
 
 
-def dssr_select_v3(selection='all',
+def dssr_select(selection='all',
                    state=-1,
                    feature='pairs',
                    index=1,
-                   name='dssr_select_v3',
+                   name='dssr_select',
                    exe='x3dna-dssr',
                    show_info=0,
                    quiet=1,
@@ -913,7 +913,7 @@ def dssr_select_v3(selection='all',
             cmd.color(user_color if user_color else layer_color, name)
 
             if not quiet:
-                print('dssr_select_v3: selection "%s" pseudoknot layer %d with %d pair(s)' % (name, index, len(pairs)))
+                print('dssr_select: selection "%s" pseudoknot layer %d with %d pair(s)' % (name, index, len(pairs)))
             return
 
         feature_list = dssr_data.get(json_key, None)
@@ -995,7 +995,7 @@ def dssr_select_v3(selection='all',
                 pass
 
         if not quiet:
-            print('dssr_select_v3: created selection "%s" for %s (index %d) in state %d' % (name, feature, index, state))
+            print('dssr_select: created selection "%s" for %s (index %d) in state %d' % (name, feature, index, state))
 
     finally:
         try:
@@ -1035,8 +1035,8 @@ def dssr(sel=None, selection=None,
     feature_in = unquote(feature_in).strip()
 
     if feature_in.lower() in ('features', 'help'):
-        dssr_select_v3(selection=selection, state=state, feature='features', index=0,
-                      name='dssr_select_v3', exe=exe, show_info=0,
+        dssr_select(selection=selection, state=state, feature='features', index=0,
+                      name='dssr_select', exe=exe, show_info=0,
                       quiet=int(q if q is not None else quiet),
                       color='auto', precolor=int(precolor))
         return
@@ -1060,7 +1060,7 @@ def dssr(sel=None, selection=None,
     if not nm:
         nm = '%s%d' % (feature_in.lower(), idx)
 
-    dssr_select_v3(selection=selection, state=st2, feature=feature_in, index=idx,
+    dssr_select(selection=selection, state=st2, feature=feature_in, index=idx,
                    name=nm, exe=exe, show_info=si2, quiet=qt, color=color,
                    precolor=precolor, hbonds_mode=hb_mode, distance_name=dist_nm)
 
@@ -2218,12 +2218,12 @@ def __init_plugin__(app=None):
     from pymol.plugins import addmenuitemqt
     addmenuitemqt('DSSR', dssr_gui)
 
-cmd.extend('dssr_select_v3', dssr_select_v3)
+cmd.extend('dssr_select', dssr_select)
 cmd.extend('dssr_gui', dssr_gui)
 cmd.extend('dssr_block', dssr_block)
 cmd.extend('dssr_seq', dssr_seq)
 
-cmd.auto_arg[0].update({'dssr_select_v3': cmd.auto_arg[0]['zoom']})
+cmd.auto_arg[0].update({'dssr_select': cmd.auto_arg[0]['zoom']})
 cmd.auto_arg[0].update({'dssr_gui': cmd.auto_arg[0]['zoom']})
 cmd.auto_arg[0].update({'dssr_block': cmd.auto_arg[0]['zoom']})
 cmd.auto_arg[0].update({'dssr_seq': cmd.auto_arg[0]['zoom']})
