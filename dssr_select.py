@@ -331,7 +331,7 @@ def build_selection_from_pair(pair_entry):
     nt1 = pair_entry.get('nt1')
     nt2 = pair_entry.get('nt2')
     if not nt1 or not nt2:
-        raise CmdException('Pair entry missing nt1 or nt2')
+        print('Pair entry missing nt1 or nt2')
     residues = {parse_nt_id(nt1), parse_nt_id(nt2)}
     return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
 
@@ -340,7 +340,7 @@ def build_selection_from_hbond(hb_entry, hbonds_mode='residue'):
     atom1_id = hb_entry.get('atom1_id')
     atom2_id = hb_entry.get('atom2_id')
     if not atom1_id or not atom2_id:
-        raise CmdException('H-bond entry missing atom1_id or atom2_id')
+        print('H-bond entry missing atom1_id or atom2_id')
 
     mode = str(hbonds_mode).strip().lower()
     if mode in ('atom', 'distance'):
@@ -357,7 +357,7 @@ def build_selection_from_hbond(hb_entry, hbonds_mode='residue'):
 
 def build_selection_from_nts_list(nts_list):
     if not nts_list:
-        raise CmdException('Empty nucleotide list')
+        print('Empty nucleotide list')
     residues = {parse_nt_id(nt) for nt in nts_list}
     return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
 
@@ -365,7 +365,7 @@ def build_selection_from_nts_list(nts_list):
 def build_selection_from_stem(stem_entry):
     pairs = stem_entry.get('pairs', [])
     if not pairs:
-        raise CmdException('Stem has no pairs')
+        print('Stem has no pairs')
 
     residues = set()
     for p in pairs:
@@ -380,7 +380,7 @@ def build_selection_from_stem(stem_entry):
 def build_selection_from_hairpin(hairpin_entry):
     nts_long = hairpin_entry.get('nts_long')
     if not nts_long:
-        raise CmdException('Hairpin missing nts_long field')
+        print('Hairpin missing nts_long field')
     nts_list = [nt.strip() for nt in nts_long.split(',') if nt.strip()]
     return build_selection_from_nts_list(nts_list)
 
@@ -388,7 +388,7 @@ def build_selection_from_hairpin(hairpin_entry):
 def build_selection_from_coaxstack(coax_entry, stems_list):
     stem_indices = coax_entry.get('stem_indices', [])
     if not stem_indices:
-        raise CmdException('coaxStacks entry missing stem_indices')
+        print('coaxStacks entry missing stem_indices')
 
     residues = set()
     for si in stem_indices:
@@ -436,7 +436,7 @@ def build_selection_from_atom2base(a2b_entry):
 def build_selection_from_aminor(aminor_entry):
     desc_long = aminor_entry.get('desc_long', '')
     if not desc_long or 'vs' not in desc_long:
-        raise CmdException('Aminors entry missing desc_long')
+        print('Aminors entry missing desc_long')
 
     left, right = desc_long.split('vs', 1)
     nts = []
@@ -452,7 +452,7 @@ def build_selection_from_aminor(aminor_entry):
                 nts.append(item)
 
     if not nts:
-        raise CmdException('Aminors entry has empty residues')
+        print('Aminors entry has empty residues')
 
     return build_selection_from_nts_list(nts)
 
@@ -509,7 +509,7 @@ def _preview_entry(feature, entry, i):
 
 def _extract_dotbracket(dssr_data):
     if 'dbn' not in dssr_data:
-        raise CmdException('No dot-bracket notation found in DSSR output')
+        print('No dot-bracket notation found in DSSR output')
     dbn_data = dssr_data['dbn']
 
     if isinstance(dbn_data, dict):
@@ -754,11 +754,11 @@ def _build_residue_sel_from_dssr(dssr_data, feature, index):
         dotbracket = _extract_dotbracket(dssr_data)
         nts_list = dssr_data.get('nts', None)
         if nts_list is None:
-            raise CmdException('No nts found in DSSR output')
+            print('No nts found in DSSR output')
 
         layers = parse_dotbracket_pseudoknots(dotbracket)
         if not layers:
-            raise CmdException('No pseudoknot layers found')
+            print('No pseudoknot layers found')
 
         layer_keys = sorted(layers.keys())
         if idx < 1 or idx > len(layer_keys):
@@ -771,12 +771,12 @@ def _build_residue_sel_from_dssr(dssr_data, feature, index):
         return sel_str
 
     if feature not in FEATURE_MAP:
-        raise CmdException('Unknown feature "%s"' % feature)
+        print('Unknown feature "%s"' % feature)
 
     json_key = FEATURE_MAP[feature]
     feature_list = dssr_data.get(json_key, None)
     if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
-        raise CmdException('No "%s" found in DSSR output' % json_key)
+        print('No "%s" found in DSSR output' % json_key)
 
     if idx < 1 or idx > len(feature_list):
         raise CmdException('%s index %d out of range (1..%d)' % (feature, idx, len(feature_list)))
@@ -807,7 +807,7 @@ def _build_residue_sel_from_dssr(dssr_data, feature, index):
     if feature == 'coaxstacks':
         stems_list = dssr_data.get('stems', [])
         if not stems_list:
-            raise CmdException('No stems found, required for coaxStacks')
+            print('No stems found, required for coaxStacks')
         return build_selection_from_coaxstack(entry, stems_list)
 
     if feature == 'atom2bases':
@@ -858,7 +858,7 @@ def dssr_select(selection='all',
 
     if feature not in FEATURE_MAP:
         valid = ', '.join(sorted(FEATURE_MAP.keys()))
-        raise CmdException('Unknown feature "%s". Valid: %s' % (feature, valid))
+        print('Unknown feature "%s". Valid: %s' % (feature, valid))
 
     json_key = FEATURE_MAP[feature]
 
@@ -882,11 +882,11 @@ def dssr_select(selection='all',
             dotbracket = _extract_dotbracket(dssr_data)
             nts_list = dssr_data.get('nts', None)
             if nts_list is None:
-                raise CmdException('No nts found in DSSR output')
+                print('No nts found in DSSR output')
 
             layers = parse_dotbracket_pseudoknots(dotbracket)
             if not layers:
-                raise CmdException('No pseudoknot layers found in structure')
+                print('No pseudoknot layers found in structure')
 
             layer_keys = sorted(layers.keys())
 
@@ -918,7 +918,8 @@ def dssr_select(selection='all',
 
         feature_list = dssr_data.get(json_key, None)
         if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
-            raise CmdException('No "%s" found in DSSR output' % json_key)
+            print('No "%s" found in DSSR output' % json_key)
+            return
 
         if index == 0:
             total = len(feature_list)
@@ -957,7 +958,7 @@ def dssr_select(selection='all',
         elif feature == 'coaxstacks':
             stems_list = dssr_data.get('stems', [])
             if not stems_list:
-                raise CmdException('No stems found, required for coaxStacks')
+                print('No stems found, required for coaxStacks')
             sel_str = build_selection_from_coaxstack(entry, stems_list)
         elif feature == 'atom2bases':
             sel_str = build_selection_from_atom2base(entry)
@@ -1956,11 +1957,11 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 dotbracket = _extract_dotbracket(dssr_data)
                 nts_list = dssr_data.get('nts', None)
                 if nts_list is None:
-                    raise CmdException('No nts found in DSSR output')
-
+                    print('No nts found in DSSR output')
+                    return
                 layers = parse_dotbracket_pseudoknots(dotbracket)
                 if not layers:
-                    raise CmdException('No pseudoknot layers found')
+                    print('No pseudoknot layers found')
 
                 layer_keys = sorted(layers.keys())
                 for j, k in enumerate(layer_keys, 1):
@@ -1969,11 +1970,13 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
             else:
                 if feat not in FEATURE_MAP:
-                    raise CmdException('Unknown feature "%s"' % feat)
+                    print('Unknown feature "%s"' % feat)
+                    return
                 json_key = FEATURE_MAP[feat]
                 feature_list = dssr_data.get(json_key, None)
                 if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
-                    raise CmdException('No "%s" found in DSSR output' % json_key)
+                    print('No "%s" found in DSSR output' % json_key)
+                    return
 
                 total = len(feature_list)
                 for i in range(total):
