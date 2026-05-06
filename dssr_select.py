@@ -26,7 +26,6 @@ _DSSR_BLOCK_OBJECTS = set()
 
 FEATURE_MAP = {
     'pairs': 'pairs',
-    'hbonds': 'hbonds',
     'stems': 'stems',
     'helices': 'helices',
     'stacks': 'stacks',
@@ -48,7 +47,7 @@ FEATURE_MAP = {
 }
 
 FEATURE_ORDER = [
-    'pairs', 'hbonds', 'stems', 'helices',
+    'pairs', 'stems', 'helices',
     'stacks', 'nonstack', 'hairpins', 'bulges',
     'iloops', 'junctions', 'sssegments', 'multiplets',
     'coaxstacks', 'atom2bases', 'aminors', 'splayunits',
@@ -213,29 +212,6 @@ def parse_atom_id(atom_id):
     return parse_nt_id(rest)
 
 
-def parse_hbond_atom(atom_id):
-    import re
-    s = str(atom_id).strip()
-
-    if '@' in s:
-        atom_name, nt = s.split('@', 1)
-        chain, resi = parse_nt_id(nt)
-        return chain, resi, atom_name
-
-    if '/' in s:
-        parts = s.strip('/').split('/')
-        if len(parts) < 3:
-            raise CmdException('Unexpected hbond atom format: "%s"' % s)
-        chain = parts[-3]
-        res = parts[-2]
-        atom_name = parts[-1]
-        m = re.search(r'(-?\d+)$', res)
-        if not m:
-            raise CmdException('Could not extract residue number from "%s"' % res)
-        return chain, m.group(1), atom_name
-
-    raise CmdException('Unexpected hbond atom format: "%s"' % s)
-
 
 def parse_a2b_atom(atom_id):
     import re
@@ -335,24 +311,6 @@ def build_selection_from_pair(pair_entry):
     residues = {parse_nt_id(nt1), parse_nt_id(nt2)}
     return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
 
-
-def build_selection_from_hbond(hb_entry, hbonds_mode='residue'):
-    atom1_id = hb_entry.get('atom1_id')
-    atom2_id = hb_entry.get('atom2_id')
-    if not atom1_id or not atom2_id:
-        raise CmdException('H-bond entry missing atom1_id or atom2_id')
-
-    mode = str(hbonds_mode).strip().lower()
-    if mode in ('atom', 'distance'):
-        c1, r1, a1 = parse_hbond_atom(atom1_id)
-        c2, r2, a2 = parse_hbond_atom(atom2_id)
-        s1 = _atom_sel(c1, r1, a1)
-        s2 = _atom_sel(c2, r2, a2)
-        return ('%s or %s' % (s1, s2), s1, s2)
-
-    residues = {parse_atom_id(atom1_id), parse_atom_id(atom2_id)}
-    sel = ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
-    return (sel, None, None)
 
 
 def build_selection_from_nts_list(nts_list):
@@ -474,8 +432,6 @@ def _preview_entry(feature, entry, i):
         lw = entry.get('LW', entry.get('bp', ''))
         return '%d: %s - %s%s' % (i, nt1, nt2, (' (%s)' % lw) if lw else '')
 
-    if feature == 'hbonds':
-        return '%d: %s -- %s' % (i, entry.get('atom1_id', '?'), entry.get('atom2_id', '?'))
 
     if feature in ('stems', 'helices'):
         n = len(entry.get('pairs', [])) if isinstance(entry.get('pairs', []), list) else 0
@@ -786,10 +742,6 @@ def _build_residue_sel_from_dssr(dssr_data, feature, index):
     if feature == 'pairs':
         return build_selection_from_pair(entry)
 
-    if feature == 'hbonds':
-        sel_str, _, _ = build_selection_from_hbond(entry, hbonds_mode='residue')
-        return sel_str
-
     if feature in ('stems', 'helices'):
         return build_selection_from_stem(entry)
 
@@ -836,7 +788,6 @@ def dssr_select(selection='all',
                    quiet=1,
                    color='auto',
                    precolor=1,
-                   hbonds_mode='residue',
                    distance_name=''):
     import tempfile, os
 
@@ -848,8 +799,7 @@ def dssr_select(selection='all',
     feature = unquote(feature).lower().strip()
 
     user_color = _resolve_color_spec(unquote(color).strip())
-    hb_mode = str(hbonds_mode).strip().lower()
-
+                       
     if feature in ('features', 'help'):
         keys = sorted(FEATURE_MAP.keys())
         print('Supported features: ' + ', '.join(keys))
@@ -941,8 +891,6 @@ def dssr_select(selection='all',
 
         if feature == 'pairs':
             sel_str = build_selection_from_pair(entry)
-        elif feature == 'hbonds':
-            sel_str, dist_a1, dist_a2 = build_selection_from_hbond(entry, hbonds_mode=hb_mode)
         elif feature in ('stems', 'helices'):
             sel_str = build_selection_from_stem(entry)
         elif feature == 'hairpins':
@@ -976,24 +924,6 @@ def dssr_select(selection='all',
         cmd.color(user_color if user_color else 'pink', name)
         selected_features.append(feature)
 
-        if feature == 'hbonds' and hb_mode == 'distance' and dist_a1 and dist_a2:
-            dist_name = str(distance_name).strip() if distance_name else ''
-            if not dist_name:
-                dist_name = 'dist_%s' % name
-            try:
-                cmd.delete(dist_name)
-            except Exception:
-                pass
-            cmd.distance(dist_name, dist_a1, dist_a2)
-            try:
-                cmd.show('dashes', dist_name)
-            except Exception:
-                pass
-            try:
-                cmd.color(user_color if user_color else 'yellow', dist_name)
-            except Exception:
-                pass
-
         if not quiet:
             print('dssr_select: created selection "%s" for %s (index %d) in state %d' % (name, feature, index, state))
 
@@ -1025,8 +955,6 @@ def dssr(sel=None, selection=None,
          do_zoom=1,
          pc=None,
          precolor=1,
-         hbmode=None,
-         hbonds_mode='residue',
          distname=None,
          distance_name=''):
     selection = selection or sel or _dssr_default_selection()
@@ -1050,9 +978,6 @@ def dssr(sel=None, selection=None,
         precolor = int(pc)
     precolor = int(precolor)
 
-    hb_mode = hbmode if hbmode is not None else hbonds_mode
-    hb_mode = str(hb_mode).strip().lower()
-
     dist_nm = distname if distname is not None else distance_name
     dist_nm = str(dist_nm).strip()
 
@@ -1062,7 +987,7 @@ def dssr(sel=None, selection=None,
 
     dssr_select(selection=selection, state=st2, feature=feature_in, index=idx,
                    name=nm, exe=exe, show_info=si2, quiet=qt, color=color,
-                   precolor=precolor, hbonds_mode=hb_mode, distance_name=dist_nm)
+                   precolor=precolor, distance_name=dist_nm)
 
     if int(display):
         cmd.show('sticks', nm)
@@ -1442,8 +1367,6 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         top.addWidget(self.color_edit, 2, 1)
         top.addWidget(QtWidgets.QLabel('name'), 2, 2)
         top.addWidget(self.name_edit, 2, 3)
-        top.addWidget(QtWidgets.QLabel('hbonds_mode'), 2, 4)
-        top.addWidget(self.hb_mode_combo, 2, 5, 1, 2)
 
         top.addWidget(QtWidgets.QLabel('block_file'), 3, 0)
         top.addWidget(self.block_file_combo, 3, 1)
@@ -2082,13 +2005,12 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         showinfo_on = 1 if self.showinfo_cb.isChecked() else 0
         radius = float(self.radius_spin.value())
 
-        hb_mode = self.hb_mode_combo.currentText().strip().lower()
         dist_name = 'dist_%s' % nm
 
         try:
             dssr(sel=sel, f=feat, i=idx, n=nm, q=0, si=showinfo_on, st=st,
                  exe=exe, color=col, display=display_on, stick_radius=radius,
-                 do_zoom=zoom_on, pc=precolor_on, hbmode=hb_mode, distname=dist_name)
+                 do_zoom=zoom_on, pc=precolor_on, distname=dist_name)
         except Exception as e:
             try:
                 QtWidgets.QMessageBox.critical(self, 'DSSR GUI error', str(e))
