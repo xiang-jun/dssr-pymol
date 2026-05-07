@@ -98,8 +98,9 @@ def run_dssr_json(pdb_path, exe):
         raise CmdException('DSSR failed (rc=%s). stderr tail: %s' % (str(rc), _safe_tail(err_txt)))
 
     if not out_txt.strip():
-        raise CmdException('DSSR returned empty stdout (expected JSON). stderr tail: %s' % _safe_tail(err_txt))
-
+        print("No structure loaded. Please load a PDB.CIF file before running DSSR-PyMOL.")
+        while not out_txt.strip():
+            pass
     try:
         return json.loads(out_txt)
     except Exception:
