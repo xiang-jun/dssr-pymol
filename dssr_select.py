@@ -98,10 +98,7 @@ def run_dssr_json(pdb_path, exe):
         raise CmdException('DSSR failed (rc=%s). stderr tail: %s' % (str(rc), _safe_tail(err_txt)))
 
     if not out_txt.strip():
-        print("No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL.")
-        while not out_txt.strip():
-            pass
-            return None 
+        raise CmdException('DSSR returned empty stdout (expected JSON). stderr tail: %s' % _safe_tail(err_txt))
 
     try:
         return json.loads(out_txt)
@@ -1916,10 +1913,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.list_widget.clear()
             self.list_widget.addItem('ERROR: %s' % str(e))
             try:
-                if "NoneType" in str(e):
-                    print("")
-                else:
-                    print('dssr_gui error: %s' % str(e))
+                print('dssr_gui error: %s' % str(e))
             except Exception:
                 pass
 
@@ -2136,6 +2130,10 @@ def dssr_gui():
     global _DSSR_GUI_DIALOG
     if QtWidgets is None or QtCore is None:
         raise CmdException('Qt is not available in this PyMOL build')
+    
+    if not cmd.get_object_list():
+        print("No structure loaded. Please load a PDB.CIF file before running DSSR-PyMOL")
+        return
     if _DSSR_GUI_DIALOG is None:
         _DSSR_GUI_DIALOG = _DSSRGuiDialog()
     _DSSR_GUI_DIALOG.show()
@@ -2160,4 +2158,3 @@ try:
     print('Loaded DSSR helper %s from: %s' % (__DSSR_PLUGIN_VERSION__, __file__))
 except Exception:
     pass
-
