@@ -18,7 +18,7 @@
 
 from pymol import cmd, CmdException
 
-__DSSR_PLUGIN_VERSION__ = 'v1.0.1'
+__DSSR_PLUGIN_VERSION__ = 'v1.0.1-dev'
 
 _hex_color_cache = {}
 selected_features = []
