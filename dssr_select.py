@@ -606,9 +606,11 @@ def _collect_residues_all(dssr_data, feature):
                             pass
         return residues
 
-    if feature in ('hairpins', 'bulges', 'junctions', 'stacks'):
+    if feature in ('hairpins', 'bulges', 'junctions', 'stacks', 'nonstack'):
         json_key = FEATURE_MAP.get(feature, feature)
         entries = dssr_data.get(json_key, [])
+        if feature == 'nonstack' and isinstance(entries, dict):
+            entries = [entries] if entries.get('num_nts', 0) > 0 or entries.get('nts_long') else []
         if isinstance(entries, list):
             for e in entries:
                 try:
@@ -731,6 +733,8 @@ def _build_residue_sel_from_dssr(dssr_data, feature, index):
 
     json_key = FEATURE_MAP[feature]
     feature_list = dssr_data.get(json_key, None)
+    if feature == 'nonstack' and isinstance(feature_list, dict):
+        feature_list = [feature_list] if feature_list.get('num_nts', 0) > 0 or feature_list.get('nts_long') else []
     if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
         raise CmdException('No "%s" found in DSSR output' % json_key)
 
@@ -867,6 +871,8 @@ def dssr_select(selection='all',
             return
 
         feature_list = dssr_data.get(json_key, None)
+        if feature == 'nonstack' and isinstance(feature_list, dict):
+            feature_list = [feature_list] if feature_list.get('num_nts', 0) > 0 or feature_list.get('nts_long') else []
         if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
             raise CmdException('No "%s" found in DSSR output' % json_key)
 
@@ -1513,7 +1519,15 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 json_key = FEATURE_MAP.get(feat)
                 if json_key:
                     val = dssr_data.get(json_key, None)
-                    has_feature = isinstance(val, list) and len(val) > 0
+                    if feat == 'nonstack':
+                        if isinstance(val, dict):
+                            has_feature = val.get('num_nts', 0) > 0 or bool(val.get('nts_long', ''))
+                        elif isinstance(val, list):
+                            has_feature = len(val) > 0
+                        else:
+                            has_feature = False
+                    else:
+                        has_feature = isinstance(val, list) and len(val) > 0
                 else:
                     has_feature = False
 
@@ -1928,6 +1942,8 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     raise CmdException('Unknown feature "%s"' % feat)
                 json_key = FEATURE_MAP[feat]
                 feature_list = dssr_data.get(json_key, None)
+                if feat == 'nonstack' and isinstance(feature_list, dict):
+                    feature_list = [feature_list] if feature_list.get('num_nts', 0) > 0 or feature_list.get('nts_long') else []
                 if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
                     nice_names = {
                         'pairs': 'base pairs',
