@@ -1318,9 +1318,6 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.radius_spin.setSingleStep(0.05)
         self.radius_spin.setValue(0.25)
 
-        self.rna_btn = QtWidgets.QPushButton('RNA only')
-        self.rna_btn.clicked.connect(self._make_rna_only)
-
         self.status_label = QtWidgets.QLabel('')
         self.status_label.setWordWrap(True)
 
@@ -1342,14 +1339,13 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         top.addWidget(QtWidgets.QLabel('object'), 0, 0)
         top.addWidget(self.obj_combo, 0, 1, 1, 2)
-        top.addWidget(self.rna_btn, 0, 3)
 
-        top.addWidget(QtWidgets.QLabel('state'), 0, 4)
-        top.addWidget(self.state_combo, 0, 5)
-        top.addWidget(self.count_btn, 0, 6)
+        top.addWidget(QtWidgets.QLabel('state'), 0, 3)
+        top.addWidget(self.state_combo, 0, 4)
+        top.addWidget(self.count_btn, 0, 5)
 
         top.addWidget(QtWidgets.QLabel('exe'), 1, 0)
-        top.addWidget(self.exe_edit, 1, 1, 1, 6)
+        top.addWidget(self.exe_edit, 1, 1, 1, 5)
 
         top.addWidget(QtWidgets.QLabel('color'), 2, 0)
         top.addWidget(self.color_edit, 2, 1)
@@ -1360,7 +1356,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         top.addWidget(self.block_file_combo, 3, 1)
         top.addWidget(QtWidgets.QLabel('block_depth'), 3, 3)
         top.addWidget(self.block_depth_spin, 3, 4)
-        top.addWidget(self.make_blocks_btn, 3, 5, 1, 2)
+        top.addWidget(self.make_blocks_btn, 3, 5, 1, 1)
 
         opts = QtWidgets.QHBoxLayout()
         opts.addWidget(self.precolor_cb)
@@ -1531,7 +1527,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._enable_seq_view()
         sel = self._get_object_text()
         try:
-            cmd.select('sele', '(%s) and polymer.nucleic' % sel)
+            cmd.select('sele', '(%s)' % sel)
         except Exception:
             pass
 
@@ -1640,40 +1636,6 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.refresh_objects()
         self.refresh_list()
 
-    def _unique_object_name(self, base):
-        base = str(base)
-        if not base:
-            base = 'rna_only'
-        name = base
-        k = 1
-        while True:
-            try:
-                exists = name in cmd.get_object_list()
-            except Exception:
-                exists = False
-            if not exists:
-                return name
-            k += 1
-            name = '%s%d' % (base, k)
-
-    def _make_rna_only(self):
-        obj = self._get_object_text()
-        new_name = self._unique_object_name('rna_only')
-        try:
-            cmd.create(new_name, '(%s) and polymer.nucleic' % obj)
-        except Exception as e:
-            try:
-                QtWidgets.QMessageBox.critical(self, 'RNA only', str(e))
-            except Exception:
-                pass
-            return
-
-        self.refresh_objects()
-        i = self.obj_combo.findText(new_name)
-        if i >= 0:
-            self.obj_combo.setCurrentIndex(i)
-        self.refresh_list()
-
     def _clear_report(self):
         try:
             self.report_box.setPlainText('')
@@ -1775,7 +1737,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     pass
                 continue
 
-            expr = '((%s) and polymer.nucleic and (%s))' % (obj_sel, sel_core)
+            expr = '((%s) and (%s))' % (obj_sel, sel_core)
             try:
                 cmd.select(name, expr)
                 made.append(name)
@@ -1808,13 +1770,15 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
 
     def _big_object_warning(self, sel):
-        thresh = 250000
+        thresh = 50000
         try:
             n_atoms = int(cmd.count_atoms(sel))
         except Exception:
             n_atoms = 0
         if n_atoms >= thresh:
-            self.status_label.setText('warning: large selection (%d atoms). recommended: use RNA only and avoid feature=nts/hbonds first.' % n_atoms)
+            self.status_label.setText(
+                'Warning: Large selection (%d atoms). DSSR analysis may be slow. Consider selecting a specific chain.' % n_atoms
+            )
         else:
             self.status_label.setText('')
 
@@ -2035,7 +1999,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
             sel_str = _build_residue_sel_from_dssr(dssr_data, feat, idx)
             cmd.select('sele', sel_str)
-            cmd.select('sele', 'byres (sele) and polymer.nucleic')
+            cmd.select('sele', 'byres (sele)')
         except Exception as e:
             try:
                 self.status_label.setText('preview error: %s' % str(e))
@@ -2130,7 +2094,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                         continue
 
                     sel_str = _build_residue_sel_from_dssr(dssr_data, feat, idx)
-                    sel_for_block = 'byres (%s) and polymer.nucleic' % sel_str
+                    sel_for_block = 'byres (%s)' % sel_str
 
                     obj_name = '%s_%s_%d' % (base, feat, idx)
                     try:
@@ -2151,9 +2115,9 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 except Exception:
                     n = 0
                 if n > 0:
-                    sel_for_block = 'byres (sele) and polymer.nucleic'
+                    sel_for_block = 'byres (sele)'
                 else:
-                    sel_for_block = '(%s) and polymer.nucleic' % sel_obj
+                    sel_for_block = '(%s)' % sel_obj
 
                 obj_name = '%s_sel' % base
                 try:
