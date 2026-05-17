@@ -238,6 +238,11 @@ def parse_a2b_atom(atom_id):
 
 
 def parse_dotbracket_pseudoknots(dotbracket):
+    """
+    Parses dot-bracket notation structures.
+    Bug Fix: Excludes layer 0 ('()'), which represents regular base pairs,
+    so that only genuine pseudoknot layers are identified.
+    """
     stack_map = {'(': ')', '[': ']', '{': '}', '<': '>'}
     close_to_open = {v: k for k, v in stack_map.items()}
     stacks = {}
@@ -263,7 +268,10 @@ def parse_dotbracket_pseudoknots(dotbracket):
                 layer_assignment[bracket_type] = next_layer
                 next_layer += 1
             layer = layer_assignment[bracket_type]
-            layers.setdefault(layer, []).append((open_idx, idx))
+
+            # EXCLUDE LAYER 0 ('()') since it is the canonical structure, not a pseudoknot
+            if layer != 0:
+                layers.setdefault(layer, []).append((open_idx, idx))
 
         elif char.isalpha():
             stacks.setdefault(char, [])
@@ -275,7 +283,10 @@ def parse_dotbracket_pseudoknots(dotbracket):
                     layer_assignment[char] = next_layer
                     next_layer += 1
                 layer = layer_assignment[char]
-                layers.setdefault(layer, []).append((open_idx, idx))
+
+                # Standard safety check (alphabets map to layers >= 4, but safely exclude layer 0)
+                if layer != 0:
+                    layers.setdefault(layer, []).append((open_idx, idx))
 
     return layers
 
