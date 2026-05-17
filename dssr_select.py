@@ -76,7 +76,8 @@ def _safe_tail(s, n=500):
 
 def run_dssr_json(pdb_path, exe):
     import subprocess, json
-    args = [exe, '--json', '-i=' + pdb_path]
+    # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
+    args = [exe, '--json', '--idstr=ebi', '-i=' + pdb_path]
 
     try:
         p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -177,64 +178,37 @@ def _resolve_color_spec(color_spec):
 
 
 def parse_nt_id(nt_id):
-    import re
-    s = str(nt_id).strip()
-
-    if '.' in s and not s.startswith('///'):
-        try:
-            chain, res = s.split('.', 1)
-        except ValueError:
-            raise CmdException('Unexpected nt_id format: "%s"' % s)
-        m = re.search(r'(-?\d+)$', res)
-        if not m:
-            raise CmdException('Could not extract residue number from "%s"' % res)
-        return chain, m.group(1)
-
-    if '/' in s:
-        parts = s.strip('/').split('/')
-        if len(parts) < 2:
-            raise CmdException('Unexpected nt_id format: "%s"' % s)
-        chain = parts[-2]
-        res = parts[-1]
-        m = re.search(r'(-?\d+)$', res)
-        if not m:
-            raise CmdException('Could not extract residue number from "%s"' % res)
-        return chain, m.group(1)
-
-    raise CmdException('Unexpected nt_id format: "%s"' % s)
+    """
+    Parses a nucleotide identifier in Jmol/EBI Unit ID format:
+    |Model Number| Chain ID|Residue Identifier|Residue Number|Atom Name|Alternate ID|Insertion Code|
+    Returns a compatible tuple of (chain, resi_number).
+    """
+    parts = str(nt_id).strip().split('|')
+    if len(parts) >= 5:
+        return parts[2].strip(), parts[4].strip()
+    raise CmdException('Unexpected nt_id format: "%s"' % nt_id)
 
 
 def parse_atom_id(atom_id):
-    try:
-        _, rest = atom_id.split('@', 1)
-    except ValueError:
-        raise CmdException('Unexpected atom_id format: "%s"' % atom_id)
-    return parse_nt_id(rest)
-
+    """
+    Parses an atom identifier in Jmol/EBI Unit ID format.
+    Returns a compatible tuple of (chain, resi_number).
+    """
+    parts = str(atom_id).strip().split('|')
+    if len(parts) >= 5:
+        return parts[2].strip(), parts[4].strip()
+    raise CmdException('Unexpected atom_id format: "%s"' % atom_id)
 
 
 def parse_a2b_atom(atom_id):
-    import re
-    s = str(atom_id).strip()
-
-    if '@' in s:
-        atom_name, nt = s.split('@', 1)
-        chain, resi = parse_nt_id(nt)
-        return chain, resi, atom_name
-
-    if '/' in s:
-        parts = s.strip('/').split('/')
-        if len(parts) < 3:
-            raise CmdException('Unexpected atom format: "%s"' % s)
-        chain = parts[-3]
-        res = parts[-2]
-        atom_name = parts[-1]
-        m = re.search(r'(-?\d+)$', res)
-        if not m:
-            raise CmdException('Could not extract residue number from "%s"' % res)
-        return chain, m.group(1), atom_name
-
-    raise CmdException('Unexpected atom format: "%s"' % s)
+    """
+    Parses atom-to-base strings in Jmol/EBI Unit ID format.
+    Returns a compatible tuple of (chain, resi_number, atom_name).
+    """
+    parts = str(atom_id).strip().split('|')
+    if len(parts) >= 6:
+        return parts[2].strip(), parts[4].strip(), parts[5].strip()
+    raise CmdException('Unexpected atom format: "%s"' % atom_id)
 
 
 def parse_dotbracket_pseudoknots(dotbracket):
@@ -1379,14 +1353,14 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         top.addWidget(QtWidgets.QLabel('color'), 2, 0)
         top.addWidget(self.color_edit, 2, 1)
-        top.addWidget(QtWidgets.QLabel('name'), 2, 2)
-        top.addWidget(self.name_edit, 2, 3)
+        top.addWidget(QtWidgets.QLabel('name'), 2, 3)
+        top.addWidget(self.name_edit, 2, 4)
 
         top.addWidget(QtWidgets.QLabel('block_file'), 3, 0)
         top.addWidget(self.block_file_combo, 3, 1)
-        top.addWidget(QtWidgets.QLabel('block_depth'), 3, 2)
-        top.addWidget(self.block_depth_spin, 3, 3)
-        top.addWidget(self.make_blocks_btn, 3, 4, 1, 3)
+        top.addWidget(QtWidgets.QLabel('block_depth'), 3, 3)
+        top.addWidget(self.block_depth_spin, 3, 4)
+        top.addWidget(self.make_blocks_btn, 3, 5, 1, 2)
 
         opts = QtWidgets.QHBoxLayout()
         opts.addWidget(self.precolor_cb)
