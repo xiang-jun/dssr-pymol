@@ -799,7 +799,7 @@ def dssr_select(selection='all',
     feature = unquote(feature).lower().strip()
 
     user_color = _resolve_color_spec(unquote(color).strip())
-                       
+
     if feature in ('features', 'help'):
         keys = sorted(FEATURE_MAP.keys())
         print('Supported features: ' + ', '.join(keys))
@@ -1867,6 +1867,14 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._big_object_warning(sel)
 
         self.list_widget.clear()
+
+        # Bug Fix: If there is no structure loaded in PyMOL, do not trigger DSSR or update with loading status.
+        if not cmd.get_object_list():
+            msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
+            self.list_widget.addItem("Please load a PDB/CIF file before running DSSR-PyMOL")
+            self.status_label.setText(msg)
+            return
+
         self.list_widget.addItem('loading...')
         QtWidgets.QApplication.processEvents()
 
@@ -2130,11 +2138,26 @@ def dssr_gui():
     global _DSSR_GUI_DIALOG
     if QtWidgets is None or QtCore is None:
         raise CmdException('Qt is not available in this PyMOL build')
+
+    # Check if a structure is available before showing GUI or running DSSR
+    no_struct = not cmd.get_object_list()
+
     if _DSSR_GUI_DIALOG is None:
         _DSSR_GUI_DIALOG = _DSSRGuiDialog()
     _DSSR_GUI_DIALOG.show()
     _DSSR_GUI_DIALOG.raise_()
     _DSSR_GUI_DIALOG.activateWindow()
+
+    # Visual pop-up dialog warning and console diagnostic print if no structure is available
+    if no_struct:
+        msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
+        print(msg)
+        _DSSR_GUI_DIALOG.status_label.setText(msg)
+        QtWidgets.QMessageBox.warning(
+            _DSSR_GUI_DIALOG,
+            "No Structure Loaded",
+            msg
+        )
 
 def __init_plugin__(app=None):
     from pymol.plugins import addmenuitemqt
