@@ -590,18 +590,18 @@ def _collect_residues_all(dssr_data, feature):
                     continue
                 for p in pairs:
                     try:
-                        nt1 = p.get('nt1')
-                        nt2 = p.get('nt2')
+                        cmd_nt1 = p.get('nt1')
+                        cmd_nt2 = p.get('nt2')
                     except Exception:
-                        nt1, nt2 = None, None
-                    if nt1:
+                        cmd_nt1, cmd_nt2 = None, None
+                    if cmd_nt1:
                         try:
-                            residues.add(parse_nt_id(nt1))
+                            residues.add(parse_nt_id(cmd_nt1))
                         except Exception:
                             pass
-                    if nt2:
+                    if cmd_nt2:
                         try:
-                            residues.add(parse_nt_id(nt2))
+                            residues.add(parse_nt_id(cmd_nt2))
                         except Exception:
                             pass
         return residues
@@ -885,9 +885,6 @@ def dssr_select(selection='all',
             raise CmdException('%s index %d out of range (1..%d)' % (feature, index, len(feature_list)))
 
         entry = feature_list[index - 1]
-
-        dist_a1 = None
-        dist_a2 = None
 
         if feature == 'pairs':
             sel_str = build_selection_from_pair(entry)
@@ -1500,6 +1497,28 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._update_state_combo()
         self.refresh_list()
 
+    def _update_feature_buttons_state(self, dssr_data):
+        """
+        Dynamically enables/disables structural feature buttons based on
+        the presence of features inside the loaded structure's DSSR output.
+        """
+        for feat, button in self._feature_buttons.items():
+            if not dssr_data:
+                button.setEnabled(False)
+                continue
+
+            if feat == 'pseudoknot':
+                has_feature = (_count_pseudoknot_layers(dssr_data) > 0)
+            else:
+                json_key = FEATURE_MAP.get(feat)
+                if json_key:
+                    val = dssr_data.get(json_key, None)
+                    has_feature = isinstance(val, list) and len(val) > 0
+                else:
+                    has_feature = False
+
+            button.setEnabled(has_feature)
+
     def _enable_seq_view(self):
         try:
             cmd.set('seq_view', 1)
@@ -1780,7 +1799,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         except Exception:
             pass
         try:
-            cmd.color('red', 'pseudoknots_all')
+            cmd.color('red', 'pseudoknot_all')
         except Exception:
             pass
         try:
@@ -1868,11 +1887,12 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.list_widget.clear()
 
-        # Bug Fix: If there is no structure loaded in PyMOL, do not trigger DSSR or update with loading status.
+        # Guard Check: If there is no structure loaded in PyMOL, do not trigger DSSR or update with loading status.
         if not cmd.get_object_list():
             msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
             self.list_widget.addItem("Please load a PDB/CIF file before running DSSR-PyMOL")
             self.status_label.setText(msg)
+            self._update_feature_buttons_state(None)
             return
 
         self.list_widget.addItem('loading...')
@@ -1880,6 +1900,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         try:
             dssr_data = self._get_dssr_data(sel, st, exe, precolor_on)
+            self._update_feature_buttons_state(dssr_data)
 
             items = []
 
@@ -1887,11 +1908,15 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 dotbracket = _extract_dotbracket(dssr_data)
                 nts_list = dssr_data.get('nts', None)
                 if nts_list is None:
-                    raise CmdException('No nts found in DSSR output')
+                    self.list_widget.clear()
+                    self.list_widget.addItem('No nucleotides found in DSSR output.')
+                    return
 
                 layers = parse_dotbracket_pseudoknots(dotbracket)
                 if not layers:
-                    raise CmdException('No pseudoknot layers found')
+                    self.list_widget.clear()
+                    self.list_widget.addItem('No pseudoknot layers found in this structure.')
+                    return
 
                 layer_keys = sorted(layers.keys())
                 for j, k in enumerate(layer_keys, 1):
@@ -1904,7 +1929,34 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 json_key = FEATURE_MAP[feat]
                 feature_list = dssr_data.get(json_key, None)
                 if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
-                    raise CmdException('No "%s" found in DSSR output' % json_key)
+                    nice_names = {
+                        'pairs': 'base pairs',
+                        'stems': 'stems',
+                        'helices': 'helices',
+                        'stacks': 'stacks',
+                        'nonstack': 'non-stacking nucleotides',
+                        'coaxstacks': 'coaxial stacks',
+                        'atom2bases': 'atom-to-base interactions',
+                        'aminors': 'A-minor interactions',
+                        'splayunits': 'splayed units',
+                        'hairpins': 'hairpin loops',
+                        'bulges': 'bulge loops',
+                        'iloops': 'internal loops',
+                        'internal': 'internal loops',
+                        'junctions': 'junction loops',
+                        'sssegments': 'single-stranded segments',
+                        'ssSegments': 'single-stranded segments',
+                        'multiplets': 'multiplets',
+                        'nts': 'nucleotides',
+                        'pseudoknot': 'pseudoknot layers'
+                    }
+                    feat_name = nice_names.get(feat, feat)
+                    self.list_widget.clear()
+                    self.list_widget.addItem('No %s found in this structure.' % feat_name)
+                    self.page_label.setText('items 0, filtered 0, page 1/1')
+                    self.prev_btn.setEnabled(False)
+                    self.next_btn.setEnabled(False)
+                    return
 
                 total = len(feature_list)
                 for i in range(total):
@@ -1919,6 +1971,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._items_all = []
             self._items_filtered = []
             self.list_widget.clear()
+            self._update_feature_buttons_state(None)
             self.list_widget.addItem('ERROR: %s' % str(e))
             try:
                 print('dssr_gui error: %s' % str(e))
