@@ -17,9 +17,9 @@
 # Redistributions must retain the original copyright notice and this license.
 
 from pymol import cmd, CmdException
-
-__DSSR_PLUGIN_VERSION__ = 'v1.0.1-dev'
-
+from pymol.Qt import QtWidgets, QtCore
+__DSSR_PLUGIN_VERSION__ = 'v1.1.0-dev'
+_DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
 selected_features = []
 _DSSR_BLOCK_OBJECTS = set()
@@ -54,1219 +54,1227 @@ FEATURE_ORDER = [
     'nts', 'pseudoknot'
 ]
 
-
-def unquote(s):
-    s = str(s)
-    if not s:
-        return s
-    if s.rstrip()[-1:] not in ('"', "'"):
-        return s
-    return cmd.safe_eval(s)
-
-
-def _safe_tail(s, n=500):
-    try:
+class HelperFunctions:
+    @staticmethod
+    def unquote(s):
         s = str(s)
-    except Exception:
-        return ''
-    if len(s) <= n:
-        return s
-    return s[-n:]
+        if not s:
+            return s
+        if s.rstrip()[-1:] not in ('"', "'"):
+            return s
+        return cmd.safe_eval(s)
+
+    @staticmethod
+    def _safe_tail(s, n=500):
+        try:
+            s = str(s)
+        except Exception:
+            return ''
+        if len(s) <= n:
+            return s
+        return s[-n:]
+
+    @staticmethod
+    def run_dssr_json(pdb_path, exe):
+        import subprocess, json
+        # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
+        args = [exe, '--json', '--idstr=ebi', '-i=' + pdb_path]
+
+        try:
+            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, err = p.communicate()
+            rc = p.returncode
+        except OSError:
+            raise CmdException('Cannot execute exe="%s"' % exe)
+
+        try:
+            out_txt = out.decode('utf-8', errors='replace') if out else ''
+        except Exception:
+            out_txt = str(out)
+        try:
+            err_txt = err.decode('utf-8', errors='replace') if err else ''
+        except Exception:
+            err_txt = str(err)
+
+        if rc != 0:
+            raise CmdException('DSSR failed (rc=%s). stderr tail: %s' % (str(rc), HelperFunctions._safe_tail(err_txt)))
+
+        if not out_txt.strip():
+            raise CmdException('DSSR returned empty stdout (expected JSON). stderr tail: %s' % HelperFunctions._safe_tail(err_txt))
+
+        try:
+            return json.loads(out_txt)
+        except Exception:
+            s = out_txt
+            i = s.find('{')
+            j = s.rfind('}')
+            if i >= 0 and j > i:
+                try:
+                    return json.loads(s[i:j + 1])
+                except Exception as e2:
+                    raise CmdException('Failed to parse DSSR JSON. stdout head: %s | stderr tail: %s | err: %s' %
+                                    (s[:120].replace('\n', ' '),HelperFunctions._safe_tail(err_txt), str(e2)))
+            raise CmdException('Failed to parse DSSR JSON (no JSON object found). stdout head: %s | stderr tail: %s' %
+                            (s[:120].replace('\n', ' '), HelperFunctions._safe_tail(err_txt)))
+
+    @staticmethod
+    def _hex_to_rgb01(h):
+        import re
+        s = str(h).strip()
+
+        if s.startswith('"') and s.endswith('"'):
+            s = s[1:-1].strip()
+        if s.startswith("'") and s.endswith("'"):
+            s = s[1:-1].strip()
+
+        if s.lower().startswith('0x'):
+            s = s[2:]
+        if s.startswith('#'):
+            s = s[1:]
+
+        s = s.strip()
+        if re.fullmatch(r'[0-9a-fA-F]{3}', s):
+            s = ''.join([c * 2 for c in s])
+
+        if not re.fullmatch(r'[0-9a-fA-F]{6}', s):
+            raise CmdException('Invalid hex color "%s". Use FF00AA or 0xFF00AA (or "#FF00AA" quoted).' % h)
+
+        r = int(s[0:2], 16) / 255.0
+        g = int(s[2:4], 16) / 255.0
+        b = int(s[4:6], 16) / 255.0
+        return s.lower(), [r, g, b]
+
+    @staticmethod
+    def _resolve_color_spec(color_spec):
+        if color_spec is None:
+            return None
+        s = str(color_spec).strip()
+        if not s:
+            return None
+        if s.lower() in ('auto', 'default'):
+            return None
+
+        is_hexish = (
+            s.startswith('#') or
+            s.lower().startswith('0x') or
+            (len(s) in (3, 6) and all(c in '0123456789abcdefABCDEF' for c in s))
+        )
+        if is_hexish:
+            hex6, rgb = HelperFunctions._hex_to_rgb01(s)
+            if hex6 in _hex_color_cache:
+                return _hex_color_cache[hex6]
+            cname = 'dssr_hex_%s' % hex6
+            cmd.set_color(cname, rgb)
+            _hex_color_cache[hex6] = cname
+            return cname
+
+        name = s.lower()
+        try:
+            idx = cmd.get_color_index(name)
+            if idx < 0:
+                raise Exception('unknown')
+        except Exception:
+            raise CmdException('Unknown color "%s". Use a PyMOL color name (e.g., blue) or hex like FF00AA / 0xFF00AA.' % s)
+        return name
 
 
-def run_dssr_json(pdb_path, exe):
-    import subprocess, json
-    # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
-    args = [exe, '--json', '--idstr=ebi', '-i=' + pdb_path]
+class ParsingAlgos:
+    @staticmethod
+    def parse_nt_id(nt_id):
+        """
+        Parses a nucleotide identifier in Jmol/EBI Unit ID format:
+        |Model Number| Chain ID|Residue Identifier|Residue Number|Atom Name|Alternate ID|Insertion Code|
+        Returns a compatible tuple of (chain, resi_number).
+        """
+        parts = str(nt_id).strip().split('|')
+        if len(parts) >= 5:
+            return parts[2].strip(), parts[4].strip()
+        raise CmdException('Unexpected nt_id format: "%s"' % nt_id)
 
-    try:
-        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = p.communicate()
-        rc = p.returncode
-    except OSError:
-        raise CmdException('Cannot execute exe="%s"' % exe)
-
-    try:
-        out_txt = out.decode('utf-8', errors='replace') if out else ''
-    except Exception:
-        out_txt = str(out)
-    try:
-        err_txt = err.decode('utf-8', errors='replace') if err else ''
-    except Exception:
-        err_txt = str(err)
-
-    if rc != 0:
-        raise CmdException('DSSR failed (rc=%s). stderr tail: %s' % (str(rc), _safe_tail(err_txt)))
-
-    if not out_txt.strip():
-        raise CmdException('DSSR returned empty stdout (expected JSON). stderr tail: %s' % _safe_tail(err_txt))
-
-    try:
-        return json.loads(out_txt)
-    except Exception:
-        s = out_txt
-        i = s.find('{')
-        j = s.rfind('}')
-        if i >= 0 and j > i:
-            try:
-                return json.loads(s[i:j + 1])
-            except Exception as e2:
-                raise CmdException('Failed to parse DSSR JSON. stdout head: %s | stderr tail: %s | err: %s' %
-                                   (s[:120].replace('\n', ' '), _safe_tail(err_txt), str(e2)))
-        raise CmdException('Failed to parse DSSR JSON (no JSON object found). stdout head: %s | stderr tail: %s' %
-                           (s[:120].replace('\n', ' '), _safe_tail(err_txt)))
+    @staticmethod
+    def parse_atom_id(atom_id):
+        """
+        Parses an atom identifier in Jmol/EBI Unit ID format.
+        Returns a compatible tuple of (chain, resi_number).
+        """
+        parts = str(atom_id).strip().split('|')
+        if len(parts) >= 5:
+            return parts[2].strip(), parts[4].strip()
+        raise CmdException('Unexpected atom_id format: "%s"' % atom_id)
 
 
-def _hex_to_rgb01(h):
-    import re
-    s = str(h).strip()
+    @staticmethod
+    def parse_a2b_atom(atom_id):
+        """
+        Parses atom-to-base strings in Jmol/EBI Unit ID format.
+        Returns a compatible tuple of (chain, resi_number, atom_name).
+        """
+        parts = str(atom_id).strip().split('|')
+        if len(parts) >= 6:
+            return parts[2].strip(), parts[4].strip(), parts[5].strip()
+        raise CmdException('Unexpected atom format: "%s"' % atom_id)
 
-    if s.startswith('"') and s.endswith('"'):
-        s = s[1:-1].strip()
-    if s.startswith("'") and s.endswith("'"):
-        s = s[1:-1].strip()
+    @staticmethod
+    def parse_dotbracket_pseudoknots(dotbracket):
+        """
+        Parses dot-bracket notation structures.
+        Bug Fix: Excludes layer 0 ('()'), which represents regular base pairs,
+        so that only genuine pseudoknot layers are identified.
+        """
+        stack_map = {'(': ')', '[': ']', '{': '}', '<': '>'}
+        close_to_open = {v: k for k, v in stack_map.items()}
+        stacks = {}
+        layers = {}
+        layer_assignment = {'()': 0, '[]': 1, '{}': 2, '<>': 3}
+        next_layer = 4
 
-    if s.lower().startswith('0x'):
-        s = s[2:]
-    if s.startswith('#'):
-        s = s[1:]
-
-    s = s.strip()
-    if re.fullmatch(r'[0-9a-fA-F]{3}', s):
-        s = ''.join([c * 2 for c in s])
-
-    if not re.fullmatch(r'[0-9a-fA-F]{6}', s):
-        raise CmdException('Invalid hex color "%s". Use FF00AA or 0xFF00AA (or "#FF00AA" quoted).' % h)
-
-    r = int(s[0:2], 16) / 255.0
-    g = int(s[2:4], 16) / 255.0
-    b = int(s[4:6], 16) / 255.0
-    return s.lower(), [r, g, b]
-
-
-def _resolve_color_spec(color_spec):
-    if color_spec is None:
-        return None
-    s = str(color_spec).strip()
-    if not s:
-        return None
-    if s.lower() in ('auto', 'default'):
-        return None
-
-    is_hexish = (
-        s.startswith('#') or
-        s.lower().startswith('0x') or
-        (len(s) in (3, 6) and all(c in '0123456789abcdefABCDEF' for c in s))
-    )
-    if is_hexish:
-        hex6, rgb = _hex_to_rgb01(s)
-        if hex6 in _hex_color_cache:
-            return _hex_color_cache[hex6]
-        cname = 'dssr_hex_%s' % hex6
-        cmd.set_color(cname, rgb)
-        _hex_color_cache[hex6] = cname
-        return cname
-
-    name = s.lower()
-    try:
-        idx = cmd.get_color_index(name)
-        if idx < 0:
-            raise Exception('unknown')
-    except Exception:
-        raise CmdException('Unknown color "%s". Use a PyMOL color name (e.g., blue) or hex like FF00AA / 0xFF00AA.' % s)
-    return name
-
-
-def parse_nt_id(nt_id):
-    """
-    Parses a nucleotide identifier in Jmol/EBI Unit ID format:
-    |Model Number| Chain ID|Residue Identifier|Residue Number|Atom Name|Alternate ID|Insertion Code|
-    Returns a compatible tuple of (chain, resi_number).
-    """
-    parts = str(nt_id).strip().split('|')
-    if len(parts) >= 5:
-        return parts[2].strip(), parts[4].strip()
-    raise CmdException('Unexpected nt_id format: "%s"' % nt_id)
-
-
-def parse_atom_id(atom_id):
-    """
-    Parses an atom identifier in Jmol/EBI Unit ID format.
-    Returns a compatible tuple of (chain, resi_number).
-    """
-    parts = str(atom_id).strip().split('|')
-    if len(parts) >= 5:
-        return parts[2].strip(), parts[4].strip()
-    raise CmdException('Unexpected atom_id format: "%s"' % atom_id)
-
-
-def parse_a2b_atom(atom_id):
-    """
-    Parses atom-to-base strings in Jmol/EBI Unit ID format.
-    Returns a compatible tuple of (chain, resi_number, atom_name).
-    """
-    parts = str(atom_id).strip().split('|')
-    if len(parts) >= 6:
-        return parts[2].strip(), parts[4].strip(), parts[5].strip()
-    raise CmdException('Unexpected atom format: "%s"' % atom_id)
-
-
-def parse_dotbracket_pseudoknots(dotbracket):
-    """
-    Parses dot-bracket notation structures.
-    Bug Fix: Excludes layer 0 ('()'), which represents regular base pairs,
-    so that only genuine pseudoknot layers are identified.
-    """
-    stack_map = {'(': ')', '[': ']', '{': '}', '<': '>'}
-    close_to_open = {v: k for k, v in stack_map.items()}
-    stacks = {}
-    layers = {}
-    layer_assignment = {'()': 0, '[]': 1, '{}': 2, '<>': 3}
-    next_layer = 4
-
-    for idx, char in enumerate(dotbracket):
-        if char == '.':
-            continue
-
-        if char in stack_map:
-            bracket_type = char + stack_map[char]
-            stacks.setdefault(bracket_type, []).append(idx)
-
-        elif char in close_to_open:
-            open_char = close_to_open[char]
-            bracket_type = open_char + char
-            if bracket_type not in stacks or not stacks[bracket_type]:
+        for idx, char in enumerate(dotbracket):
+            if char == '.':
                 continue
-            open_idx = stacks[bracket_type].pop()
-            if bracket_type not in layer_assignment:
-                layer_assignment[bracket_type] = next_layer
-                next_layer += 1
-            layer = layer_assignment[bracket_type]
 
-            # EXCLUDE LAYER 0 ('()') since it is the canonical structure, not a pseudoknot
-            if layer != 0:
-                layers.setdefault(layer, []).append((open_idx, idx))
+            if char in stack_map:
+                bracket_type = char + stack_map[char]
+                stacks.setdefault(bracket_type, []).append(idx)
 
-        elif char.isalpha():
-            stacks.setdefault(char, [])
-            if not stacks[char]:
-                stacks[char].append(idx)
-            else:
-                open_idx = stacks[char].pop()
-                if char not in layer_assignment:
-                    layer_assignment[char] = next_layer
+            elif char in close_to_open:
+                open_char = close_to_open[char]
+                bracket_type = open_char + char
+                if bracket_type not in stacks or not stacks[bracket_type]:
+                    continue
+                open_idx = stacks[bracket_type].pop()
+                if bracket_type not in layer_assignment:
+                    layer_assignment[bracket_type] = next_layer
                     next_layer += 1
-                layer = layer_assignment[char]
+                layer = layer_assignment[bracket_type]
 
-                # Standard safety check (alphabets map to layers >= 4, but safely exclude layer 0)
+                # EXCLUDE LAYER 0 ('()') since it is the canonical structure, not a pseudoknot
                 if layer != 0:
                     layers.setdefault(layer, []).append((open_idx, idx))
 
-    return layers
+            elif char.isalpha():
+                stacks.setdefault(char, [])
+                if not stacks[char]:
+                    stacks[char].append(idx)
+                else:
+                    open_idx = stacks[char].pop()
+                    if char not in layer_assignment:
+                        layer_assignment[char] = next_layer
+                        next_layer += 1
+                    layer = layer_assignment[char]
+
+                    # Standard safety check (alphabets map to layers >= 4, but safely exclude layer 0)
+                    if layer != 0:
+                        layers.setdefault(layer, []).append((open_idx, idx))
+
+        return layers
+
+    @staticmethod
+    def _atom_sel(chain, resi, atom_name):
+        atom_name = str(atom_name).replace('"', '\\"')
+        return '(chain %s and resi %s and name "%s")' % (chain, resi, atom_name)
+
+    @staticmethod
+    def build_selection_from_layer(layer_pairs, nts_list):
+        residues = set()
+        for open_idx, close_idx in layer_pairs:
+            if open_idx < len(nts_list):
+                nt1_id = nts_list[open_idx].get('nt_id')
+                if nt1_id:
+                    residues.add(ParsingAlgos.parse_nt_id(nt1_id))
+            if close_idx < len(nts_list):
+                nt2_id = nts_list[close_idx].get('nt_id')
+                if nt2_id:
+                    residues.add(ParsingAlgos.parse_nt_id(nt2_id))
+
+        if not residues:
+            return None
+
+        return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
+
+    @staticmethod
+    def build_selection_from_pair(pair_entry):
+        nt1 = pair_entry.get('nt1')
+        nt2 = pair_entry.get('nt2')
+        if not nt1 or not nt2:
+            raise CmdException('Pair entry missing nt1 or nt2')
+        residues = {ParsingAlgos.parse_nt_id(nt1), ParsingAlgos.parse_nt_id(nt2)}
+        return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
 
 
-def _atom_sel(chain, resi, atom_name):
-    atom_name = str(atom_name).replace('"', '\\"')
-    return '(chain %s and resi %s and name "%s")' % (chain, resi, atom_name)
+    @staticmethod
+    def build_selection_from_nts_list(nts_list):
+        if not nts_list:
+            raise CmdException('Empty nucleotide list')
+        residues = {ParsingAlgos.parse_nt_id(nt) for nt in nts_list}
+        return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
 
-
-def build_selection_from_layer(layer_pairs, nts_list):
-    residues = set()
-    for open_idx, close_idx in layer_pairs:
-        if open_idx < len(nts_list):
-            nt1_id = nts_list[open_idx].get('nt_id')
-            if nt1_id:
-                residues.add(parse_nt_id(nt1_id))
-        if close_idx < len(nts_list):
-            nt2_id = nts_list[close_idx].get('nt_id')
-            if nt2_id:
-                residues.add(parse_nt_id(nt2_id))
-
-    if not residues:
-        return None
-
-    return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
-
-
-def build_selection_from_pair(pair_entry):
-    nt1 = pair_entry.get('nt1')
-    nt2 = pair_entry.get('nt2')
-    if not nt1 or not nt2:
-        raise CmdException('Pair entry missing nt1 or nt2')
-    residues = {parse_nt_id(nt1), parse_nt_id(nt2)}
-    return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
-
-
-
-def build_selection_from_nts_list(nts_list):
-    if not nts_list:
-        raise CmdException('Empty nucleotide list')
-    residues = {parse_nt_id(nt) for nt in nts_list}
-    return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
-
-
-def build_selection_from_stem(stem_entry):
-    pairs = stem_entry.get('pairs', [])
-    if not pairs:
-        raise CmdException('Stem has no pairs')
-
-    residues = set()
-    for p in pairs:
-        if p.get('nt1'):
-            residues.add(parse_nt_id(p['nt1']))
-        if p.get('nt2'):
-            residues.add(parse_nt_id(p['nt2']))
-
-    return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
-
-
-def build_selection_from_hairpin(hairpin_entry):
-    nts_long = hairpin_entry.get('nts_long')
-    if not nts_long:
-        raise CmdException('Hairpin missing nts_long field')
-    nts_list = [nt.strip() for nt in nts_long.split(',') if nt.strip()]
-    return build_selection_from_nts_list(nts_list)
-
-
-def build_selection_from_coaxstack(coax_entry, stems_list):
-    stem_indices = coax_entry.get('stem_indices', [])
-    if not stem_indices:
-        raise CmdException('coaxStacks entry missing stem_indices')
-
-    residues = set()
-    for si in stem_indices:
-        try:
-            idx = int(si)
-        except Exception:
-            continue
-        if idx < 1 or idx > len(stems_list):
-            continue
-        stem_entry = stems_list[idx - 1]
+    @staticmethod
+    def build_selection_from_stem(stem_entry):
         pairs = stem_entry.get('pairs', [])
+        if not pairs:
+            raise CmdException('Stem has no pairs')
+
+        residues = set()
         for p in pairs:
             if p.get('nt1'):
-                residues.add(parse_nt_id(p['nt1']))
+                residues.add(ParsingAlgos.parse_nt_id(p['nt1']))
             if p.get('nt2'):
-                residues.add(parse_nt_id(p['nt2']))
+                residues.add(ParsingAlgos.parse_nt_id(p['nt2']))
 
-    if not residues:
-        raise CmdException('Could not build selection for coaxStacks entry')
+        return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
 
-    return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
+    @staticmethod
+    def build_selection_from_hairpin(hairpin_entry):
+        nts_long = hairpin_entry.get('nts_long')
+        if not nts_long:
+            raise CmdException('Hairpin missing nts_long field')
+        nts_list = [nt.strip() for nt in nts_long.split(',') if nt.strip()]
+        return ParsingAlgos.build_selection_from_nts_list(nts_list)
 
+    @staticmethod
+    def build_selection_from_coaxstack(coax_entry, stems_list):
+        stem_indices = coax_entry.get('stem_indices', [])
+        if not stem_indices:
+            raise CmdException('coaxStacks entry missing stem_indices')
 
-def build_selection_from_atom2base(a2b_entry):
-    atom = a2b_entry.get('atom')
-    nt = a2b_entry.get('nt')
-
-    clauses = []
-
-    if nt:
-        c_nt, r_nt = parse_nt_id(nt)
-        clauses.append('(chain %s and resi %s)' % (c_nt, r_nt))
-
-    if atom:
-        c_a, r_a, atom_name = parse_a2b_atom(atom)
-        atom_name = str(atom_name).replace('"', '\\"')
-        clauses.append('(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name))
-
-    if not clauses:
-        raise CmdException('atom2bases entry missing atom and nt')
-
-    return ' or '.join(clauses)
-
-
-def build_selection_from_aminor(aminor_entry):
-    desc_long = aminor_entry.get('desc_long', '')
-    if not desc_long or 'vs' not in desc_long:
-        raise CmdException('Aminors entry missing desc_long')
-
-    left, right = desc_long.split('vs', 1)
-    nts = []
-    left = left.strip()
-    right = right.strip()
-
-    if left:
-        nts.append(left)
-    if right:
-        for item in right.split(','):
-            item = item.strip()
-            if item:
-                nts.append(item)
-
-    if not nts:
-        raise CmdException('Aminors entry has empty residues')
-
-    return build_selection_from_nts_list(nts)
-
-
-def _shorten_nts_long(nts_long, max_items=6):
-    if not nts_long:
-        return ''
-    nts = [x.strip() for x in nts_long.split(',') if x.strip()]
-    if len(nts) <= max_items:
-        return ', '.join(nts)
-    half = max_items // 2
-    return '%s, ..., %s' % (', '.join(nts[:half]), ', '.join(nts[-half:]))
-
-
-def _preview_entry(feature, entry, i):
-    if feature == 'pairs':
-        nt1 = entry.get('nt1', '?')
-        nt2 = entry.get('nt2', '?')
-        lw = entry.get('LW', entry.get('bp', ''))
-        return '%d: %s - %s%s' % (i, nt1, nt2, (' (%s)' % lw) if lw else '')
-
-
-    if feature in ('stems', 'helices'):
-        n = len(entry.get('pairs', [])) if isinstance(entry.get('pairs', []), list) else 0
-        nm = entry.get('name', entry.get('index', ''))
-        return '%d: %s (pairs=%d)' % (i, str(nm), n)
-
-    if feature in ('stacks', 'nonstack', 'hairpins', 'bulges', 'iloops', 'internal', 'junctions',
-                   'sssegments', 'ssSegments', 'multiplets', 'splayunits'):
-        s = _shorten_nts_long(entry.get('nts_long', ''))
-        return '%d: %s' % (i, s if s else '(missing nts_long)')
-
-    if feature == 'coaxstacks':
-        return '%d: helix=%s stems=%s' % (i, str(entry.get('helix_index', '')), str(entry.get('stem_indices', [])))
-
-    if feature == 'atom2bases':
-        t = entry.get('type', '')
-        atom = entry.get('atom', '?')
-        nt = entry.get('nt', '?')
-        return '%d: %s atom=%s nt=%s' % (i, t if t else 'entry', atom, nt)
-
-    if feature == 'aminors':
-        ds = entry.get('desc_short', '')
-        dl = entry.get('desc_long', '')
-        return '%d: %s' % (i, ds if ds else dl)
-
-    if feature == 'nts':
-        return '%d: %s' % (i, entry.get('nt_id', '?'))
-
-    return '%d: (no preview)' % i
-
-
-def _extract_dotbracket(dssr_data):
-    if 'dbn' not in dssr_data:
-        raise CmdException('No dot-bracket notation found in DSSR output')
-    dbn_data = dssr_data['dbn']
-
-    if isinstance(dbn_data, dict):
-        if isinstance(dbn_data.get('all_chains'), dict) and 'sstr' in dbn_data['all_chains']:
-            return dbn_data['all_chains']['sstr']
-        if 'sstr' in dbn_data:
-            return dbn_data['sstr']
-        for v in dbn_data.values():
-            if isinstance(v, dict) and 'sstr' in v:
-                return v['sstr']
-        raise CmdException('Could not find sstr field in dbn data')
-
-    return dbn_data
-
-
-def _extract_chain_names(dssr_data):
-    chains = set()
-    try:
-        nts = dssr_data.get('nts', [])
-    except Exception:
-        nts = []
-    if isinstance(nts, list):
-        for nt in nts:
+        residues = set()
+        for si in stem_indices:
             try:
-                nt_id = nt.get('nt_id', '')
+                idx = int(si)
             except Exception:
-                nt_id = ''
-            if nt_id:
-                try:
-                    c, _ = parse_nt_id(nt_id)
-                except Exception:
-                    c = None
-                if c:
-                    chains.add(str(c))
-    return sorted(chains)
-
-
-def _count_pseudoknot_layers(dssr_data):
-    try:
-        dotbracket = _extract_dotbracket(dssr_data)
-        layers = parse_dotbracket_pseudoknots(dotbracket)
-        return len(layers) if layers else 0
-    except Exception:
-        return 0
-
-
-def _format_rna_summary_text(dssr_data):
-    chains = _extract_chain_names(dssr_data)
-    chains_txt = ' '.join(chains) if chains else '(unknown)'
-
-    pairs_n = len(dssr_data.get('pairs', [])) if isinstance(dssr_data.get('pairs', None), list) else 0
-    hairpins_n = len(dssr_data.get('hairpins', [])) if isinstance(dssr_data.get('hairpins', None), list) else 0
-    stems_n = len(dssr_data.get('stems', [])) if isinstance(dssr_data.get('stems', None), list) else 0
-    bulges_n = len(dssr_data.get('bulges', [])) if isinstance(dssr_data.get('bulges', None), list) else 0
-    junctions_n = len(dssr_data.get('junctions', [])) if isinstance(dssr_data.get('junctions', None), list) else 0
-    pk_n = _count_pseudoknot_layers(dssr_data)
-    aminors_n = len(dssr_data.get('Aminors', [])) if isinstance(dssr_data.get('Aminors', None), list) else 0
-    stacks_n = len(dssr_data.get('stacks', [])) if isinstance(dssr_data.get('stacks', None), list) else 0
-
-    lines = []
-    lines.append('RNA Structure Summary')
-    lines.append('---------------------')
-    lines.append('Chains: %s' % chains_txt)
-    lines.append('Base pairs: %d' % pairs_n)
-    lines.append('Hairpins: %d' % hairpins_n)
-    lines.append('Stems: %d' % stems_n)
-    lines.append('Bulges: %d' % bulges_n)
-    lines.append('Junctions: %d' % junctions_n)
-    lines.append('Pseudoknots: %d' % pk_n)
-    lines.append('A-minor interactions: %d' % aminors_n)
-    lines.append('Stacking interactions: %d' % stacks_n)
-    return '\n'.join(lines)
-
-
-def _collect_residues_from_nts_long(nts_long):
-    residues = set()
-    if not nts_long:
-        return residues
-    nts_list = [nt.strip() for nt in str(nts_long).split(',') if nt.strip()]
-    for nt in nts_list:
-        try:
-            residues.add(parse_nt_id(nt))
-        except Exception:
-            pass
-    return residues
-
-
-def _collect_residues_all(dssr_data, feature):
-    feature = str(feature).lower().strip()
-    residues = set()
-
-    if feature == 'pairs':
-        pairs = dssr_data.get('pairs', [])
-        if isinstance(pairs, list):
+                continue
+            if idx < 1 or idx > len(stems_list):
+                continue
+            stem_entry = stems_list[idx - 1]
+            pairs = stem_entry.get('pairs', [])
             for p in pairs:
+                if p.get('nt1'):
+                    residues.add(ParsingAlgos.parse_nt_id(p['nt1']))
+                if p.get('nt2'):
+                    residues.add(ParsingAlgos.parse_nt_id(p['nt2']))
+
+        if not residues:
+            raise CmdException('Could not build selection for coaxStacks entry')
+
+        return ' or '.join('(chain %s and resi %s)' % (c, r) for c, r in residues)
+
+    @staticmethod
+    def build_selection_from_atom2base(a2b_entry):
+        atom = a2b_entry.get('atom')
+        nt = a2b_entry.get('nt')
+
+        clauses = []
+
+        if nt:
+            c_nt, r_nt = ParsingAlgos.parse_nt_id(nt)
+            clauses.append('(chain %s and resi %s)' % (c_nt, r_nt))
+
+        if atom:
+            c_a, r_a, atom_name = ParsingAlgos.parse_a2b_atom(atom)
+            atom_name = str(atom_name).replace('"', '\\"')
+            clauses.append('(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name))
+
+        if not clauses:
+            raise CmdException('atom2bases entry missing atom and nt')
+
+        return ' or '.join(clauses)
+
+    @staticmethod
+    def build_selection_from_aminor(aminor_entry):
+        desc_long = aminor_entry.get('desc_long', '')
+        if not desc_long or 'vs' not in desc_long:
+            raise CmdException('Aminors entry missing desc_long')
+
+        left, right = desc_long.split('vs', 1)
+        nts = []
+        left = left.strip()
+        right = right.strip()
+
+        if left:
+            nts.append(left)
+        if right:
+            for item in right.split(','):
+                item = item.strip()
+                if item:
+                    nts.append(item)
+
+        if not nts:
+            raise CmdException('Aminors entry has empty residues')
+
+        return ParsingAlgos.build_selection_from_nts_list(nts)
+
+    @staticmethod
+    def _shorten_nts_long(nts_long, max_items=6):
+        if not nts_long:
+            return ''
+        nts = [x.strip() for x in nts_long.split(',') if x.strip()]
+        if len(nts) <= max_items:
+            return ', '.join(nts)
+        half = max_items // 2
+        return '%s, ..., %s' % (', '.join(nts[:half]), ', '.join(nts[-half:]))
+
+    @staticmethod
+    def _preview_entry(feature, entry, i):
+        if feature == 'pairs':
+            nt1 = entry.get('nt1', '?')
+            nt2 = entry.get('nt2', '?')
+            lw = entry.get('LW', entry.get('bp', ''))
+            return '%d: %s - %s%s' % (i, nt1, nt2, (' (%s)' % lw) if lw else '')
+
+
+        if feature in ('stems', 'helices'):
+            n = len(entry.get('pairs', [])) if isinstance(entry.get('pairs', []), list) else 0
+            nm = entry.get('name', entry.get('index', ''))
+            return '%d: %s (pairs=%d)' % (i, str(nm), n)
+
+        if feature in ('stacks', 'nonstack', 'hairpins', 'bulges', 'iloops', 'internal', 'junctions',
+                    'sssegments', 'ssSegments', 'multiplets', 'splayunits'):
+            s = ParsingAlgos._shorten_nts_long(entry.get('nts_long', ''))
+            return '%d: %s' % (i, s if s else '(missing nts_long)')
+
+        if feature == 'coaxstacks':
+            return '%d: helix=%s stems=%s' % (i, str(entry.get('helix_index', '')), str(entry.get('stem_indices', [])))
+
+        if feature == 'atom2bases':
+            t = entry.get('type', '')
+            atom = entry.get('atom', '?')
+            nt = entry.get('nt', '?')
+            return '%d: %s atom=%s nt=%s' % (i, t if t else 'entry', atom, nt)
+
+        if feature == 'aminors':
+            ds = entry.get('desc_short', '')
+            dl = entry.get('desc_long', '')
+            return '%d: %s' % (i, ds if ds else dl)
+
+        if feature == 'nts':
+            return '%d: %s' % (i, entry.get('nt_id', '?'))
+
+        return '%d: (no preview)' % i
+
+    @staticmethod
+    def _extract_dotbracket(dssr_data):
+        if 'dbn' not in dssr_data:
+            raise CmdException('No dot-bracket notation found in DSSR output')
+        dbn_data = dssr_data['dbn']
+
+        if isinstance(dbn_data, dict):
+            if isinstance(dbn_data.get('all_chains'), dict) and 'sstr' in dbn_data['all_chains']:
+                return dbn_data['all_chains']['sstr']
+            if 'sstr' in dbn_data:
+                return dbn_data['sstr']
+            for v in dbn_data.values():
+                if isinstance(v, dict) and 'sstr' in v:
+                    return v['sstr']
+            raise CmdException('Could not find sstr field in dbn data')
+
+        return dbn_data
+
+
+    @staticmethod
+    def _extract_chain_names(dssr_data):
+        chains = set()
+        try:
+            nts = dssr_data.get('nts', [])
+        except Exception:
+            nts = []
+        if isinstance(nts, list):
+            for nt in nts:
                 try:
-                    nt1 = p.get('nt1')
-                    nt2 = p.get('nt2')
+                    nt_id = nt.get('nt_id', '')
                 except Exception:
-                    nt1, nt2 = None, None
-                if nt1:
+                    nt_id = ''
+                if nt_id:
                     try:
-                        residues.add(parse_nt_id(nt1))
+                        c, _ = ParsingAlgos.parse_nt_id(nt_id)
                     except Exception:
-                        pass
-                if nt2:
-                    try:
-                        residues.add(parse_nt_id(nt2))
-                    except Exception:
-                        pass
+                        c = None
+                    if c:
+                        chains.add(str(c))
+        return sorted(chains)
+
+    @staticmethod
+    def _count_pseudoknot_layers(dssr_data):
+        try:
+            dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
+            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
+            return len(layers) if layers else 0
+        except Exception:
+            return 0 
+
+    @staticmethod
+    def _format_rna_summary_text(dssr_data):
+        chains = ParsingAlgos._extract_chain_names(dssr_data)
+        chains_txt = ' '.join(chains) if chains else '(unknown)'
+
+        pairs_n = len(dssr_data.get('pairs', [])) if isinstance(dssr_data.get('pairs', None), list) else 0
+        hairpins_n = len(dssr_data.get('hairpins', [])) if isinstance(dssr_data.get('hairpins', None), list) else 0
+        stems_n = len(dssr_data.get('stems', [])) if isinstance(dssr_data.get('stems', None), list) else 0
+        bulges_n = len(dssr_data.get('bulges', [])) if isinstance(dssr_data.get('bulges', None), list) else 0
+        junctions_n = len(dssr_data.get('junctions', [])) if isinstance(dssr_data.get('junctions', None), list) else 0
+        pk_n = ParsingAlgos._count_pseudoknot_layers(dssr_data)
+        aminors_n = len(dssr_data.get('Aminors', [])) if isinstance(dssr_data.get('Aminors', None), list) else 0
+        stacks_n = len(dssr_data.get('stacks', [])) if isinstance(dssr_data.get('stacks', None), list) else 0
+
+        lines = []
+        lines.append('RNA Structure Summary')
+        lines.append('---------------------')
+        lines.append('Chains: %s' % chains_txt)
+        lines.append('Base pairs: %d' % pairs_n)
+        lines.append('Hairpins: %d' % hairpins_n)
+        lines.append('Stems: %d' % stems_n)
+        lines.append('Bulges: %d' % bulges_n)
+        lines.append('Junctions: %d' % junctions_n)
+        lines.append('Pseudoknots: %d' % pk_n)
+        lines.append('A-minor interactions: %d' % aminors_n)
+        lines.append('Stacking interactions: %d' % stacks_n)
+        return '\n'.join(lines)
+
+    @staticmethod
+    def _collect_residues_from_nts_long(nts_long):
+        residues = set()
+        if not nts_long:
+            return residues
+        nts_list = [nt.strip() for nt in str(nts_long).split(',') if nt.strip()]
+        for nt in nts_list:
+            try:
+                residues.add(ParsingAlgos.parse_nt_id(nt))
+            except Exception:
+                pass
         return residues
 
-    if feature == 'stems':
-        stems = dssr_data.get('stems', [])
-        if isinstance(stems, list):
-            for st in stems:
-                try:
-                    pairs = st.get('pairs', [])
-                except Exception:
-                    pairs = []
-                if not isinstance(pairs, list):
-                    continue
+    @staticmethod
+    def _collect_residues_all(dssr_data, feature):
+        feature = str(feature).lower().strip()
+        residues = set()
+
+        if feature == 'pairs':
+            pairs = dssr_data.get('pairs', [])
+            if isinstance(pairs, list):
                 for p in pairs:
                     try:
-                        cmd_nt1 = p.get('nt1')
-                        cmd_nt2 = p.get('nt2')
+                        nt1 = p.get('nt1')
+                        nt2 = p.get('nt2')
                     except Exception:
-                        cmd_nt1, cmd_nt2 = None, None
-                    if cmd_nt1:
+                        nt1, nt2 = None, None
+                    if nt1:
                         try:
-                            residues.add(parse_nt_id(cmd_nt1))
+                            residues.add(ParsingAlgos.parse_nt_id(nt1))
                         except Exception:
                             pass
-                    if cmd_nt2:
+                    if nt2:
                         try:
-                            residues.add(parse_nt_id(cmd_nt2))
+                            residues.add(ParsingAlgos.parse_nt_id(nt2))
                         except Exception:
                             pass
-        return residues
+            return residues
 
-    if feature in ('hairpins', 'bulges', 'junctions', 'stacks', 'nonstack'):
-        json_key = FEATURE_MAP.get(feature, feature)
-        entries = dssr_data.get(json_key, [])
-        if feature == 'nonstack' and isinstance(entries, dict):
-            entries = [entries] if entries.get('num_nts', 0) > 0 or entries.get('nts_long') else []
-        if isinstance(entries, list):
-            for e in entries:
-                try:
-                    nts_long = e.get('nts_long', '')
-                except Exception:
-                    nts_long = ''
-                residues |= _collect_residues_from_nts_long(nts_long)
-        return residues
-
-    if feature == 'aminors':
-        entries = dssr_data.get('Aminors', [])
-        if isinstance(entries, list):
-            for a in entries:
-                try:
-                    desc_long = a.get('desc_long', '')
-                except Exception:
-                    desc_long = ''
-                if not desc_long or 'vs' not in desc_long:
-                    continue
-                try:
-                    left, right = desc_long.split('vs', 1)
-                except Exception:
-                    continue
-                nts = []
-                left = left.strip()
-                right = right.strip()
-                if left:
-                    nts.append(left)
-                if right:
-                    for item in right.split(','):
-                        item = item.strip()
-                        if item:
-                            nts.append(item)
-                for nt in nts:
+        if feature == 'stems':
+            stems = dssr_data.get('stems', [])
+            if isinstance(stems, list):
+                for st in stems:
                     try:
-                        residues.add(parse_nt_id(nt))
+                        pairs = st.get('pairs', [])
                     except Exception:
-                        pass
-        return residues
-
-    if feature == 'pseudoknot':
-        try:
-            dotbracket = _extract_dotbracket(dssr_data)
-            nts_list = dssr_data.get('nts', None)
-            if nts_list is None or not isinstance(nts_list, list):
-                return residues
-            layers = parse_dotbracket_pseudoknots(dotbracket) or {}
-            for pairs in layers.values():
-                for open_idx, close_idx in pairs:
-                    if open_idx < len(nts_list):
-                        nt1_id = nts_list[open_idx].get('nt_id')
-                        if nt1_id:
+                        pairs = []
+                    if not isinstance(pairs, list):
+                        continue
+                    for p in pairs:
+                        try:
+                            cmd_nt1 = p.get('nt1')
+                            cmd_nt2 = p.get('nt2')
+                        except Exception:
+                            cmd_nt1, cmd_nt2 = None, None
+                        if cmd_nt1:
                             try:
-                                residues.add(parse_nt_id(nt1_id))
+                                residues.add(ParsingAlgos.parse_nt_id(cmd_nt1))
                             except Exception:
                                 pass
-                    if close_idx < len(nts_list):
-                        nt2_id = nts_list[close_idx].get('nt_id')
-                        if nt2_id:
+                        if cmd_nt2:
                             try:
-                                residues.add(parse_nt_id(nt2_id))
+                                residues.add(ParsingAlgos.parse_nt_id(cmd_nt2))
                             except Exception:
                                 pass
-        except Exception:
-            pass
-        return residues
+            return residues
 
-    return residues
+        if feature in ('hairpins', 'bulges', 'junctions', 'stacks', 'nonstack'):
+            json_key = FEATURE_MAP.get(feature, feature)
+            entries = dssr_data.get(json_key, [])
+            if feature == 'nonstack' and isinstance(entries, dict):
+                entries = [entries] if entries.get('num_nts', 0) > 0 or entries.get('nts_long') else []
+            if isinstance(entries, list):
+                for e in entries:
+                    try:
+                        nts_long = e.get('nts_long', '')
+                    except Exception:
+                        nts_long = ''
+                    residues |= ParsingAlgos._collect_residues_from_nts_long(nts_long)
+            return residues
 
-
-def _sort_resi_key(resi_str):
-    try:
-        return (0, int(str(resi_str)))
-    except Exception:
-        return (1, str(resi_str))
-
-
-def _compact_sel_from_residues(residues):
-    if not residues:
-        return ''
-    by_chain = {}
-    for c, r in residues:
-        c = str(c)
-        r = str(r)
-        by_chain.setdefault(c, set()).add(r)
-
-    parts = []
-    for c in sorted(by_chain.keys()):
-        resis = sorted(by_chain[c], key=_sort_resi_key)
-        resi_expr = '+'.join(resis)
-        parts.append('(chain %s and resi %s)' % (c, resi_expr))
-    return ' or '.join(parts)
-
-def _build_residue_sel_from_dssr(dssr_data, feature, index):
-    feature = str(feature).lower().strip()
-    idx = int(index)
-
-    if feature == 'pseudoknot':
-        dotbracket = _extract_dotbracket(dssr_data)
-        nts_list = dssr_data.get('nts', None)
-        if nts_list is None:
-            raise CmdException('No nts found in DSSR output')
-
-        layers = parse_dotbracket_pseudoknots(dotbracket)
-        if not layers:
-            raise CmdException('No pseudoknot layers found')
-
-        layer_keys = sorted(layers.keys())
-        if idx < 1 or idx > len(layer_keys):
-            raise CmdException('pseudoknot layer index %d out of range (1..%d)' % (idx, len(layer_keys)))
-
-        pairs = layers[layer_keys[idx - 1]]
-        sel_str = build_selection_from_layer(pairs, nts_list)
-        if not sel_str:
-            raise CmdException('Could not build selection for pseudoknot layer %d' % idx)
-        return sel_str
-
-    if feature not in FEATURE_MAP:
-        raise CmdException('Unknown feature "%s"' % feature)
-
-    json_key = FEATURE_MAP[feature]
-    feature_list = dssr_data.get(json_key, None)
-    if feature == 'nonstack' and isinstance(feature_list, dict):
-        feature_list = [feature_list] if feature_list.get('num_nts', 0) > 0 or feature_list.get('nts_long') else []
-    if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
-        raise CmdException('No "%s" found in DSSR output' % json_key)
-
-    if idx < 1 or idx > len(feature_list):
-        raise CmdException('%s index %d out of range (1..%d)' % (feature, idx, len(feature_list)))
-
-    entry = feature_list[idx - 1]
-
-    if feature == 'pairs':
-        return build_selection_from_pair(entry)
-
-    if feature in ('stems', 'helices'):
-        return build_selection_from_stem(entry)
-
-    if feature == 'hairpins':
-        return build_selection_from_hairpin(entry)
-
-    if feature in ('stacks', 'nonstack', 'bulges', 'iloops', 'internal', 'junctions',
-                   'sssegments', 'ssSegments', 'multiplets', 'splayunits'):
-        nts_long = entry.get('nts_long', '')
-        if not nts_long:
-            raise CmdException('%s entry missing nts_long field' % feature)
-        nts_list_parsed = [nt.strip() for nt in nts_long.split(',') if nt.strip()]
-        return build_selection_from_nts_list(nts_list_parsed)
-
-    if feature == 'coaxstacks':
-        stems_list = dssr_data.get('stems', [])
-        if not stems_list:
-            raise CmdException('No stems found, required for coaxStacks')
-        return build_selection_from_coaxstack(entry, stems_list)
-
-    if feature == 'atom2bases':
-        return build_selection_from_atom2base(entry)
-
-    if feature == 'aminors':
-        return build_selection_from_aminor(entry)
-
-    if feature == 'nts':
-        nt_id = entry.get('nt_id')
-        if not nt_id:
-            raise CmdException('Nucleotide entry missing nt_id field')
-        c, r = parse_nt_id(nt_id)
-        return '(chain %s and resi %s)' % (c, r)
-
-    raise CmdException('Feature "%s" not supported for residue selection' % feature)
-
-
-def dssr_select(selection='all',
-                   state=-1,
-                   feature='pairs',
-                   index=1,
-                   name='dssr_select',
-                   exe='x3dna-dssr',
-                   show_info=0,
-                   quiet=1,
-                   color='auto',
-                   precolor=1,
-                   distance_name=''):
-    import tempfile, os
-
-    state = int(state)
-    index = int(index)
-    show_info = int(show_info)
-    quiet = int(quiet)
-    precolor = int(precolor)
-    feature = unquote(feature).lower().strip()
-
-    user_color = _resolve_color_spec(unquote(color).strip())
-
-    if feature in ('features', 'help'):
-        keys = sorted(FEATURE_MAP.keys())
-        print('Supported features: ' + ', '.join(keys))
-        print('Tip: use index=0 to list detected items for a feature.')
-        return
-
-    if feature not in FEATURE_MAP:
-        valid = ', '.join(sorted(FEATURE_MAP.keys()))
-        raise CmdException('Unknown feature "%s". Valid: %s' % (feature, valid))
-
-    json_key = FEATURE_MAP[feature]
-
-    if state == 0 or state < 0:
-        state = cmd.get_state()
-
-    tmp = tempfile.NamedTemporaryFile(suffix='.pdb', delete=False)
-    tmpfilepdb = tmp.name
-    tmp.close()
-
-    try:
-        cmd.save(tmpfilepdb, selection, state)
-        if precolor:
-            cmd.color('gray', selection)
-
-        dssr_data = run_dssr_json(tmpfilepdb, exe)
+        if feature == 'aminors':
+            entries = dssr_data.get('Aminors', [])
+            if isinstance(entries, list):
+                for a in entries:
+                    try:
+                        desc_long = a.get('desc_long', '')
+                    except Exception:
+                        desc_long = ''
+                    if not desc_long or 'vs' not in desc_long:
+                        continue
+                    try:
+                        left, right = desc_long.split('vs', 1)
+                    except Exception:
+                        continue
+                    nts = []
+                    left = left.strip()
+                    right = right.strip()
+                    if left:
+                        nts.append(left)
+                    if right:
+                        for item in right.split(','):
+                            item = item.strip()
+                            if item:
+                                nts.append(item)
+                    for nt in nts:
+                        try:
+                            residues.add(ParsingAlgos.parse_nt_id(nt))
+                        except Exception:
+                            pass
+            return residues
 
         if feature == 'pseudoknot':
-            layer_colors = ['blue', 'pink', 'green', 'yellow', 'orange']
+            try:
+                dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
+                nts_list = dssr_data.get('nts', None)
+                if nts_list is None or not isinstance(nts_list, list):
+                    return residues
+                layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket) or {}
+                for pairs in layers.values():
+                    for open_idx, close_idx in pairs:
+                        if open_idx < len(nts_list):
+                            nt1_id = nts_list[open_idx].get('nt_id')
+                            if nt1_id:
+                                try:
+                                    residues.add(ParsingAlgos.parse_nt_id(nt1_id))
+                                except Exception:
+                                    pass
+                        if close_idx < len(nts_list):
+                            nt2_id = nts_list[close_idx].get('nt_id')
+                            if nt2_id:
+                                try:
+                                    residues.add(ParsingAlgos.parse_nt_id(nt2_id))
+                                except Exception:
+                                    pass
+            except Exception:
+                pass
+            return residues
 
-            dotbracket = _extract_dotbracket(dssr_data)
+        return residues
+
+    @staticmethod
+    def _sort_resi_key(resi_str):
+        try:
+            return (0, int(str(resi_str)))
+        except Exception:
+            return (1, str(resi_str))
+
+    @staticmethod
+    def _compact_sel_from_residues(residues):
+        if not residues:
+            return ''
+        by_chain = {}
+        for c, r in residues:
+            c = str(c)
+            r = str(r)
+            by_chain.setdefault(c, set()).add(r)
+
+        parts = []
+        for c in sorted(by_chain.keys()):
+            resis = sorted(by_chain[c], key=ParsingAlgos._sort_resi_key)
+            resi_expr = '+'.join(resis)
+            parts.append('(chain %s and resi %s)' % (c, resi_expr))
+        return ' or '.join(parts)
+
+    @staticmethod
+    def _build_residue_sel_from_dssr(dssr_data, feature, index):
+        feature = str(feature).lower().strip()
+        idx = int(index)
+
+        if feature == 'pseudoknot':
+            dotbracket =ParsingAlgos._extract_dotbracket(dssr_data)
             nts_list = dssr_data.get('nts', None)
             if nts_list is None:
                 raise CmdException('No nts found in DSSR output')
 
-            layers = parse_dotbracket_pseudoknots(dotbracket)
+            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
             if not layers:
-                raise CmdException('No pseudoknot layers found in structure')
+                raise CmdException('No pseudoknot layers found')
 
             layer_keys = sorted(layers.keys())
+            if idx < 1 or idx > len(layer_keys):
+                raise CmdException('pseudoknot layer index %d out of range (1..%d)' % (idx, len(layer_keys)))
 
-            if index == 0:
-                print('pseudoknot: %d layer(s)' % len(layer_keys))
-                for j, k in enumerate(layer_keys, 1):
-                    print('  layer %d (key=%s): %d pair(s)' % (j, str(k), len(layers[k])))
-                if not quiet and show_info:
-                    print('pseudoknot dot-bracket: ' + str(dotbracket))
-                return
+            pairs = layers[layer_keys[idx - 1]]
+            sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
+            if not sel_str:
+                raise CmdException('Could not build selection for pseudoknot layer %d' % idx)
+            return sel_str
 
-            if index < 1 or index > len(layer_keys):
-                raise CmdException('Layer index %d out of range (1..%d)' % (index, len(layer_keys)))
+        if feature not in FEATURE_MAP:
+            raise CmdException('Unknown feature "%s"' % feature)
 
-            layer_key = layer_keys[index - 1]
-            pairs = layers[layer_key]
-            layer_color = layer_colors[(index - 1) % len(layer_colors)]
-
-            sel_str = build_selection_from_layer(pairs, nts_list)
-            if sel_str is None:
-                raise CmdException('Could not build selection for layer %d' % index)
-
-            cmd.select(name, sel_str)
-            cmd.color(user_color if user_color else layer_color, name)
-
-            if not quiet:
-                print('dssr_select: selection "%s" pseudoknot layer %d with %d pair(s)' % (name, index, len(pairs)))
-            return
-
+        json_key = FEATURE_MAP[feature]
         feature_list = dssr_data.get(json_key, None)
         if feature == 'nonstack' and isinstance(feature_list, dict):
             feature_list = [feature_list] if feature_list.get('num_nts', 0) > 0 or feature_list.get('nts_long') else []
         if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
             raise CmdException('No "%s" found in DSSR output' % json_key)
 
-        if index == 0:
-            total = len(feature_list)
-            print('%s: %d item(s)' % (feature, total))
-            show_n = 20 if not quiet else 10
-            show_n = min(show_n, total)
-            for i in range(show_n):
-                print('  ' + _preview_entry(feature, feature_list[i], i + 1))
-            if total > show_n:
-                print('  ... (%d more)' % (total - show_n))
-            return
+        if idx < 1 or idx > len(feature_list):
+            raise CmdException('%s index %d out of range (1..%d)' % (feature, idx, len(feature_list)))
 
-        if index < 1 or index > len(feature_list):
-            raise CmdException('%s index %d out of range (1..%d)' % (feature, index, len(feature_list)))
-
-        entry = feature_list[index - 1]
+        entry = feature_list[idx - 1]
 
         if feature == 'pairs':
-            sel_str = build_selection_from_pair(entry)
-        elif feature in ('stems', 'helices'):
-            sel_str = build_selection_from_stem(entry)
-        elif feature == 'hairpins':
-            sel_str = build_selection_from_hairpin(entry)
-        elif feature in ('stacks', 'nonstack', 'bulges', 'iloops', 'internal', 'junctions',
-                         'sssegments', 'ssSegments', 'multiplets', 'splayunits'):
+            return ParsingAlgos.build_selection_from_pair(entry)
+
+        if feature in ('stems', 'helices'):
+            return ParsingAlgos.build_selection_from_stem(entry)
+
+        if feature == 'hairpins':
+            return ParsingAlgos.build_selection_from_hairpin(entry)
+
+        if feature in ('stacks', 'nonstack', 'bulges', 'iloops', 'internal', 'junctions',
+                    'sssegments', 'ssSegments', 'multiplets', 'splayunits'):
             nts_long = entry.get('nts_long', '')
             if not nts_long:
                 raise CmdException('%s entry missing nts_long field' % feature)
             nts_list_parsed = [nt.strip() for nt in nts_long.split(',') if nt.strip()]
-            sel_str = build_selection_from_nts_list(nts_list_parsed)
-        elif feature == 'coaxstacks':
+            return ParsingAlgos.build_selection_from_nts_list(nts_list_parsed)
+
+        if feature == 'coaxstacks':
             stems_list = dssr_data.get('stems', [])
             if not stems_list:
                 raise CmdException('No stems found, required for coaxStacks')
-            sel_str = build_selection_from_coaxstack(entry, stems_list)
-        elif feature == 'atom2bases':
-            sel_str = build_selection_from_atom2base(entry)
-        elif feature == 'aminors':
-            sel_str = build_selection_from_aminor(entry)
-        elif feature == 'nts':
+            return ParsingAlgos.build_selection_from_coaxstack(entry, stems_list)
+
+        if feature == 'atom2bases':
+            return ParsingAlgos.build_selection_from_atom2base(entry)
+
+        if feature == 'aminors':
+            return ParsingAlgos.build_selection_from_aminor(entry)
+
+        if feature == 'nts':
             nt_id = entry.get('nt_id')
             if not nt_id:
                 raise CmdException('Nucleotide entry missing nt_id field')
-            c, r = parse_nt_id(nt_id)
-            sel_str = '(chain %s and resi %s)' % (c, r)
-        else:
-            raise CmdException('Feature type "%s" not implemented' % feature)
+            c, r = ParsingAlgos.parse_nt_id(nt_id)
+            return '(chain %s and resi %s)' % (c, r)
 
-        cmd.select(name, sel_str)
-        cmd.color(user_color if user_color else 'pink', name)
-        selected_features.append(feature)
-
-        if not quiet:
-            print('dssr_select: created selection "%s" for %s (index %d) in state %d' % (name, feature, index, state))
-
-    finally:
-        try:
-            os.remove(tmpfilepdb)
-        except OSError:
-            pass
+        raise CmdException('Feature "%s" not supported for residue selection' % feature)
 
 
-def _dssr_default_selection():
-    objs = cmd.get_object_list('enabled')
-    if len(objs) == 1:
-        return objs[0]
-    return 'all'
+class DssrFunctions:
+    @staticmethod
+    def dssr_select(selection='all',
+                    state=-1,
+                    feature='pairs',
+                    index=1,
+                    name='dssr_select',
+                    exe='x3dna-dssr',
+                    show_info=0,
+                    quiet=1,
+                    color='auto',
+                    precolor=1,
+                    distance_name=''):
+        import tempfile, os
 
-
-def dssr(sel=None, selection=None,
-         f=None, feature='pairs',
-         i=None, index=1,
-         n=None, name=None,
-         q=None, quiet=0,
-         si=None, show_info=0,
-         st=None, state=-1,
-         exe='x3dna-dssr',
-         color='auto',
-         display=0,
-         stick_radius=0.25,
-         do_zoom=1,
-         pc=None,
-         precolor=1,
-         distname=None,
-         distance_name=''):
-    selection = selection or sel or _dssr_default_selection()
-
-    feature_in = f if f is not None else feature
-    feature_in = unquote(feature_in).strip()
-
-    if feature_in.lower() in ('features', 'help'):
-        dssr_select(selection=selection, state=state, feature='features', index=0,
-                      name='dssr_select', exe=exe, show_info=0,
-                      quiet=int(q if q is not None else quiet),
-                      color='auto', precolor=int(precolor))
-        return
-
-    idx = int(i if i is not None else index)
-    qt = int(q if q is not None else quiet)
-    si2 = int(si if si is not None else show_info)
-    st2 = int(st if st is not None else state)
-
-    if pc is not None:
-        precolor = int(pc)
-    precolor = int(precolor)
-
-    dist_nm = distname if distname is not None else distance_name
-    dist_nm = str(dist_nm).strip()
-
-    nm = name if name is not None else n
-    if not nm:
-        nm = '%s%d' % (feature_in.lower(), idx)
-
-    dssr_select(selection=selection, state=st2, feature=feature_in, index=idx,
-                   name=nm, exe=exe, show_info=si2, quiet=qt, color=color,
-                   precolor=precolor, distance_name=dist_nm)
-
-    if int(display):
-        cmd.show('sticks', nm)
-        try:
-            cmd.set('stick_radius', float(stick_radius), nm)
-        except Exception:
-            pass
-        if int(do_zoom):
-            cmd.zoom(nm)
-
-
-def _unused_name(prefix):
-    try:
-        return cmd.get_unused_name(prefix)
-    except Exception:
-        base = str(prefix) if prefix else 'obj'
-        name = base
-        k = 1
-        while True:
-            try:
-                exists = name in cmd.get_object_list()
-            except Exception:
-                exists = False
-            if not exists:
-                return name
-            k += 1
-            name = '%s%d' % (base, k)
-
-
-def dssr_block(selection='all',
-               state=-1,
-               block_file='face',
-               block_depth=0.5,
-               name='',
-               exe='x3dna-dssr',
-               quiet=1):
-    import subprocess
-    import tempfile, os
-
-    try:
         state = int(state)
-    except Exception:
-        state = -1
-    quiet = int(quiet)
+        index = int(index)
+        show_info = int(show_info)
+        quiet = int(quiet)
+        precolor = int(precolor)
+        feature = HelperFunctions.unquote(feature).lower().strip()
 
-    if state < 0:
+        user_color = HelperFunctions._resolve_color_spec(HelperFunctions.unquote(color).strip())
+
+        if feature in ('features', 'help'):
+            keys = sorted(FEATURE_MAP.keys())
+            print('Supported features: ' + ', '.join(keys))
+            print('Tip: use index=0 to list detected items for a feature.')
+            return
+
+        if feature not in FEATURE_MAP:
+            valid = ', '.join(sorted(FEATURE_MAP.keys()))
+            raise CmdException('Unknown feature "%s". Valid: %s' % (feature, valid))
+
+        json_key = FEATURE_MAP[feature]
+
+        if state == 0 or state < 0:
+            state = cmd.get_state()
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.pdb', delete=False)
+        tmpfilepdb = tmp.name
+        tmp.close()
+
         try:
-            state = int(cmd.get_state())
-        except Exception:
-            state = 1
+            cmd.save(tmpfilepdb, selection, state)
+            if precolor:
+                cmd.color('gray', selection)
 
-    tmp_pdb = tempfile.NamedTemporaryFile(suffix='.pdb', delete=False)
-    tmp_r3d = tempfile.NamedTemporaryFile(suffix='.r3d', delete=False)
-    tmpfilepdb = tmp_pdb.name
-    tmpfiler3d = tmp_r3d.name
-    tmp_pdb.close()
-    tmp_r3d.close()
+            dssr_data = HelperFunctions.run_dssr_json(tmpfilepdb, exe)
 
-    if not name:
-        name = _unused_name('dssr_block')
+            if feature == 'pseudoknot':
+                layer_colors = ['blue', 'pink', 'green', 'yellow', 'orange']
 
-    try:
-        if state == 0:
+                dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
+                nts_list = dssr_data.get('nts', None)
+                if nts_list is None:
+                    raise CmdException('No nts found in DSSR output')
+
+                layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
+                if not layers:
+                    raise CmdException('No pseudoknot layers found in structure')
+
+                layer_keys = sorted(layers.keys())
+
+                if index == 0:
+                    print('pseudoknot: %d layer(s)' % len(layer_keys))
+                    for j, k in enumerate(layer_keys, 1):
+                        print('  layer %d (key=%s): %d pair(s)' % (j, str(k), len(layers[k])))
+                    if not quiet and show_info:
+                        print('pseudoknot dot-bracket: ' + str(dotbracket))
+                    return
+
+                if index < 1 or index > len(layer_keys):
+                    raise CmdException('Layer index %d out of range (1..%d)' % (index, len(layer_keys)))
+
+                layer_key = layer_keys[index - 1]
+                pairs = layers[layer_key]
+                layer_color = layer_colors[(index - 1) % len(layer_colors)]
+
+                sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
+                if sel_str is None:
+                    raise CmdException('Could not build selection for layer %d' % index)
+
+                cmd.select(name, sel_str)
+                cmd.color(user_color if user_color else layer_color, name)
+
+                if not quiet:
+                    print('dssr_select: selection "%s" pseudoknot layer %d with %d pair(s)' % (name, index, len(pairs)))
+                return
+
+            feature_list = dssr_data.get(json_key, None)
+            if feature == 'nonstack' and isinstance(feature_list, dict):
+                feature_list = [feature_list] if feature_list.get('num_nts', 0) > 0 or feature_list.get('nts_long') else []
+            if feature_list is None or not isinstance(feature_list, list) or len(feature_list) == 0:
+                raise CmdException('No "%s" found in DSSR output' % json_key)
+
+            if index == 0:
+                total = len(feature_list)
+                print('%s: %d item(s)' % (feature, total))
+                show_n = 20 if not quiet else 10
+                show_n = min(show_n, total)
+                for i in range(show_n):
+                    print('  ' + ParsingAlgos._preview_entry(feature, feature_list[i], i + 1))
+                if total > show_n:
+                    print('  ... (%d more)' % (total - show_n))
+                return
+
+            if index < 1 or index > len(feature_list):
+                raise CmdException('%s index %d out of range (1..%d)' % (feature, index, len(feature_list)))
+
+            entry = feature_list[index - 1]
+
+            if feature == 'pairs':
+                sel_str = ParsingAlgos.build_selection_from_pair(entry)
+            elif feature in ('stems', 'helices'):
+                sel_str = ParsingAlgos.build_selection_from_stem(entry)
+            elif feature == 'hairpins':
+                sel_str = ParsingAlgos.build_selection_from_hairpin(entry)
+            elif feature in ('stacks', 'nonstack', 'bulges', 'iloops', 'internal', 'junctions',
+                            'sssegments', 'ssSegments', 'multiplets', 'splayunits'):
+                nts_long = entry.get('nts_long', '')
+                if not nts_long:
+                    raise CmdException('%s entry missing nts_long field' % feature)
+                nts_list_parsed = [nt.strip() for nt in nts_long.split(',') if nt.strip()]
+                sel_str = ParsingAlgos.build_selection_from_nts_list(nts_list_parsed)
+            elif feature == 'coaxstacks':
+                stems_list = dssr_data.get('stems', [])
+                if not stems_list:
+                    raise CmdException('No stems found, required for coaxStacks')
+                sel_str = ParsingAlgos.build_selection_from_coaxstack(entry, stems_list)
+            elif feature == 'atom2bases':
+                sel_str = ParsingAlgos.build_selection_from_atom2base(entry)
+            elif feature == 'aminors':
+                sel_str = ParsingAlgos.build_selection_from_aminor(entry)
+            elif feature == 'nts':
+                nt_id = entry.get('nt_id')
+                if not nt_id:
+                    raise CmdException('Nucleotide entry missing nt_id field')
+                c, r = ParsingAlgos.parse_nt_id(nt_id)
+                sel_str = '(chain %s and resi %s)' % (c, r)
+            else:
+                raise CmdException('Feature type "%s" not implemented' % feature)
+
+            cmd.select(name, sel_str)
+            cmd.color(user_color if user_color else 'pink', name)
+            selected_features.append(feature)
+
+            if not quiet:
+                print('dssr_select: created selection "%s" for %s (index %d) in state %d' % (name, feature, index, state))
+
+        finally:
             try:
-                n_states = int(cmd.count_states(selection))
-            except Exception:
-                n_states = 1
-            states = list(range(1, max(1, n_states) + 1))
-        else:
-            states = [max(1, int(state))]
-
-        for st in states:
-            cmd.save(tmpfilepdb, selection, st)
-
-            args = [
-                exe,
-                '--block-file=' + unquote(block_file),
-                '--block-depth=' + str(block_depth),
-                '-i=' + tmpfilepdb,
-                '-o=' + tmpfiler3d,
-            ]
-
-            try:
-                p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out, err = p.communicate()
-                rc = p.returncode
+                os.remove(tmpfilepdb)
             except OSError:
-                raise CmdException('Cannot execute exe="%s"' % exe)
+                pass
 
-            if rc != 0:
-                err_txt = ''
+    @staticmethod           
+    def _dssr_default_selection():
+        objs = cmd.get_object_list('enabled')
+        if len(objs) == 1:
+            return objs[0]
+        return 'all'
+
+    @staticmethod
+    def dssr(sel=None, selection=None,
+            f=None, feature='pairs',
+            i=None, index=1,
+            n=None, name=None,
+            q=None, quiet=0,
+            si=None, show_info=0,
+            st=None, state=-1,
+            exe='x3dna-dssr',
+            color='auto',
+            display=0,
+            stick_radius=0.25,
+            do_zoom=1,
+            pc=None,
+            precolor=1,
+            distname=None,
+            distance_name=''):
+        selection = selection or sel or DssrFunctions._dssr_default_selection()
+
+        feature_in = f if f is not None else feature
+        feature_in = HelperFunctions.unquote(feature_in).strip()
+
+        if feature_in.lower() in ('features', 'help'):
+            DssrFunctions.dssr_select(selection=selection, state=state, feature='features', index=0,
+                        name='dssr_select', exe=exe, show_info=0,
+                        quiet=int(q if q is not None else quiet),
+                        color='auto', precolor=int(precolor))
+            return
+
+        idx = int(i if i is not None else index)
+        qt = int(q if q is not None else quiet)
+        si2 = int(si if si is not None else show_info)
+        st2 = int(st if st is not None else state)
+
+        if pc is not None:
+            precolor = int(pc)
+        precolor = int(precolor)
+
+        dist_nm = distname if distname is not None else distance_name
+        dist_nm = str(dist_nm).strip()
+
+        nm = name if name is not None else n
+        if not nm:
+            nm = '%s%d' % (feature_in.lower(), idx)
+
+        DssrFunctions.dssr_select(selection=selection, state=st2, feature=feature_in, index=idx,
+                    name=nm, exe=exe, show_info=si2, quiet=qt, color=color,
+                    precolor=precolor, distance_name=dist_nm)
+
+        if int(display):
+            cmd.show('sticks', nm)
+            try:
+                cmd.set('stick_radius', float(stick_radius), nm)
+            except Exception:
+                pass
+            if int(do_zoom):
+                cmd.zoom(nm)
+
+    @staticmethod
+    def _unused_name(prefix):
+        try:
+            return cmd.get_unused_name(prefix)
+        except Exception:
+            base = str(prefix) if prefix else 'obj'
+            name = base
+            k = 1
+            while True:
                 try:
-                    err_txt = err.decode('utf-8', errors='replace') if err else ''
+                    exists = name in cmd.get_object_list()
                 except Exception:
-                    err_txt = str(err)
-                raise CmdException('DSSR block failed (rc=%s). stderr tail: %s' % (str(rc), _safe_tail(err_txt)))
+                    exists = False
+                if not exists:
+                    return name
+                k += 1
+                name = '%s%d' % (base, k)
 
-            cmd.load(tmpfiler3d, name, max(1, st), zoom=0)
+    @staticmethod
+    def dssr_block(selection='all',
+                state=-1,
+                block_file='face',
+                block_depth=0.5,
+                name='',
+                exe='x3dna-dssr',
+                quiet=1):
+        import subprocess
+        import tempfile, os
 
+        try:
+            state = int(state)
+        except Exception:
+            state = -1
+        quiet = int(quiet)
+
+        if state < 0:
+            try:
+                state = int(cmd.get_state())
+            except Exception:
+                state = 1
+
+        tmp_pdb = tempfile.NamedTemporaryFile(suffix='.pdb', delete=False)
+        tmp_r3d = tempfile.NamedTemporaryFile(suffix='.r3d', delete=False)
+        tmpfilepdb = tmp_pdb.name
+        tmpfiler3d = tmp_r3d.name
+        tmp_pdb.close()
+        tmp_r3d.close()
+
+        if not name:
+            name = DssrFunctions._unused_name('dssr_block')
+
+        try:
+            if state == 0:
+                try:
+                    n_states = int(cmd.count_states(selection))
+                except Exception:
+                    n_states = 1
+                states = list(range(1, max(1, n_states) + 1))
+            else:
+                states = [max(1, int(state))]
+
+            for st in states:
+                cmd.save(tmpfilepdb, selection, st)
+
+                args = [
+                    exe,
+                    '--block-file=' + HelperFunctions.unquote(block_file),
+                    '--block-depth=' + str(block_depth),
+                    '-i=' + tmpfilepdb,
+                    '-o=' + tmpfiler3d,
+                ]
+
+                try:
+                    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    out, err = p.communicate()
+                    rc = p.returncode
+                except OSError:
+                    raise CmdException('Cannot execute exe="%s"' % exe)
+
+                if rc != 0:
+                    err_txt = ''
+                    try:
+                        err_txt = err.decode('utf-8', errors='replace') if err else ''
+                    except Exception:
+                        err_txt = str(err)
+                    raise CmdException('DSSR block failed (rc=%s). stderr tail: %s' % (str(rc), _safe_tail(err_txt)))
+
+                cmd.load(tmpfiler3d, name, max(1, st), zoom=0)
+
+            if not quiet:
+                print('dssr_block: loaded "%s" (block_file=%s, block_depth=%s)' % (name, str(block_file), str(block_depth)))
+
+        finally:
+            try:
+                os.remove(tmpfilepdb)
+            except OSError:
+                pass
+            try:
+                os.remove(tmpfiler3d)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _wrap_seq(s, width):
+        try:
+            width = int(width)
+        except Exception:
+            width = 80
+        if width <= 0:
+            return s
+        return '\n'.join(s[i:i + width] for i in range(0, len(s), width))
+
+    @staticmethod
+    def _revcomp(seq):
+        s = ''.join([c for c in str(seq).upper() if c.isalpha()])
+        if 'U' in s and 'T' not in s:
+            comp = {'A': 'U', 'U': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
+        else:
+            comp = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
+        return ''.join(comp.get(b, 'N') for b in s[::-1])
+
+    @staticmethod
+    def _parse_fastastr(fasta_text):
+        blocks = []
+        header = None
+        seq = []
+        for line in str(fasta_text).splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('>'):
+                if header is not None:
+                    blocks.append((header, ''.join(seq)))
+                header = line[1:].strip()
+                seq = []
+            else:
+                seq.append(line.strip())
+        if header is not None:
+            blocks.append((header, ''.join(seq)))
+        return blocks
+
+    @staticmethod
+    def dssr_seq(selection='all',
+                chain='',
+                fmt='raw',
+                wrap=80,
+                rc=0,
+                quiet=1):
+        fmt = str(fmt).strip().lower()
+        quiet = int(quiet)
+        rc = int(rc)
+
+        sel = selection
+        ch = str(chain).strip()
+        if ch and ch.lower() != 'all':
+            sel = '(%s) and chain %s' % (selection, ch)
+
+        try:
+            fasta = cmd.get_fastastr(sel)
+        except Exception as e:
+            raise CmdException('get_fastastr failed: %s' % e)
+
+        blocks = DssrFunctions._parse_fastastr(fasta)
+        if not blocks:
+            raise CmdException('No FASTA sequence extracted from selection="%s"' % sel)
+
+        out_lines = []
+        for hdr, seq in blocks:
+            s = ''.join([c for c in seq.upper() if c.isalpha()])
+            if rc:
+                s = DssrFunctions._revcomp(s)
+
+            if fmt == 'fasta':
+                out_lines.append('>' + hdr)
+                out_lines.append(DssrFunctions._wrap_seq(s, wrap))
+            else:
+                out_lines.append(hdr + ': ' + (DssrFunctions._wrap_seq(s, wrap) if int(wrap) > 0 else s))
+
+        out = '\n'.join(out_lines)
         if not quiet:
-            print('dssr_block: loaded "%s" (block_file=%s, block_depth=%s)' % (name, str(block_file), str(block_depth)))
+            print(out)
+        return out
 
-    finally:
-        try:
-            os.remove(tmpfilepdb)
-        except OSError:
-            pass
-        try:
-            os.remove(tmpfiler3d)
-        except OSError:
-            pass
-
-
-def _wrap_seq(s, width):
-    try:
-        width = int(width)
-    except Exception:
-        width = 80
-    if width <= 0:
-        return s
-    return '\n'.join(s[i:i + width] for i in range(0, len(s), width))
-
-
-def _revcomp(seq):
-    s = ''.join([c for c in str(seq).upper() if c.isalpha()])
-    if 'U' in s and 'T' not in s:
-        comp = {'A': 'U', 'U': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
-    else:
-        comp = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
-    return ''.join(comp.get(b, 'N') for b in s[::-1])
-
-
-def _parse_fastastr(fasta_text):
-    blocks = []
-    header = None
-    seq = []
-    for line in str(fasta_text).splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith('>'):
-            if header is not None:
-                blocks.append((header, ''.join(seq)))
-            header = line[1:].strip()
-            seq = []
-        else:
-            seq.append(line.strip())
-    if header is not None:
-        blocks.append((header, ''.join(seq)))
-    return blocks
-
-
-def dssr_seq(selection='all',
-             chain='',
-             fmt='raw',
-             wrap=80,
-             rc=0,
-             quiet=1):
-    fmt = str(fmt).strip().lower()
-    quiet = int(quiet)
-    rc = int(rc)
-
-    sel = selection
-    ch = str(chain).strip()
-    if ch and ch.lower() != 'all':
-        sel = '(%s) and chain %s' % (selection, ch)
-
-    try:
-        fasta = cmd.get_fastastr(sel)
-    except Exception as e:
-        raise CmdException('get_fastastr failed: %s' % e)
-
-    blocks = _parse_fastastr(fasta)
-    if not blocks:
-        raise CmdException('No FASTA sequence extracted from selection="%s"' % sel)
-
-    out_lines = []
-    for hdr, seq in blocks:
-        s = ''.join([c for c in seq.upper() if c.isalpha()])
-        if rc:
-            s = _revcomp(s)
-
-        if fmt == 'fasta':
-            out_lines.append('>' + hdr)
-            out_lines.append(_wrap_seq(s, wrap))
-        else:
-            out_lines.append(hdr + ': ' + (_wrap_seq(s, wrap) if int(wrap) > 0 else s))
-
-    out = '\n'.join(out_lines)
-    if not quiet:
-        print(out)
-    return out
-
-
-def _restore_pretty_colors(objs):
-    for o in objs:
-        try:
-            cmd.spectrum('resi', 'rainbow', '(%s) and polymer' % o)
-        except Exception:
-            pass
-        try:
-            cmd.color('atomic', '(%s) and not polymer' % o)
-        except Exception:
-            pass
-
-
-def _clear_keep_molecules(apply_gray):
-    try:
-        all_objs = list(cmd.get_object_list())
-    except Exception:
-        all_objs = []
-
-    keep = []
-    delete_objs = []
-    for o in all_objs:
-        try:
-            n = int(cmd.count_atoms(o))
-        except Exception:
-            n = 0
-        if n > 0:
-            keep.append(o)
-        else:
-            delete_objs.append(o)
-
-    for o in delete_objs:
-        try:
-            cmd.delete(o)
-        except Exception:
-            pass
-
-    for o in list(_DSSR_BLOCK_OBJECTS):
-        try:
-            cmd.delete(o)
-        except Exception:
-            pass
-    _DSSR_BLOCK_OBJECTS.clear()
-
-    try:
-        for m in cmd.get_names('measurements'):
+    @staticmethod
+    def _restore_pretty_colors(objs):
+        for o in objs:
             try:
-                cmd.delete(m)
+                cmd.spectrum('resi', 'rainbow', '(%s) and polymer' % o)
             except Exception:
                 pass
-    except Exception:
-        pass
-
-    try:
-        for s in cmd.get_names('selections'):
             try:
-                cmd.delete(s)
+                cmd.color('atomic', '(%s) and not polymer' % o)
             except Exception:
                 pass
-    except Exception:
-        pass
 
-    try:
-        cmd.label('all', '')
-    except Exception:
-        pass
+    @staticmethod                
+    def _clear_keep_molecules(apply_gray):
+        try:
+            all_objs = list(cmd.get_object_list())
+        except Exception:
+            all_objs = []
 
-    try:
-        cmd.select('sele', 'none')
-    except Exception:
-        pass
-
-    if apply_gray:
-        for o in keep:
+        keep = []
+        delete_objs = []
+        for o in all_objs:
             try:
-                cmd.color('gray', o)
+                n = int(cmd.count_atoms(o))
+            except Exception:
+                n = 0
+            if n > 0:
+                keep.append(o)
+            else:
+                delete_objs.append(o)
+
+        for o in delete_objs:
+            try:
+                cmd.delete(o)
             except Exception:
                 pass
-    else:
-        _restore_pretty_colors(keep)
+
+        for o in list(_DSSR_BLOCK_OBJECTS):
+            try:
+                cmd.delete(o)
+            except Exception:
+                pass
+        _DSSR_BLOCK_OBJECTS.clear()
+
+        try:
+            for m in cmd.get_names('measurements'):
+                try:
+                    cmd.delete(m)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            for s in cmd.get_names('selections'):
+                try:
+                    cmd.delete(s)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            cmd.label('all', '')
+        except Exception:
+            pass
+
+        try:
+            cmd.select('sele', 'none')
+        except Exception:
+            pass
+
+        if apply_gray:
+            for o in keep:
+                try:
+                    cmd.color('gray', o)
+                except Exception:
+                    pass
+        else:
+            DssrFunctions._restore_pretty_colors(keep)
+
+        try:
+            cmd.zoom('all')
+        except Exception:
+            pass
+        try:
+            cmd.reset()
+        except Exception:
+            pass
+
 
     try:
-        cmd.zoom('all')
+        from pymol.Qt import QtWidgets, QtCore
     except Exception:
-        pass
-    try:
-        cmd.reset()
-    except Exception:
-        pass
+        QtWidgets = None
+        QtCore = None
 
-
-try:
-    from pymol.Qt import QtWidgets, QtCore
-except Exception:
-    QtWidgets = None
-    QtCore = None
-
-_DSSR_GUI_DIALOG = None
+    
 
 class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def __init__(self):
@@ -1495,7 +1503,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 continue
 
             if feat == 'pseudoknot':
-                has_feature = (_count_pseudoknot_layers(dssr_data) > 0)
+                has_feature = (ParsingAlgos._count_pseudoknot_layers(dssr_data) > 0)
             else:
                 json_key = FEATURE_MAP.get(feat)
                 if json_key:
@@ -1632,7 +1640,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _reset_view(self):
         apply_gray = True if self.precolor_cb.isChecked() else False
-        _clear_keep_molecules(apply_gray)
+        DssrFunctions._clear_keep_molecules(apply_gray)
         self.refresh_objects()
         self.refresh_list()
 
@@ -1667,7 +1675,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         sel_obj, exe, st, precolor_on = self._get_dssr_context()
         try:
             dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            report = _format_rna_summary_text(dssr_data)
+            report = ParsingAlgos._format_rna_summary_text(dssr_data)
             try:
                 self.report_box.setPlainText(report + '\n')
             except Exception:
@@ -1727,8 +1735,8 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         skipped = []
 
         for feat, name in targets:
-            residues = _collect_residues_all(dssr_data, feat)
-            sel_core = _compact_sel_from_residues(residues)
+            residues = ParsingAlgos._collect_residues_all(dssr_data, feat)
+            sel_core = ParsingAlgos._compact_sel_from_residues(residues)
             if not sel_core:
                 skipped.append(name)
                 try:
@@ -1801,7 +1809,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             cmd.save(tmpfilepdb, selection, state)
             if int(precolor_on):
                 cmd.color('gray', selection)
-            data = run_dssr_json(tmpfilepdb, exe)
+            data = HelperFunctions.run_dssr_json(tmpfilepdb, exe)
         finally:
             try:
                 os.remove(tmpfilepdb)
@@ -1868,14 +1876,14 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             items = []
 
             if feat == 'pseudoknot':
-                dotbracket = _extract_dotbracket(dssr_data)
+                dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
                 nts_list = dssr_data.get('nts', None)
                 if nts_list is None:
                     self.list_widget.clear()
                     self.list_widget.addItem('No nucleotides found in DSSR output.')
                     return
 
-                layers = parse_dotbracket_pseudoknots(dotbracket)
+                layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
                 if not layers:
                     self.list_widget.clear()
                     self.list_widget.addItem('No pseudoknot layers found in this structure.')
@@ -1925,7 +1933,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
                 total = len(feature_list)
                 for i in range(total):
-                    line = _preview_entry(feat, feature_list[i], i + 1)
+                    line = ParsingAlgos._preview_entry(feat, feature_list[i], i + 1)
                     items.append((i + 1, line))
 
             self._items_all = items
@@ -1997,7 +2005,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         try:
             dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            sel_str = _build_residue_sel_from_dssr(dssr_data, feat, idx)
+            sel_str = ParsingAlgos._build_residue_sel_from_dssr(dssr_data, feat, idx)
             cmd.select('sele', sel_str)
             cmd.select('sele', 'byres (sele)')
         except Exception as e:
@@ -2034,7 +2042,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         dist_name = 'dist_%s' % nm
 
         try:
-            dssr(sel=sel, f=feat, i=idx, n=nm, q=0, si=showinfo_on, st=st,
+            DssrFunctions.dssr(sel=sel, f=feat, i=idx, n=nm, q=0, si=showinfo_on, st=st,
                  exe=exe, color=col, display=display_on, stick_radius=radius,
                  do_zoom=zoom_on, pc=precolor_on, distname=dist_name)
         except Exception as e:
@@ -2093,7 +2101,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     except Exception:
                         continue
 
-                    sel_str = _build_residue_sel_from_dssr(dssr_data, feat, idx)
+                    sel_str = ParsingAlgos._build_residue_sel_from_dssr(dssr_data, feat, idx)
                     sel_for_block = 'byres (%s)' % sel_str
 
                     obj_name = '%s_%s_%d' % (base, feat, idx)
@@ -2102,7 +2110,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     except Exception:
                         pass
 
-                    dssr_block(selection=sel_for_block, state=st,
+                    DssrFunctions.dssr_block(selection=sel_for_block, state=st,
                                block_file=block_file, block_depth=block_depth,
                                name=obj_name, exe=exe, quiet=1)
 
@@ -2125,7 +2133,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 except Exception:
                     pass
 
-                dssr_block(selection=sel_for_block, state=st,
+                DssrFunctions.dssr_block(selection=sel_for_block, state=st,
                            block_file=block_file, block_depth=block_depth,
                            name=obj_name, exe=exe, quiet=1)
 
@@ -2151,45 +2159,44 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             except Exception:
                 pass
 
+    @staticmethod                
+    def dssr_gui():
+        global _DSSR_GUI_DIALOG
+        if QtWidgets is None or QtCore is None:
+            raise CmdException('Qt is not available in this PyMOL build')
 
-def dssr_gui():
-    global _DSSR_GUI_DIALOG
-    if QtWidgets is None or QtCore is None:
-        raise CmdException('Qt is not available in this PyMOL build')
+        # Check if a structure is available before showing GUI or running DSSR
+        no_struct = not cmd.get_object_list()
 
-    # Check if a structure is available before showing GUI or running DSSR
-    no_struct = not cmd.get_object_list()
+        if _DSSR_GUI_DIALOG is None:
+            _DSSR_GUI_DIALOG = _DSSRGuiDialog()
+        _DSSR_GUI_DIALOG.show()
+        _DSSR_GUI_DIALOG.raise_()
+        _DSSR_GUI_DIALOG.activateWindow()
 
-    if _DSSR_GUI_DIALOG is None:
-        _DSSR_GUI_DIALOG = _DSSRGuiDialog()
-    _DSSR_GUI_DIALOG.show()
-    _DSSR_GUI_DIALOG.raise_()
-    _DSSR_GUI_DIALOG.activateWindow()
+        # Visual pop-up dialog warning and console diagnostic print if no structure is available
+        if no_struct:
+            msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
+            print(msg)
+            _DSSR_GUI_DIALOG.status_label.setText(msg)
+            QtWidgets.QMessageBox.warning(
+                _DSSR_GUI_DIALOG,
+                "No Structure Loaded",
+                msg
+            )
 
-    # Visual pop-up dialog warning and console diagnostic print if no structure is available
-    if no_struct:
-        msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
-        print(msg)
-        _DSSR_GUI_DIALOG.status_label.setText(msg)
-        QtWidgets.QMessageBox.warning(
-            _DSSR_GUI_DIALOG,
-            "No Structure Loaded",
-            msg
-        )
+    def __init_plugin__(app=None):
+        from pymol.plugins import addmenuitemqt
+        addmenuitemqt('DSSR', dssr_gui)
 
-def __init_plugin__(app=None):
-    from pymol.plugins import addmenuitemqt
-    addmenuitemqt('DSSR', dssr_gui)
+dssr_select = DssrFunctions.dssr_select
+dssr_gui = _DSSRGuiDialog.dssr_gui
+dssr_block = DssrFunctions.dssr_block
+dssr_seq = DssrFunctions.dssr_seq
 
 cmd.extend('dssr_select', dssr_select)
 cmd.extend('dssr_gui', dssr_gui)
 cmd.extend('dssr_block', dssr_block)
-cmd.extend('dssr_seq', dssr_seq)
-
-cmd.auto_arg[0].update({'dssr_select': cmd.auto_arg[0]['zoom']})
-cmd.auto_arg[0].update({'dssr_gui': cmd.auto_arg[0]['zoom']})
-cmd.auto_arg[0].update({'dssr_block': cmd.auto_arg[0]['zoom']})
-cmd.auto_arg[0].update({'dssr_seq': cmd.auto_arg[0]['zoom']})
 
 try:
     print('Loaded DSSR helper %s from: %s' % (__DSSR_PLUGIN_VERSION__, __file__))
