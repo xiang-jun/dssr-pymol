@@ -18,7 +18,7 @@
 
 from pymol import cmd, CmdException
 from pymol.Qt import QtWidgets, QtCore
-__DSSR_PLUGIN_VERSION__ = 'v1.0.1-dev'
+__DSSR_PLUGIN_VERSION__ = 'v1.1.0-dev'
 _DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
 selected_features = []
