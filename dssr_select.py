@@ -7,8 +7,9 @@
 #
 # CONTRIBUTIONS:
 # - Eric Chen: Developed the Qt-based GUI, incorporated dssr_block functionality,
-#   enhanced feature parsing, and performed final code consolidation.
-# - Bener Dulger: Initial implementation of structural feature selection and JSON parsing.
+#               enhanced feature parsing, and performed final code consolidation.
+# - Bener Dulger: Initial implementation of structural feature selection and JSON parsing;
+#                 engineered the modular, class-based architectural refactor for v1.1.0-dev.
 # - Thomas Holder: Original 'dssr_block' logic (c) Schrodinger LLC.
 #
 # LICENSE: BSD 2-Clause
@@ -499,7 +500,7 @@ class ParsingAlgos:
             layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
             return len(layers) if layers else 0
         except Exception:
-            return 0 
+            return 0
 
     @staticmethod
     def _format_rna_summary_text(dssr_data):
@@ -929,7 +930,7 @@ class DssrFunctions:
             except OSError:
                 pass
 
-    @staticmethod           
+    @staticmethod
     def _dssr_default_selection():
         objs = cmd.get_object_list('enabled')
         if len(objs) == 1:
@@ -1189,7 +1190,7 @@ class DssrFunctions:
             except Exception:
                 pass
 
-    @staticmethod                
+    @staticmethod
     def _clear_keep_molecules(apply_gray):
         try:
             all_objs = list(cmd.get_object_list())
@@ -1274,11 +1275,11 @@ class DssrFunctions:
         QtWidgets = None
         QtCore = None
 
-    
 
-class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
+
+class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def __init__(self):
-        super(_DSSRGuiDialog, self).__init__()
+        super(DssrGuiDialog, self).__init__()
         self.setWindowTitle('DSSR GUI')
         self.resize(1020, 690)
 
@@ -2159,7 +2160,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             except Exception:
                 pass
 
-    @staticmethod                
+    @staticmethod
     def dssr_gui():
         global _DSSR_GUI_DIALOG
         if QtWidgets is None or QtCore is None:
@@ -2169,7 +2170,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         no_struct = not cmd.get_object_list()
 
         if _DSSR_GUI_DIALOG is None:
-            _DSSR_GUI_DIALOG = _DSSRGuiDialog()
+            _DSSR_GUI_DIALOG = DssrGuiDialog()
         _DSSR_GUI_DIALOG.show()
         _DSSR_GUI_DIALOG.raise_()
         _DSSR_GUI_DIALOG.activateWindow()
@@ -2190,7 +2191,7 @@ class _DSSRGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         addmenuitemqt('DSSR', dssr_gui)
 
 dssr_select = DssrFunctions.dssr_select
-dssr_gui = _DSSRGuiDialog.dssr_gui
+dssr_gui = DssrGuiDialog.dssr_gui
 dssr_block = DssrFunctions.dssr_block
 dssr_seq = DssrFunctions.dssr_seq
 
