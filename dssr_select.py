@@ -91,7 +91,8 @@ class HelperFunctions:
 
     @staticmethod
     def run_dssr_json(pdb_path, exe):
-        import subprocess, json
+        import subprocess
+        import json
 
         # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
         args = [exe, "--json", "--idstr=ebi", "-i=" + pdb_path]
@@ -902,7 +903,8 @@ class DssrFunctions:
         precolor=1,
         distance_name="",
     ):
-        import tempfile, os
+        import tempfile
+        import os
 
         state = int(state)
         index = int(index)
@@ -1206,7 +1208,8 @@ class DssrFunctions:
         quiet=1,
     ):
         import subprocess
-        import tempfile, os
+        import tempfile
+        import os
 
         try:
             state = int(state)
@@ -1268,7 +1271,7 @@ class DssrFunctions:
                         err_txt = str(err)
                     raise CmdException(
                         "DSSR block failed (rc=%s). stderr tail: %s"
-                        % (str(rc), _safe_tail(err_txt))
+                        % (str(rc), HelperFunctions._safe_tail(err_txt))
                     )
 
                 cmd.load(tmpfiler3d, name, max(1, st), zoom=0)
@@ -1996,7 +1999,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.status_label.setText("")
 
     def _get_dssr_data(self, selection, state, exe, precolor_on):
-        import tempfile, os
+        import tempfile
+        import os
 
         cache_key = (str(selection), int(state), str(exe))
         if self._cache_key == cache_key and self._cache_data is not None:
