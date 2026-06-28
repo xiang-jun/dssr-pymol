@@ -19,6 +19,12 @@
 
 from pymol import cmd, CmdException
 from pymol.Qt import QtWidgets, QtCore
+from pymol.plugins import addmenuitemqt
+import subprocess
+import json
+import re
+import tempfile
+import os
 
 __DSSR_PLUGIN_VERSION__ = "v1.1.0-dev"
 _DSSR_GUI_DIALOG = None
@@ -91,8 +97,7 @@ class HelperFunctions:
 
     @staticmethod
     def run_dssr_json(pdb_path, exe):
-        import subprocess
-        import json
+        
 
         # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
         args = [exe, "--json", "--idstr=ebi", "-i=" + pdb_path]
@@ -150,7 +155,7 @@ class HelperFunctions:
 
     @staticmethod
     def _hex_to_rgb01(h):
-        import re
+        
 
         s = str(h).strip()
 
@@ -903,8 +908,7 @@ class DssrFunctions:
         precolor=1,
         distance_name="",
     ):
-        import tempfile
-        import os
+        
 
         state = int(state)
         index = int(index)
@@ -1207,9 +1211,7 @@ class DssrFunctions:
         exe="x3dna-dssr",
         quiet=1,
     ):
-        import subprocess
-        import tempfile
-        import os
+        
 
         try:
             state = int(state)
@@ -1461,12 +1463,6 @@ class DssrFunctions:
             cmd.reset()
         except Exception:
             pass
-
-    try:
-        from pymol.Qt import QtWidgets, QtCore
-    except Exception:
-        QtWidgets = None
-        QtCore = None
 
 
 class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
@@ -1999,8 +1995,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.status_label.setText("")
 
     def _get_dssr_data(self, selection, state, exe, precolor_on):
-        import tempfile
-        import os
 
         cache_key = (str(selection), int(state), str(exe))
         if self._cache_key == cache_key and self._cache_data is not None:
@@ -2437,7 +2431,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             QtWidgets.QMessageBox.warning(_DSSR_GUI_DIALOG, "No Structure Loaded", msg)
 
     def __init_plugin__(app=None):
-        from pymol.plugins import addmenuitemqt
 
         addmenuitemqt("DSSR", dssr_gui)
 
