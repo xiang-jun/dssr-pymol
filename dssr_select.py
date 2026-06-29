@@ -9,7 +9,7 @@
 # - Bener Dulger: Initial implementation of structural feature selection and JSON parsing;
 #                 engineered the modular, class-based architectural refactor for v1.1.0-dev.
 # - Eric Chen: Developed the Qt-based GUI, incorporated dssr_block functionality,
-#               enhanced feature parsing, and performed code consolidation of v1.0.0.
+#              enhanced feature parsing, and performed code consolidation of v1.0.0.
 # - Thomas Holder: Original 'dssr_block' logic (c) Schrodinger LLC.
 #
 # LICENSE: BSD 2-Clause
