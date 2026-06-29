@@ -97,7 +97,6 @@ class HelperFunctions:
 
     @staticmethod
     def run_dssr_json(pdb_path, exe):
-        
 
         # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
         args = [exe, "--json", "--idstr=ebi", "-i=" + pdb_path]
@@ -155,7 +154,6 @@ class HelperFunctions:
 
     @staticmethod
     def _hex_to_rgb01(h):
-        
 
         s = str(h).strip()
 
@@ -908,7 +906,6 @@ class DssrFunctions:
         precolor=1,
         distance_name="",
     ):
-        
 
         state = int(state)
         index = int(index)
@@ -1211,7 +1208,6 @@ class DssrFunctions:
         exe="x3dna-dssr",
         quiet=1,
     ):
-        
 
         try:
             state = int(state)
