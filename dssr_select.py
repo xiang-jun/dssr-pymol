@@ -232,16 +232,6 @@ class ParsingAlgos:
             return parts[2].strip(), parts[4].strip()
         raise CmdException('Unexpected nt_id format: "%s"' % nt_id)
 
-    @staticmethod
-    def parse_atom_id(atom_id):
-        """
-        Parses an atom identifier in Jmol/EBI Unit ID format.
-        Returns a compatible tuple of (chain, resi_number).
-        """
-        parts = str(atom_id).strip().split("|")
-        if len(parts) >= 5:
-            return parts[2].strip(), parts[4].strip()
-        raise CmdException('Unexpected atom_id format: "%s"' % atom_id)
 
     @staticmethod
     def parse_a2b_atom(atom_id):
@@ -308,10 +298,6 @@ class ParsingAlgos:
 
         return layers
 
-    @staticmethod
-    def _atom_sel(chain, resi, atom_name):
-        atom_name = str(atom_name).replace('"', '\\"')
-        return '(chain %s and resi %s and name "%s")' % (chain, resi, atom_name)
 
     @staticmethod
     def build_selection_from_layer(layer_pairs, nts_list):
@@ -417,7 +403,6 @@ class ParsingAlgos:
 
         if not clauses:
             raise CmdException("atom2bases entry missing atom and nt")
-
         return " or ".join(clauses)
 
     @staticmethod
