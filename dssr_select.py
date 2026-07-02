@@ -232,7 +232,6 @@ class ParsingAlgos:
             return parts[2].strip(), parts[4].strip()
         raise CmdException('Unexpected nt_id format: "%s"' % nt_id)
 
-
     @staticmethod
     def parse_a2b_atom(atom_id):
         """
@@ -297,7 +296,6 @@ class ParsingAlgos:
                         layers.setdefault(layer, []).append((open_idx, idx))
 
         return layers
-
 
     @staticmethod
     def build_selection_from_layer(layer_pairs, nts_list):
