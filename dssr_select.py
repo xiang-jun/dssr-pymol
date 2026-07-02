@@ -232,7 +232,6 @@ class ParsingAlgos:
             return parts[2].strip(), parts[4].strip()
         raise CmdException('Unexpected nt_id format: "%s"' % nt_id)
 
-
     @staticmethod
     def parse_a2b_atom(atom_id):
         """
@@ -297,7 +296,6 @@ class ParsingAlgos:
                         layers.setdefault(layer, []).append((open_idx, idx))
 
         return layers
-
 
     @staticmethod
     def build_selection_from_layer(layer_pairs, nts_list):
@@ -1012,9 +1010,9 @@ class DssrFunctions:
                     % (feature, index, len(feature_list))
                 )
 
-            entry = feature_list[index - 1]
-
-            sel_str = ParsingAlgos._build_residue_sel_from_dssr(dssr_data, feature, index)
+            sel_str = ParsingAlgos._build_residue_sel_from_dssr(
+                dssr_data, feature, index
+            )
             if not sel_str:
                 raise CmdException(
                     "Could not build selection for %s index %d" % (feature, index)
