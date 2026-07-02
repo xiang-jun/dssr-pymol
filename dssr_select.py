@@ -1010,51 +1010,13 @@ class DssrFunctions:
                     % (feature, index, len(feature_list))
                 )
 
-            entry = feature_list[index - 1]
-
-            if feature == "pairs":
-                sel_str = ParsingAlgos.build_selection_from_pair(entry)
-            elif feature in ("stems", "helices"):
-                sel_str = ParsingAlgos.build_selection_from_stem(entry)
-            elif feature == "hairpins":
-                sel_str = ParsingAlgos.build_selection_from_hairpin(entry)
-            elif feature in (
-                "stacks",
-                "nonstack",
-                "bulges",
-                "iloops",
-                "internal",
-                "junctions",
-                "sssegments",
-                "ssSegments",
-                "multiplets",
-                "splayunits",
-            ):
-                nts_long = entry.get("nts_long", "")
-                if not nts_long:
-                    raise CmdException("%s entry missing nts_long field" % feature)
-                nts_list_parsed = [
-                    nt.strip() for nt in nts_long.split(",") if nt.strip()
-                ]
-                sel_str = ParsingAlgos.build_selection_from_nts_list(nts_list_parsed)
-            elif feature == "coaxstacks":
-                stems_list = dssr_data.get("stems", [])
-                if not stems_list:
-                    raise CmdException("No stems found, required for coaxStacks")
-                sel_str = ParsingAlgos.build_selection_from_coaxstack(entry, stems_list)
-            elif feature == "atom2bases":
-                sel_str = ParsingAlgos.build_selection_from_atom2base(entry)
-            elif feature == "aminors":
-                sel_str = ParsingAlgos.build_selection_from_aminor(entry)
-            elif feature == "nts":
-                nt_id = entry.get("nt_id")
-                if not nt_id:
-                    raise CmdException("Nucleotide entry missing nt_id field")
-                c, r = ParsingAlgos.parse_nt_id(nt_id)
-                sel_str = "(chain %s and resi %s)" % (c, r)
-            else:
-                raise CmdException('Feature type "%s" not implemented' % feature)
-
+            sel_str = ParsingAlgos._build_residue_sel_from_dssr(
+                dssr_data, feature, index
+            )
+            if not sel_str:
+                raise CmdException(
+                    "Could not build selection for %s index %d" % (feature, index)
+                )
             cmd.select(name, sel_str)
             cmd.color(user_color if user_color else "pink", name)
             selected_features.append(feature)
