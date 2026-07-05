@@ -52,6 +52,7 @@ FEATURE_MAP = {
     "multiplets": "multiplets",
     "nts": "nts",
     "pseudoknot": "pseudoknot",
+    "gquadruplexes": "Gtetrads",
 }
 
 FEATURE_ORDER = [
@@ -72,6 +73,7 @@ FEATURE_ORDER = [
     "splayunits",
     "nts",
     "pseudoknot",
+    "gquadruplexes",
 ]
 
 
@@ -428,6 +430,12 @@ class ParsingAlgos:
         return ParsingAlgos.build_selection_from_nts_list(nts)
 
     @staticmethod
+    def build_selection_from_gquadruplex(gquad_entry):
+        nts_long = gquad_entry.get("nts_long", "")
+        nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
+        return ParsingAlgos.build_selection_from_nts_list(nts_list)
+
+    @staticmethod
     def _shorten_nts_long(nts_long, max_items=6):
         if not nts_long:
             return ""
@@ -466,6 +474,7 @@ class ParsingAlgos:
             "ssSegments",
             "multiplets",
             "splayunits",
+            "gquadruplexes",
         ):
             s = ParsingAlgos._shorten_nts_long(entry.get("nts_long", ""))
             return "%d: %s" % (i, s if s else "(missing nts_long)")
@@ -587,6 +596,12 @@ class ParsingAlgos:
             else 0
         )
 
+        gquads_n = (
+            len(dssr_data.get("Gtetrads", []))
+            if isinstance(dssr_data.get("Gtetrads", None), list)
+            else 0
+        )
+
         lines = []
         lines.append("RNA Structure Summary")
         lines.append("---------------------")
@@ -599,6 +614,7 @@ class ParsingAlgos:
         lines.append("Pseudoknots: %d" % pk_n)
         lines.append("A-minor interactions: %d" % aminors_n)
         lines.append("Stacking interactions: %d" % stacks_n)
+        lines.append("G-quadruplexes: %d" % gquads_n)
         return "\n".join(lines)
 
     @staticmethod
@@ -668,7 +684,14 @@ class ParsingAlgos:
                                 pass
             return residues
 
-        if feature in ("hairpins", "bulges", "junctions", "stacks", "nonstack"):
+        if feature in (
+            "hairpins",
+            "bulges",
+            "junctions",
+            "stacks",
+            "nonstack",
+            "gquadruplexes",
+        ):
             json_key = FEATURE_MAP.get(feature, feature)
             entries = dssr_data.get(json_key, [])
             if feature == "nonstack" and isinstance(entries, dict):
@@ -863,6 +886,9 @@ class ParsingAlgos:
 
         if feature == "aminors":
             return ParsingAlgos.build_selection_from_aminor(entry)
+
+        if feature == "gquadruplexes":
+            return ParsingAlgos.build_selection_from_gquadruplex(entry)
 
         if feature == "nts":
             nt_id = entry.get("nt_id")
