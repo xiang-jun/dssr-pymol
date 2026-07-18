@@ -53,6 +53,7 @@ FEATURE_MAP = {
     "nts": "nts",
     "pseudoknot": "pseudoknot",
     "gquadruplexes": "Gtetrads",
+    "u-turns": "nts",
 }
 
 FEATURE_ORDER = [
@@ -74,6 +75,7 @@ FEATURE_ORDER = [
     "nts",
     "pseudoknot",
     "gquadruplexes",
+    "u-turns",
 ]
 
 
@@ -436,6 +438,15 @@ class ParsingAlgos:
         return ParsingAlgos.build_selection_from_nts_list(nts_list)
 
     @staticmethod
+    def build_selection_from_uturns(uturn_entry):
+        summary = uturn_entry.get("summary", "")
+        if "u-turn" in summary:
+            c, r = ParsingAlgos.parse_nt_id(uturn_entry.get("nt_id"))
+        else:
+            raise CmdException("u-turns entry missing summary or nt_id")
+        return "(chain %s and resi %s)" % (c, r)
+
+    @staticmethod
     def _shorten_nts_long(nts_long, max_items=6):
         if not nts_long:
             return ""
@@ -497,7 +508,7 @@ class ParsingAlgos:
             dl = entry.get("desc_long", "")
             return "%d: %s" % (i, ds if ds else dl)
 
-        if feature == "nts":
+        if feature == "nts" or feature == "u-turns":
             return "%d: %s" % (i, entry.get("nt_id", "?"))
 
         return "%d: (no preview)" % i
@@ -897,6 +908,12 @@ class ParsingAlgos:
             c, r = ParsingAlgos.parse_nt_id(nt_id)
             return "(chain %s and resi %s)" % (c, r)
 
+        if feature == "u-turns":
+            nts = dssr_data.get("nts", [])
+            filtered = [nt for nt in nts if "u-turn" in nt.get("summary", "")]
+            entry = filtered[idx - 1]
+            return ParsingAlgos.build_selection_from_uturns(entry)
+
         raise CmdException('Feature "%s" not supported for residue selection' % feature)
 
 
@@ -1009,6 +1026,10 @@ class DssrFunctions:
                     or feature_list.get("nts_long")
                     else []
                 )
+
+            elif feature == "u-turns":
+                nts = feature_list if isinstance(feature_list, list) else []
+                feature_list = [nt for nt in nts if "u-turn" in nt.get("summary", "")]
             if (
                 feature_list is None
                 or not isinstance(feature_list, list)
@@ -2134,6 +2155,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                         or feature_list.get("nts_long")
                         else []
                     )
+                elif feat == "u-turns":
+                    nts = feature_list if isinstance(feature_list, list) else []
+                    feature_list = [
+                        nt for nt in nts if "u-turn" in nt.get("summary", "")
+                    ]
                 if (
                     feature_list is None
                     or not isinstance(feature_list, list)
