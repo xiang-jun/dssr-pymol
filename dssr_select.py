@@ -1541,7 +1541,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.block_file_combo = QtWidgets.QComboBox()
         self.block_file_combo.setEditable(True)
         self.block_file_combo.addItems(
-            ["face", "edge", "wc", "equal", "minor", "gray", "wc-minor"]
+            ["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]
         )
 
         self.block_depth_spin = QtWidgets.QDoubleSpinBox()
