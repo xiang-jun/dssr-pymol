@@ -1185,7 +1185,8 @@ class DssrFunctions:
 
             Create a nucleic acid base "block" cartoon with DSSR.
 
-            Requires the "x3dna-dssr" program, available from http://x3dna.org/
+            Requires the "x3dna-dssr" program, available from URL:
+                https://inventions.techventures.columbia.edu/technologies/dssr-an-integrated-software--CU20391
 
         USAGE
 
@@ -1198,14 +1199,13 @@ class DssrFunctions:
 
             state = int: object state (0 for all states) {default: -1, current state}
 
-            block_file = face|edge|wc|equal|minor|gray: Corresponds to the --block-file
-            option (see DSSR manual). Values can be combined, e.g. "wc-minor".
-            {default: face}
+            block_file = face|edge|wc|g4|imotif|equal|minor|gray|fill|hbond:
+                         Corresponds to the --block-file option (see DSSR manual).
+                         Values can be combined, e.g. "wc-minor". {default: face}
 
             block_depth = float: thickness of rectangular blocks {default: 0.5}
 
-            block_color = str: Corresponds to the --block-color option (new in DSSR
-            v1.5.2) {default: }
+            block_color = str: Corresponds to the --block-color option {default: }
 
             name = str: name of new CGO object {default: dssr_block##}
 
@@ -2470,7 +2470,7 @@ try:
     cmd.auto_arg[2].update(
         {
             "dssr_block": [
-                cmd.Shortcut(["face", "edge", "wc", "equal", "minor", "gray"]),
+                cmd.Shortcut(["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]),
                 "block_file",
                 "",
             ],
