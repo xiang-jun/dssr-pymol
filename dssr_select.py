@@ -2450,10 +2450,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             _DSSR_GUI_DIALOG.status_label.setText(msg)
             QtWidgets.QMessageBox.warning(_DSSR_GUI_DIALOG, "No Structure Loaded", msg)
 
-    def __init_plugin__(app=None):
-
-        addmenuitemqt("DSSR", dssr_gui)
-
 
 dssr_select = DssrFunctions.dssr_select
 dssr_gui = DssrGuiDialog.dssr_gui
@@ -2482,6 +2478,11 @@ try:
     )
 except Exception:
     pass
+
+
+def __init_plugin__(app=None):
+    addmenuitemqt("DSSR", dssr_gui)
+
 
 try:
     print("Loaded DSSR helper %s from: %s" % (__DSSR_PLUGIN_VERSION__, __file__))
