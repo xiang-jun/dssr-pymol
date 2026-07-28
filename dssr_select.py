@@ -482,7 +482,7 @@ class ParsingAlgos:
             "multiplets",
             "splayunits",
             "gquadruplexes",
-            "uturns",
+            "uturns"
         ):
             s = ParsingAlgos._shorten_nts_long(entry.get("nts_long", ""))
             return "%d: %s" % (i, s if s else "(missing nts_long)")
@@ -699,7 +699,7 @@ class ParsingAlgos:
             "stacks",
             "nonstack",
             "gquadruplexes",
-            "uturns",
+            "uturns"
         ):
             json_key = FEATURE_MAP.get(feature, feature)
             entries = dssr_data.get(json_key, [])
@@ -899,6 +899,9 @@ class ParsingAlgos:
 
         if feature == "gquadruplexes":
             return ParsingAlgos.build_selection_from_gquadruplex(entry)
+
+        if feature == "uturns":
+            return ParsingAlgos.build_selection_from_uturns(entry)
 
         if feature == "nts":
             nt_id = entry.get("nt_id")
@@ -1551,18 +1554,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.block_file_combo = QtWidgets.QComboBox()
         self.block_file_combo.setEditable(True)
         self.block_file_combo.addItems(
-            [
-                "face",
-                "edge",
-                "wc",
-                "g4",
-                "imotif",
-                "equal",
-                "minor",
-                "gray",
-                "fill",
-                "hbond",
-            ]
+            ["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]
         )
 
         self.block_depth_spin = QtWidgets.QDoubleSpinBox()
@@ -2493,20 +2485,7 @@ try:
     cmd.auto_arg[2].update(
         {
             "dssr_block": [
-                cmd.Shortcut(
-                    [
-                        "face",
-                        "edge",
-                        "wc",
-                        "g4",
-                        "imotif",
-                        "equal",
-                        "minor",
-                        "gray",
-                        "fill",
-                        "hbond",
-                    ]
-                ),
+                cmd.Shortcut(["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]),
                 "block_file",
                 "",
             ],
