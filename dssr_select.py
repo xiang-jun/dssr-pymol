@@ -78,6 +78,19 @@ FEATURE_ORDER = [
     "uturns",
 ]
 
+BLOCK_FEATURES = [
+    "face",
+    "edge",
+    "wc",
+    "g4",
+    "imotif",
+    "equal",
+    "minor",
+    "gray",
+    "fill",
+    "hbond",
+]
+
 
 class HelperFunctions:
     @staticmethod
@@ -482,7 +495,7 @@ class ParsingAlgos:
             "multiplets",
             "splayunits",
             "gquadruplexes",
-            "uturns"
+            "uturns",
         ):
             s = ParsingAlgos._shorten_nts_long(entry.get("nts_long", ""))
             return "%d: %s" % (i, s if s else "(missing nts_long)")
@@ -699,7 +712,7 @@ class ParsingAlgos:
             "stacks",
             "nonstack",
             "gquadruplexes",
-            "uturns"
+            "uturns",
         ):
             json_key = FEATURE_MAP.get(feature, feature)
             entries = dssr_data.get(json_key, [])
@@ -1553,9 +1566,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.block_file_combo = QtWidgets.QComboBox()
         self.block_file_combo.setEditable(True)
-        self.block_file_combo.addItems(
-            ["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]
-        )
+        self.block_file_combo.addItems(BLOCK_FEATURES)
 
         self.block_depth_spin = QtWidgets.QDoubleSpinBox()
         self.block_depth_spin.setMinimum(0.01)
@@ -2485,7 +2496,7 @@ try:
     cmd.auto_arg[2].update(
         {
             "dssr_block": [
-                cmd.Shortcut(["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]),
+                cmd.Shortcut(BLOCK_FEATURES),
                 "block_file",
                 "",
             ],
