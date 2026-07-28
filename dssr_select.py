@@ -53,6 +53,7 @@ FEATURE_MAP = {
     "nts": "nts",
     "pseudoknot": "pseudoknot",
     "gquadruplexes": "Gtetrads",
+    "uturns": "Uturns",
 }
 
 FEATURE_ORDER = [
@@ -74,6 +75,7 @@ FEATURE_ORDER = [
     "nts",
     "pseudoknot",
     "gquadruplexes",
+    "uturns",
 ]
 
 
@@ -101,7 +103,7 @@ class HelperFunctions:
     def run_dssr_json(pdb_path, exe):
 
         # Enforces '--idstr=ebi' option for Jmol/EBI Unit ID compatibility
-        args = [exe, "--json", "--idstr=ebi", "-i=" + pdb_path]
+        args = [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path]
 
         try:
             p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -435,6 +437,11 @@ class ParsingAlgos:
         nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
         return ParsingAlgos.build_selection_from_nts_list(nts_list)
 
+    def build_selection_from_uturns(uturns_entry):
+        nts_long = uturns_entry.get("nts_long", "")
+        nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
+        return ParsingAlgos.build_selection_from_nts_list(nts_list)
+
     @staticmethod
     def _shorten_nts_long(nts_long, max_items=6):
         if not nts_long:
@@ -475,6 +482,7 @@ class ParsingAlgos:
             "multiplets",
             "splayunits",
             "gquadruplexes",
+            "uturns"
         ):
             s = ParsingAlgos._shorten_nts_long(entry.get("nts_long", ""))
             return "%d: %s" % (i, s if s else "(missing nts_long)")
@@ -691,6 +699,7 @@ class ParsingAlgos:
             "stacks",
             "nonstack",
             "gquadruplexes",
+            "uturns"
         ):
             json_key = FEATURE_MAP.get(feature, feature)
             entries = dssr_data.get(json_key, [])
@@ -868,6 +877,7 @@ class ParsingAlgos:
             "ssSegments",
             "multiplets",
             "splayunits",
+            "uturns",
         ):
             nts_long = entry.get("nts_long", "")
             if not nts_long:
@@ -889,6 +899,9 @@ class ParsingAlgos:
 
         if feature == "gquadruplexes":
             return ParsingAlgos.build_selection_from_gquadruplex(entry)
+
+        if feature == "uturns":
+            return ParsingAlgos.build_selection_from_uturns(entry)
 
         if feature == "nts":
             nt_id = entry.get("nt_id")
@@ -1953,6 +1966,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             ("pseudoknot", "pseudoknots_all"),
             ("aminors", "aminors_all"),
             ("stacks", "stacks_all"),
+            ("uturns", "uturns_all"),
         ]
 
         made = []
@@ -2159,6 +2173,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                         "multiplets": "multiplets",
                         "nts": "nucleotides",
                         "pseudoknot": "pseudoknot layers",
+                        "uturns": "U-turns",
                     }
                     feat_name = nice_names.get(feat, feat)
                     self.list_widget.clear()
