@@ -1071,8 +1071,15 @@ class DssrFunctions:
                 )
             cmd.select(name, sel_str)
             _sel_residues = set()
-            cmd.iterate(name, "_sel_residues.add((chain, resi))", space={"_sel_residues": _sel_residues})
-            print("dssr_select: %s" % ParsingAlgos._compact_sel_from_residues(_sel_residues))
+            cmd.iterate(
+                name,
+                "_sel_residues.add((chain, resi))",
+                space={"_sel_residues": _sel_residues},
+            )
+            print(
+                "dssr_select: %s"
+                % ParsingAlgos._compact_sel_from_residues(_sel_residues)
+            )
             cmd.color(user_color if user_color else "pink", name)
             selected_features.append(feature)
 
