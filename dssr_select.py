@@ -1759,7 +1759,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 json_key = FEATURE_MAP.get(feat)
                 val = dssr_data.get(json_key, None) if json_key else None
                 if feat == "nonstack" and isinstance(val, dict):
-                    count = 1 if (val.get("num_nts", 0) > 0 or val.get("nts_long", "")) else 0
+                    count = (
+                        1
+                        if (val.get("num_nts", 0) > 0 or val.get("nts_long", ""))
+                        else 0
+                    )
                 elif isinstance(val, list):
                     count = len(val)
                 else:
