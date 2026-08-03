@@ -78,6 +78,19 @@ FEATURE_ORDER = [
     "uturns",
 ]
 
+BLOCK_FEATURES = [
+    "face",
+    "edge",
+    "wc",
+    "g4",
+    "imotif",
+    "equal",
+    "minor",
+    "gray",
+    "fill",
+    "hbond",
+]
+
 
 class HelperFunctions:
     @staticmethod
@@ -482,7 +495,7 @@ class ParsingAlgos:
             "multiplets",
             "splayunits",
             "gquadruplexes",
-            "uturns"
+            "uturns",
         ):
             s = ParsingAlgos._shorten_nts_long(entry.get("nts_long", ""))
             return "%d: %s" % (i, s if s else "(missing nts_long)")
@@ -699,7 +712,7 @@ class ParsingAlgos:
             "stacks",
             "nonstack",
             "gquadruplexes",
-            "uturns"
+            "uturns",
         ):
             json_key = FEATURE_MAP.get(feature, feature)
             entries = dssr_data.get(json_key, [])
@@ -1057,6 +1070,16 @@ class DssrFunctions:
                     "Could not build selection for %s index %d" % (feature, index)
                 )
             cmd.select(name, sel_str)
+            _sel_residues = set()
+            cmd.iterate(
+                name,
+                "_sel_residues.add((chain, resi))",
+                space={"_sel_residues": _sel_residues},
+            )
+            print(
+                "dssr_select: %s"
+                % ParsingAlgos._compact_sel_from_residues(_sel_residues)
+            )
             cmd.color(user_color if user_color else "pink", name)
             selected_features.append(feature)
 
@@ -1553,9 +1576,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.block_file_combo = QtWidgets.QComboBox()
         self.block_file_combo.setEditable(True)
-        self.block_file_combo.addItems(
-            ["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]
-        )
+        self.block_file_combo.addItems(BLOCK_FEATURES)
 
         self.block_depth_spin = QtWidgets.QDoubleSpinBox()
         self.block_depth_spin.setMinimum(0.01)
@@ -1723,34 +1744,29 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def _update_feature_buttons_state(self, dssr_data):
         """
         Dynamically enables/disables structural feature buttons based on
-        the presence of features inside the loaded structure's DSSR output.
+        the presence of features inside the loaded structure's DSSR output,
+        and labels each button with its item count, e.g. "nts (20)".
         """
         for feat, button in self._feature_buttons.items():
             if not dssr_data:
                 button.setEnabled(False)
+                button.setText(feat)
                 continue
 
             if feat == "pseudoknot":
-                has_feature = ParsingAlgos._count_pseudoknot_layers(dssr_data) > 0
+                count = ParsingAlgos._count_pseudoknot_layers(dssr_data)
             else:
                 json_key = FEATURE_MAP.get(feat)
-                if json_key:
-                    val = dssr_data.get(json_key, None)
-                    if feat == "nonstack":
-                        if isinstance(val, dict):
-                            has_feature = val.get("num_nts", 0) > 0 or bool(
-                                val.get("nts_long", "")
-                            )
-                        elif isinstance(val, list):
-                            has_feature = len(val) > 0
-                        else:
-                            has_feature = False
-                    else:
-                        has_feature = isinstance(val, list) and len(val) > 0
+                val = dssr_data.get(json_key, None) if json_key else None
+                if feat == "nonstack" and isinstance(val, dict):
+                    count = 1 if (val.get("num_nts", 0) > 0 or val.get("nts_long", "")) else 0
+                elif isinstance(val, list):
+                    count = len(val)
                 else:
-                    has_feature = False
+                    count = 0
 
-            button.setEnabled(has_feature)
+            button.setEnabled(count > 0)
+            button.setText("%s (%d)" % (feat, count))
 
     def _enable_seq_view(self):
         try:
@@ -2485,7 +2501,7 @@ try:
     cmd.auto_arg[2].update(
         {
             "dssr_block": [
-                cmd.Shortcut(["face", "edge", "wc", "g4", "imotif", "equal", "minor", "gray", "fill", "hbond"]),
+                cmd.Shortcut(BLOCK_FEATURES),
                 "block_file",
                 "",
             ],
