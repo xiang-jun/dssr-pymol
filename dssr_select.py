@@ -2446,7 +2446,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
             if made_names and self.zoom_cb.isChecked():
                 try:
-                    cmd.zoom("(%s)" % " or ".join(made_names))
+                    cmd.zoom("%s" % (" or ".join(made_names)))
                 except Exception:
                     try:
                         cmd.zoom("all")
