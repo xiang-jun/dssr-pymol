@@ -1,0 +1,25 @@
+DSSR-PyMOL GUI
+Copyright (c) 2026 Eric Chen, Bener Dulger, and Xiang-Jun Lu.
+
+Project initiation and coordination: Xiang-Jun Lu.
+
+Contributions:
+- Bener Dulger: initial structural-feature selection, DSSR JSON parsing, and
+  modular class-based refactoring.
+- Eric Chen: Qt GUI, dssr_block integration, feature expansion, consolidated
+  plugin development, and the pure-Python 2D interaction workflow.
+- Xiang-Jun Lu: project direction and X3DNA-DSSR integration guidance.
+
+This plugin incorporates logic from Thomas Holder's dssr_block plugin,
+copyright Schrodinger LLC, distributed under the BSD 2-Clause License.
+
+X3DNA-DSSR is a separately licensed external program. It is not included in
+this distribution and is not covered by this plugin's BSD license.
+
+Upstream project: https://github.com/xiang-jun/dssr-pymol
+
+Bundled NAView layout implementation:
+Python adaptation of ViennaRNA/fornac src/naview/naview.js.
+Fornac authors: Peter Kerpedjiev, Stefan Hammer, and Ronny Lorenz.
+This component is provided under Apache License 2.0. The full terms are
+embedded in the plugin source and included separately in APACHE-2.0.txt.
