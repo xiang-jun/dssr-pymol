@@ -25,11 +25,20 @@ import json
 import re
 import tempfile
 import os
+import math
+import bisect
+import time
+from collections import deque
+from pymol.Qt import QtGui
 
-__DSSR_PLUGIN_VERSION__ = "v1.3.3-white-ui-2026-08-18"
+try:
+    from pymol.Qt import QtSvg
+except ImportError:
+    QtSvg = None
+
+__DSSR_PLUGIN_VERSION__ = "v1.8.0-sequence-2026-09-06"
 _DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
-selected_features = []
 _DSSR_BLOCK_OBJECTS = set()
 _DSSR_SELECTION_OBJECTS = set()
 
@@ -104,6 +113,60 @@ BLOCK_FEATURES = [
 ]
 
 
+LAYOUT_CHOICES = ["standard", "circular", "linear", "legacy radiate"]
+
+WHITE_THEME = """
+QDialog, QWidget#dssrWorkspace { background: #ffffff; color: #263746; }
+QMenu { background: #ffffff; color: #263746; border: 1px solid #d4dde5; }
+QMenu::item:selected { background: #d6f0fa; }
+QLabel, QCheckBox, QGroupBox { color: #263746; }
+QGroupBox {
+    border: 1px solid #d4dde5; border-radius: 9px;
+    margin-top: 8px; padding-top: 8px; background: #ffffff;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin; left: 10px; padding: 0 6px;
+    color: #24657d;
+}
+QPushButton, QToolButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
+    color: #263746; background: #ffffff;
+    border: 1px solid #bdcbd6; border-radius: 6px;
+    padding: 4px 7px; min-height: 21px;
+}
+QPushButton:hover, QComboBox:hover, QLineEdit:focus {
+    background: #eef9fd; border-color: #52b9da;
+}
+QPushButton:checked {
+    color: #16475b; background: #d8f1fa; border-color: #55b9d9;
+    font-weight: 700;
+}
+QPushButton:disabled, QComboBox:disabled {
+    color: #98a6b1; background: #f3f5f7; border-color: #dce2e7;
+}
+QListWidget, QPlainTextEdit {
+    color: #263746; background: #ffffff;
+    border: 1px solid #d4dde5; border-radius: 7px;
+    selection-color: #123d50; selection-background-color: #d6f0fa;
+}
+QComboBox QAbstractItemView {
+    color: #263746; background: #ffffff;
+    selection-color: #123d50; selection-background-color: #d6f0fa;
+}
+QTabWidget::pane { border: 1px solid #d4dde5; border-radius: 7px; }
+QTabBar::tab {
+    color: #647581; background: #f2f5f7;
+    border: 1px solid #d4dde5; padding: 6px 12px;
+}
+QTabBar::tab:selected { color: #174c61; background: #ffffff; }
+QToolTip { color: #263746; background: #ffffff;
+    border: 1px solid #52b9da; }
+QPushButton:pressed { background: #dceff6; }
+QCheckBox::indicator { width: 15px; height: 15px; }
+QLabel#studioHint { color: #607682; font-weight: 400; }
+"""
+
+
 class HelperFunctions:
     @staticmethod
     def unquote(s):
@@ -125,62 +188,51 @@ class HelperFunctions:
         return s[-n:]
 
     @staticmethod
-    def run_dssr_json(pdb_path, exe):
-
-        # Keep DSSR identifiers compatible with Jmol/EBI unit IDs and request
-        # the U-turn annotations exposed by the current upstream plugin.
-        args = [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path]
-
+    def _run_dssr(args, operation="DSSR"):
+        """Run either annotation or block generation with the same error handling."""
         try:
-            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            out, err = p.communicate()
-            rc = p.returncode
+            result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    encoding="utf-8", errors="replace")
         except OSError:
-            raise CmdException('Cannot execute exe="%s"' % exe)
+            raise CmdException('Cannot execute exe="%s"' % args[0])
+        if result.returncode:
+            raise CmdException("%s failed (rc=%s). stderr tail: %s" % (
+                operation, result.returncode, HelperFunctions._safe_tail(result.stderr)))
+        return result.stdout, result.stderr
 
+    @staticmethod
+    def run_dssr_json(pdb_path, exe):
+        # Jmol/EBI unit IDs and U-turn annotations match upstream DSSR output.
+        out, err = HelperFunctions._run_dssr(
+            [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path])
+        tail = HelperFunctions._safe_tail(err)
+        if not out.strip():
+            raise CmdException("DSSR returned empty stdout (expected JSON). stderr tail: %s" % tail)
         try:
-            out_txt = out.decode("utf-8", errors="replace") if out else ""
-        except Exception:
-            out_txt = str(out)
-        try:
-            err_txt = err.decode("utf-8", errors="replace") if err else ""
-        except Exception:
-            err_txt = str(err)
+            return json.loads(out)
+        except ValueError:
+            start, end = out.find("{"), out.rfind("}")
+            head = out[:120].replace("\n", " ")
+            if start < 0 or end <= start:
+                raise CmdException(
+                    "Failed to parse DSSR JSON (no JSON object found). stdout head: %s | stderr tail: %s"
+                    % (head, tail))
+            try:
+                return json.loads(out[start:end + 1])
+            except ValueError as error:
+                raise CmdException(
+                    "Failed to parse DSSR JSON. stdout head: %s | stderr tail: %s | err: %s"
+                    % (head, tail, error))
 
-        if rc != 0:
-            raise CmdException(
-                "DSSR failed (rc=%s). stderr tail: %s"
-                % (str(rc), HelperFunctions._safe_tail(err_txt))
-            )
-
-        if not out_txt.strip():
-            raise CmdException(
-                "DSSR returned empty stdout (expected JSON). stderr tail: %s"
-                % HelperFunctions._safe_tail(err_txt)
-            )
-
-        try:
-            return json.loads(out_txt)
-        except Exception:
-            s = out_txt
-            i = s.find("{")
-            j = s.rfind("}")
-            if i >= 0 and j > i:
-                try:
-                    return json.loads(s[i : j + 1])
-                except Exception as e2:
-                    raise CmdException(
-                        "Failed to parse DSSR JSON. stdout head: %s | stderr tail: %s | err: %s"
-                        % (
-                            s[:120].replace("\n", " "),
-                            HelperFunctions._safe_tail(err_txt),
-                            str(e2),
-                        )
-                    )
-            raise CmdException(
-                "Failed to parse DSSR JSON (no JSON object found). stdout head: %s | stderr tail: %s"
-                % (s[:120].replace("\n", " "), HelperFunctions._safe_tail(err_txt))
-            )
+    @staticmethod
+    def _selection_json(selection, state, exe, precolor=False):
+        """Export and analyze a selection, always removing its temporary PDB."""
+        with tempfile.TemporaryDirectory(prefix="dssr_") as directory:
+            path = os.path.join(directory, "input.pdb")
+            cmd.save(path, selection, state)
+            if precolor:
+                cmd.color("gray", selection)
+            return HelperFunctions.run_dssr_json(path, exe)
 
     @staticmethod
     def _hex_to_rgb01(h):
@@ -203,8 +255,7 @@ class HelperFunctions:
 
         if not re.fullmatch(r"[0-9a-fA-F]{6}", s):
             raise CmdException(
-                'Invalid hex color "%s". Use FF00AA or 0xFF00AA (or "#FF00AA" quoted).'
-                % h
+                'Invalid hex color "%s". Use FF00AA or 0xFF00AA (or "#FF00AA" quoted).' % h
             )
 
         r = int(s[0:2], 16) / 255.0
@@ -296,84 +347,44 @@ class ParsingAlgos:
 
     @staticmethod
     def parse_dotbracket_pseudoknots(dotbracket):
-        """
-        Parse pseudoknot layers from DSSR/Vienna dot-bracket notation.
-
-        Canonical ``()`` pairs are intentionally excluded.  Square/curly/
-        angle brackets and extended ``A...a`` notation are returned as
-        pseudoknot layers.  Chain separators do not consume a nucleotide
-        index, keeping the resulting indices aligned with DSSR's ``nts``
-        array for multi-chain structures.
-        """
-        stack_map = {"(": ")", "[": "]", "{": "}", "<": ">"}
-        close_to_open = {v: k for k, v in stack_map.items()}
-        stacks = {}
-        layers = {}
-        layer_assignment = {"()": 0, "[]": 1, "{}": 2, "<>": 3}
-        letter_layers = {}
-        next_layer = 4
-
+        """Return noncanonical bracket/letter layers; separators consume no index."""
+        openers = "([{<"
+        closer_to_open = dict(zip(")]}>abcdefghijklmnopqrstuvwxyz", openers + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+        layer_for = dict(zip(openers, range(4)))
+        stacks, layers = {}, {}
         nt_index = 0
         for char in str(dotbracket):
-            if char.isspace() or char in ("&", "+"):
+            if char.isspace() or char in "&+":
                 continue
-
-            if char in stack_map:
-                bracket_type = char + stack_map[char]
-                stacks.setdefault(bracket_type, []).append(nt_index)
-
-            elif char in close_to_open:
-                open_char = close_to_open[char]
-                bracket_type = open_char + char
-                stack = stacks.setdefault(bracket_type, [])
-                if stack:
-                    open_idx = stack.pop()
-                    layer = layer_assignment[bracket_type]
-                    if layer != 0:
-                        layers.setdefault(layer, []).append((open_idx, nt_index))
-
-            elif "A" <= char <= "Z":
+            if char in openers or "A" <= char <= "Z":
                 stacks.setdefault(char, []).append(nt_index)
-                if char not in letter_layers:
-                    letter_layers[char] = next_layer
-                    next_layer += 1
-
-            elif "a" <= char <= "z":
-                opener = char.upper()
-                stack = stacks.setdefault(opener, [])
+                if char not in layer_for:
+                    layer_for[char] = len(layer_for)
+            elif char in closer_to_open:
+                opener = closer_to_open[char]
+                stack = stacks.get(opener)
                 if stack:
-                    open_idx = stack.pop()
-                    layer = letter_layers.get(opener)
-                    if layer is None:
-                        layer = next_layer
-                        letter_layers[opener] = layer
-                        next_layer += 1
-                    layers.setdefault(layer, []).append((open_idx, nt_index))
-
+                    start = stack.pop()
+                    layer = layer_for[opener]
+                    if layer:
+                        layers.setdefault(layer, []).append((start, nt_index))
             nt_index += 1
-
         for pairs in layers.values():
             pairs.sort()
-
         return layers
+
+    @staticmethod
+    def _residue_selection(residues):
+        return " or ".join("(chain %s and resi %s)" % residue for residue in residues)
 
     @staticmethod
     def build_selection_from_layer(layer_pairs, nts_list):
         residues = set()
-        for open_idx, close_idx in layer_pairs:
-            if open_idx < len(nts_list):
-                nt1_id = nts_list[open_idx].get("nt_id")
-                if nt1_id:
-                    residues.add(ParsingAlgos.parse_nt_id(nt1_id))
-            if close_idx < len(nts_list):
-                nt2_id = nts_list[close_idx].get("nt_id")
-                if nt2_id:
-                    residues.add(ParsingAlgos.parse_nt_id(nt2_id))
-
-        if not residues:
-            return None
-
-        return " or ".join("(chain %s and resi %s)" % (c, r) for c, r in residues)
+        for open_index, close_index in layer_pairs:
+            for index in (open_index, close_index):
+                if index < len(nts_list) and nts_list[index].get("nt_id"):
+                    residues.add(ParsingAlgos.parse_nt_id(nts_list[index]["nt_id"]))
+        return ParsingAlgos._residue_selection(residues) or None
 
     @staticmethod
     def build_selection_from_pair(pair_entry):
@@ -382,29 +393,26 @@ class ParsingAlgos:
         if not nt1 or not nt2:
             raise CmdException("Pair entry missing nt1 or nt2")
         residues = {ParsingAlgos.parse_nt_id(nt1), ParsingAlgos.parse_nt_id(nt2)}
-        return " or ".join("(chain %s and resi %s)" % (c, r) for c, r in residues)
+        return ParsingAlgos._residue_selection(residues)
 
     @staticmethod
     def build_selection_from_nts_list(nts_list):
         if not nts_list:
             raise CmdException("Empty nucleotide list")
         residues = {ParsingAlgos.parse_nt_id(nt) for nt in nts_list}
-        return " or ".join("(chain %s and resi %s)" % (c, r) for c, r in residues)
+        return ParsingAlgos._residue_selection(residues)
+
+    @staticmethod
+    def _pair_residues(pairs):
+        return {ParsingAlgos.parse_nt_id(pair[key])
+                for pair in pairs for key in ("nt1", "nt2") if pair.get(key)}
 
     @staticmethod
     def build_selection_from_stem(stem_entry):
         pairs = stem_entry.get("pairs", [])
         if not pairs:
             raise CmdException("Stem has no pairs")
-
-        residues = set()
-        for p in pairs:
-            if p.get("nt1"):
-                residues.add(ParsingAlgos.parse_nt_id(p["nt1"]))
-            if p.get("nt2"):
-                residues.add(ParsingAlgos.parse_nt_id(p["nt2"]))
-
-        return " or ".join("(chain %s and resi %s)" % (c, r) for c, r in residues)
+        return ParsingAlgos._residue_selection(ParsingAlgos._pair_residues(pairs))
 
     @staticmethod
     def build_selection_from_hairpin(hairpin_entry):
@@ -419,27 +427,17 @@ class ParsingAlgos:
         stem_indices = coax_entry.get("stem_indices", [])
         if not stem_indices:
             raise CmdException("coaxStacks entry missing stem_indices")
-
         residues = set()
-        for si in stem_indices:
+        for index in stem_indices:
             try:
-                idx = int(si)
-            except Exception:
+                index = int(index)
+            except (TypeError, ValueError, OverflowError):
                 continue
-            if idx < 1 or idx > len(stems_list):
-                continue
-            stem_entry = stems_list[idx - 1]
-            pairs = stem_entry.get("pairs", [])
-            for p in pairs:
-                if p.get("nt1"):
-                    residues.add(ParsingAlgos.parse_nt_id(p["nt1"]))
-                if p.get("nt2"):
-                    residues.add(ParsingAlgos.parse_nt_id(p["nt2"]))
-
+            if 1 <= index <= len(stems_list):
+                residues.update(ParsingAlgos._pair_residues(stems_list[index - 1].get("pairs", [])))
         if not residues:
             raise CmdException("Could not build selection for coaxStacks entry")
-
-        return " or ".join("(chain %s and resi %s)" % (c, r) for c, r in residues)
+        return ParsingAlgos._residue_selection(residues)
 
     @staticmethod
     def build_selection_from_atom2base(a2b_entry):
@@ -455,9 +453,7 @@ class ParsingAlgos:
         if atom:
             c_a, r_a, atom_name = ParsingAlgos.parse_a2b_atom(atom)
             atom_name = str(atom_name).replace('"', '\\"')
-            clauses.append(
-                '(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name)
-            )
+            clauses.append('(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name))
 
         if not clauses:
             raise CmdException("atom2bases entry missing atom and nt")
@@ -465,26 +461,13 @@ class ParsingAlgos:
 
     @staticmethod
     def build_selection_from_aminor(aminor_entry):
-        desc_long = aminor_entry.get("desc_long", "")
-        if not desc_long or "vs" not in desc_long:
+        description = aminor_entry.get("desc_long", "")
+        if not description or "vs" not in description:
             raise CmdException("Aminors entry missing desc_long")
-
-        left, right = desc_long.split("vs", 1)
-        nts = []
-        left = left.strip()
-        right = right.strip()
-
-        if left:
-            nts.append(left)
-        if right:
-            for item in right.split(","):
-                item = item.strip()
-                if item:
-                    nts.append(item)
-
+        left, right = description.split("vs", 1)
+        nts = [nt.strip() for nt in [left] + right.split(",") if nt.strip()]
         if not nts:
             raise CmdException("Aminors entry has empty residues")
-
         return ParsingAlgos.build_selection_from_nts_list(nts)
 
     @staticmethod
@@ -493,11 +476,8 @@ class ParsingAlgos:
         nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
         return ParsingAlgos.build_selection_from_nts_list(nts_list)
 
-    @staticmethod
-    def build_selection_from_uturns(uturn_entry):
-        nts_long = uturn_entry.get("nts_long", "")
-        nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
-        return ParsingAlgos.build_selection_from_nts_list(nts_list)
+    # Both annotations store their residues in the same nts_long field.
+    build_selection_from_uturns = build_selection_from_gquadruplex
 
     @staticmethod
     def _shorten_nts_long(nts_long, max_items=6):
@@ -518,11 +498,7 @@ class ParsingAlgos:
             return "%d: %s - %s%s" % (i, nt1, nt2, (" (%s)" % lw) if lw else "")
 
         if feature in ("stems", "helices"):
-            n = (
-                len(entry.get("pairs", []))
-                if isinstance(entry.get("pairs", []), list)
-                else 0
-            )
+            n = len(entry.get("pairs", [])) if isinstance(entry.get("pairs", []), list) else 0
             nm = entry.get("name", entry.get("index", ""))
             return "%d: %s (pairs=%d)" % (i, str(nm), n)
 
@@ -574,10 +550,7 @@ class ParsingAlgos:
         dbn_data = dssr_data["dbn"]
 
         if isinstance(dbn_data, dict):
-            if (
-                isinstance(dbn_data.get("all_chains"), dict)
-                and "sstr" in dbn_data["all_chains"]
-            ):
+            if isinstance(dbn_data.get("all_chains"), dict) and "sstr" in dbn_data["all_chains"]:
                 return dbn_data["all_chains"]["sstr"]
             if "sstr" in dbn_data:
                 return dbn_data["sstr"]
@@ -591,23 +564,15 @@ class ParsingAlgos:
     @staticmethod
     def _extract_chain_names(dssr_data):
         chains = set()
-        try:
-            nts = dssr_data.get("nts", [])
-        except Exception:
-            nts = []
+        nts = dssr_data.get("nts", []) if isinstance(dssr_data, dict) else []
         if isinstance(nts, list):
             for nt in nts:
                 try:
-                    nt_id = nt.get("nt_id", "")
-                except Exception:
-                    nt_id = ""
-                if nt_id:
-                    try:
-                        c, _ = ParsingAlgos.parse_nt_id(nt_id)
-                    except Exception:
-                        c = None
-                    if c:
-                        chains.add(str(c))
+                    chain, _ = ParsingAlgos.parse_nt_id(nt.get("nt_id", ""))
+                    if chain:
+                        chains.add(chain)
+                except (AttributeError, CmdException):
+                    continue
         return sorted(chains)
 
     @staticmethod
@@ -622,216 +587,33 @@ class ParsingAlgos:
     @staticmethod
     def _format_rna_summary_text(dssr_data):
         chains = ParsingAlgos._extract_chain_names(dssr_data)
-        chains_txt = " ".join(chains) if chains else "(unknown)"
-
-        pairs_n = (
-            len(dssr_data.get("pairs", []))
-            if isinstance(dssr_data.get("pairs", None), list)
-            else 0
-        )
-        hairpins_n = (
-            len(dssr_data.get("hairpins", []))
-            if isinstance(dssr_data.get("hairpins", None), list)
-            else 0
-        )
-        stems_n = (
-            len(dssr_data.get("stems", []))
-            if isinstance(dssr_data.get("stems", None), list)
-            else 0
-        )
-        bulges_n = (
-            len(dssr_data.get("bulges", []))
-            if isinstance(dssr_data.get("bulges", None), list)
-            else 0
-        )
-        junctions_n = (
-            len(dssr_data.get("junctions", []))
-            if isinstance(dssr_data.get("junctions", None), list)
-            else 0
-        )
-        pk_n = ParsingAlgos._count_pseudoknot_layers(dssr_data)
-        aminors_n = (
-            len(dssr_data.get("Aminors", []))
-            if isinstance(dssr_data.get("Aminors", None), list)
-            else 0
-        )
-        stacks_n = (
-            len(dssr_data.get("stacks", []))
-            if isinstance(dssr_data.get("stacks", None), list)
-            else 0
-        )
-
-        gquads_n = (
-            len(dssr_data.get("Gtetrads", []))
-            if isinstance(dssr_data.get("Gtetrads", None), list)
-            else 0
-        )
-        uturns_n = (
-            len(dssr_data.get("Uturns", []))
-            if isinstance(dssr_data.get("Uturns", None), list)
-            else 0
-        )
-        lines = []
-        lines.append("RNA Structure Summary")
-        lines.append("---------------------")
-        lines.append("Chains: %s" % chains_txt)
-        lines.append("Base pairs: %d" % pairs_n)
-        lines.append("Hairpins: %d" % hairpins_n)
-        lines.append("Stems: %d" % stems_n)
-        lines.append("Bulges: %d" % bulges_n)
-        lines.append("Junctions: %d" % junctions_n)
-        lines.append("Pseudoknots: %d" % pk_n)
-        lines.append("A-minor interactions: %d" % aminors_n)
-        lines.append("Stacking interactions: %d" % stacks_n)
-        lines.append("G-quadruplexes: %d" % gquads_n)
-        lines.append("U-turns: %d" % uturns_n)
+        lines = [
+            "RNA Structure Summary",
+            "---------------------",
+            "Chains: %s" % (" ".join(chains) if chains else "(unknown)"),
+        ]
+        for label, key in (
+            ("Base pairs", "pairs"),
+            ("Hairpins", "hairpins"),
+            ("Stems", "stems"),
+            ("Bulges", "bulges"),
+            ("Junctions", "junctions"),
+            ("Pseudoknots", None),
+            ("A-minor interactions", "Aminors"),
+            ("Stacking interactions", "stacks"),
+            ("G-quadruplexes", "Gtetrads"),
+            ("U-turns", "Uturns"),
+        ):
+            entries = dssr_data.get(key) if key else None
+            count = (
+                (len(entries) if isinstance(entries, list) else 0)
+                if key
+                else (ParsingAlgos._count_pseudoknot_layers(dssr_data))
+            )
+            lines.append("%s: %d" % (label, count))
         return "\n".join(lines)
 
-    @staticmethod
-    def _collect_residues_from_nts_long(nts_long):
-        residues = set()
-        if not nts_long:
-            return residues
-        nts_list = [nt.strip() for nt in str(nts_long).split(",") if nt.strip()]
-        for nt in nts_list:
-            try:
-                residues.add(ParsingAlgos.parse_nt_id(nt))
-            except Exception:
-                pass
-        return residues
 
-    @staticmethod
-    def _collect_residues_all(dssr_data, feature):
-        feature = str(feature).lower().strip()
-        residues = set()
-
-        if feature == "pairs":
-            json_key = FEATURE_MAP.get(feature, feature)
-            pairs = dssr_data.get(json_key, [])
-            if isinstance(pairs, list):
-                for p in pairs:
-                    try:
-                        nt1 = p.get("nt1")
-                        nt2 = p.get("nt2")
-                    except Exception:
-                        nt1, nt2 = None, None
-                    if nt1:
-                        try:
-                            residues.add(ParsingAlgos.parse_nt_id(nt1))
-                        except Exception:
-                            pass
-                    if nt2:
-                        try:
-                            residues.add(ParsingAlgos.parse_nt_id(nt2))
-                        except Exception:
-                            pass
-            return residues
-
-        if feature == "stems":
-            stems = dssr_data.get("stems", [])
-            if isinstance(stems, list):
-                for st in stems:
-                    try:
-                        pairs = st.get("pairs", [])
-                    except Exception:
-                        pairs = []
-                    if not isinstance(pairs, list):
-                        continue
-                    for p in pairs:
-                        try:
-                            cmd_nt1 = p.get("nt1")
-                            cmd_nt2 = p.get("nt2")
-                        except Exception:
-                            cmd_nt1, cmd_nt2 = None, None
-                        if cmd_nt1:
-                            try:
-                                residues.add(ParsingAlgos.parse_nt_id(cmd_nt1))
-                            except Exception:
-                                pass
-                        if cmd_nt2:
-                            try:
-                                residues.add(ParsingAlgos.parse_nt_id(cmd_nt2))
-                            except Exception:
-                                pass
-            return residues
-
-        if feature in (
-            "hairpins",
-            "bulges",
-            "junctions",
-            "stacks",
-            "nonstack",
-            "gquadruplexes",
-            "uturns",
-        ):
-            entries = ParsingAlgos.feature_entries(dssr_data, feature)
-            for e in entries:
-                try:
-                    nts_long = e.get("nts_long", "")
-                except Exception:
-                    nts_long = ""
-                residues |= ParsingAlgos._collect_residues_from_nts_long(nts_long)
-            return residues
-
-        if feature == "aminors":
-            entries = dssr_data.get("Aminors", [])
-            if isinstance(entries, list):
-                for a in entries:
-                    try:
-                        desc_long = a.get("desc_long", "")
-                    except Exception:
-                        desc_long = ""
-                    if not desc_long or "vs" not in desc_long:
-                        continue
-                    try:
-                        left, right = desc_long.split("vs", 1)
-                    except Exception:
-                        continue
-                    nts = []
-                    left = left.strip()
-                    right = right.strip()
-                    if left:
-                        nts.append(left)
-                    if right:
-                        for item in right.split(","):
-                            item = item.strip()
-                            if item:
-                                nts.append(item)
-                    for nt in nts:
-                        try:
-                            residues.add(ParsingAlgos.parse_nt_id(nt))
-                        except Exception:
-                            pass
-            return residues
-
-        if feature == "pseudoknot":
-            try:
-                dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
-                nts_list = dssr_data.get("nts", None)
-                if nts_list is None or not isinstance(nts_list, list):
-                    return residues
-                layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket) or {}
-                for pairs in layers.values():
-                    for open_idx, close_idx in pairs:
-                        if open_idx < len(nts_list):
-                            nt1_id = nts_list[open_idx].get("nt_id")
-                            if nt1_id:
-                                try:
-                                    residues.add(ParsingAlgos.parse_nt_id(nt1_id))
-                                except Exception:
-                                    pass
-                        if close_idx < len(nts_list):
-                            nt2_id = nts_list[close_idx].get("nt_id")
-                            if nt2_id:
-                                try:
-                                    residues.add(ParsingAlgos.parse_nt_id(nt2_id))
-                                except Exception:
-                                    pass
-            except Exception:
-                pass
-            return residues
-
-        return residues
 
     @staticmethod
     def _sort_resi_key(resi_str):
@@ -875,16 +657,13 @@ class ParsingAlgos:
             layer_keys = sorted(layers.keys())
             if idx < 1 or idx > len(layer_keys):
                 raise CmdException(
-                    "pseudoknot layer index %d out of range (1..%d)"
-                    % (idx, len(layer_keys))
+                    "pseudoknot layer index %d out of range (1..%d)" % (idx, len(layer_keys))
                 )
 
             pairs = layers[layer_keys[idx - 1]]
             sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
             if not sel_str:
-                raise CmdException(
-                    "Could not build selection for pseudoknot layer %d" % idx
-                )
+                raise CmdException("Could not build selection for pseudoknot layer %d" % idx)
             return sel_str
 
         if feature not in FEATURE_MAP:
@@ -902,14 +681,18 @@ class ParsingAlgos:
 
         entry = feature_list[idx - 1]
 
-        if feature == "pairs":
-            return ParsingAlgos.build_selection_from_pair(entry)
-
-        if feature in ("stems", "helices"):
-            return ParsingAlgos.build_selection_from_stem(entry)
-
-        if feature == "hairpins":
-            return ParsingAlgos.build_selection_from_hairpin(entry)
+        builders = {
+            "pairs": ParsingAlgos.build_selection_from_pair,
+            "stems": ParsingAlgos.build_selection_from_stem,
+            "helices": ParsingAlgos.build_selection_from_stem,
+            "hairpins": ParsingAlgos.build_selection_from_hairpin,
+            "atom2bases": ParsingAlgos.build_selection_from_atom2base,
+            "aminors": ParsingAlgos.build_selection_from_aminor,
+            "gquadruplexes": ParsingAlgos.build_selection_from_gquadruplex,
+            "uturns": ParsingAlgos.build_selection_from_uturns,
+        }
+        if feature in builders:
+            return builders[feature](entry)
 
         if feature in (
             "stacks",
@@ -934,18 +717,6 @@ class ParsingAlgos:
             if not stems_list:
                 raise CmdException("No stems found, required for coaxStacks")
             return ParsingAlgos.build_selection_from_coaxstack(entry, stems_list)
-
-        if feature == "atom2bases":
-            return ParsingAlgos.build_selection_from_atom2base(entry)
-
-        if feature == "aminors":
-            return ParsingAlgos.build_selection_from_aminor(entry)
-
-        if feature == "gquadruplexes":
-            return ParsingAlgos.build_selection_from_gquadruplex(entry)
-
-        if feature == "uturns":
-            return ParsingAlgos.build_selection_from_uturns(entry)
 
         if feature == "nts":
             nt_id = entry.get("nt_id")
@@ -979,9 +750,7 @@ class DssrFunctions:
         precolor = int(precolor)
         feature = HelperFunctions.unquote(feature).lower().strip()
 
-        user_color = HelperFunctions._resolve_color_spec(
-            HelperFunctions.unquote(color).strip()
-        )
+        user_color = HelperFunctions._resolve_color_spec(HelperFunctions.unquote(color).strip())
 
         if feature in ("features", "help"):
             keys = sorted(FEATURE_MAP.keys())
@@ -993,132 +762,20 @@ class DssrFunctions:
             valid = ", ".join(sorted(FEATURE_MAP.keys()))
             raise CmdException('Unknown feature "%s". Valid: %s' % (feature, valid))
 
-        json_key = FEATURE_MAP[feature]
-
         if state == 0 or state < 0:
             state = cmd.get_state()
 
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
-        tmpfilepdb = tmp.name
-        tmp.close()
+        dssr_data = HelperFunctions._selection_json(selection, state, exe, precolor)
+        return DssrFunctions._select_feature_data(
+            dssr_data, selection, state, feature, index, name, user_color, show_info, quiet)
 
-        try:
-            cmd.save(tmpfilepdb, selection, state)
-            if precolor:
-                cmd.color("gray", selection)
-
-            dssr_data = HelperFunctions.run_dssr_json(tmpfilepdb, exe)
-
-            if feature == "pseudoknot":
-                layer_colors = ["blue", "pink", "green", "yellow", "orange"]
-
-                dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
-                nts_list = dssr_data.get("nts", None)
-                if nts_list is None:
-                    raise CmdException("No nts found in DSSR output")
-
-                layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
-                if not layers:
-                    raise CmdException("No pseudoknot layers found in structure")
-
-                layer_keys = sorted(layers.keys())
-
-                if index == 0:
-                    print("pseudoknot: %d layer(s)" % len(layer_keys))
-                    for j, k in enumerate(layer_keys, 1):
-                        print(
-                            "  layer %d (key=%s): %d pair(s)"
-                            % (j, str(k), len(layers[k]))
-                        )
-                    if not quiet and show_info:
-                        print("pseudoknot dot-bracket: " + str(dotbracket))
-                    return
-
-                if index < 1 or index > len(layer_keys):
-                    raise CmdException(
-                        "Layer index %d out of range (1..%d)" % (index, len(layer_keys))
-                    )
-
-                layer_key = layer_keys[index - 1]
-                pairs = layers[layer_key]
-                layer_color = layer_colors[(index - 1) % len(layer_colors)]
-
-                sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
-                if sel_str is None:
-                    raise CmdException("Could not build selection for layer %d" % index)
-
-                scoped_sel = "((%s) and (%s))" % (selection, sel_str)
-                cmd.select(name, scoped_sel)
-                selected_count = int(cmd.count_atoms(name))
-                if selected_count <= 0:
-                    cmd.delete(name)
-                    raise CmdException(
-                        "DSSR residues did not map back to the requested PyMOL selection"
-                    )
-                _DSSR_SELECTION_OBJECTS.add(str(name))
-                cmd.color(user_color if user_color else layer_color, name)
-
-                if not quiet:
-                    print(
-                        'dssr_select: selection "%s" pseudoknot layer %d with %d pair(s)'
-                        % (name, index, len(pairs))
-                    )
-                return
-
-            feature_list = ParsingAlgos.feature_entries(dssr_data, feature)
-            if not feature_list:
-                raise CmdException('No "%s" found in DSSR output' % json_key)
-
-            if index == 0:
-                total = len(feature_list)
-                print("%s: %d item(s)" % (feature, total))
-                show_n = 20 if not quiet else 10
-                show_n = min(show_n, total)
-                for i in range(show_n):
-                    print(
-                        "  "
-                        + ParsingAlgos._preview_entry(feature, feature_list[i], i + 1)
-                    )
-                if total > show_n:
-                    print("  ... (%d more)" % (total - show_n))
-                return
-
-            if index < 1 or index > len(feature_list):
-                raise CmdException(
-                    "%s index %d out of range (1..%d)"
-                    % (feature, index, len(feature_list))
-                )
-
-            sel_str = ParsingAlgos._build_residue_sel_from_dssr(
-                dssr_data, feature, index
-            )
-            if not sel_str:
-                raise CmdException(
-                    "Could not build selection for %s index %d" % (feature, index)
-                )
-            scoped_sel = "((%s) and (%s))" % (selection, sel_str)
-            cmd.select(name, scoped_sel)
-            selected_count = int(cmd.count_atoms(name))
-            if selected_count <= 0:
-                cmd.delete(name)
-                raise CmdException(
-                    "DSSR residues did not map back to the requested PyMOL selection"
-                )
-            _DSSR_SELECTION_OBJECTS.add(str(name))
-            cmd.color(user_color if user_color else "pink", name)
-            selected_features.append(feature)
-
-            if not quiet:
-                print(
-                    'dssr_select: created selection "%s" for %s (index %d) in state %d'
-                    % (name, feature, index, state)
-                )
-
-        finally:
-            try:
-                os.remove(tmpfilepdb)
-            except OSError:
-                pass
+    @staticmethod
+    def _create_feature_selection(name, selection, residue_selection):
+        cmd.select(name, "((%s) and (%s))" % (selection, residue_selection))
+        if int(cmd.count_atoms(name)) <= 0:
+            cmd.delete(name)
+            raise CmdException("DSSR residues did not map back to the requested PyMOL selection")
+        _DSSR_SELECTION_OBJECTS.add(str(name))
 
     @staticmethod
     def _dssr_default_selection():
@@ -1196,15 +853,7 @@ class DssrFunctions:
             color=color,
             precolor=precolor,
         )
-
-        if int(display):
-            cmd.show("sticks", nm)
-            try:
-                cmd.set("stick_radius", float(stick_radius), nm)
-            except Exception:
-                pass
-            if int(do_zoom):
-                cmd.zoom(nm)
+        DssrFunctions._display_feature_selection(nm, display, stick_radius, do_zoom)
 
     @staticmethod
     def _unused_name(prefix):
@@ -1296,17 +945,12 @@ class DssrFunctions:
             except Exception:
                 state = 1
 
-        tmp_pdb = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
-        tmp_r3d = tempfile.NamedTemporaryFile(suffix=".r3d", delete=False)
-        tmpfilepdb = tmp_pdb.name
-        tmpfiler3d = tmp_r3d.name
-        tmp_pdb.close()
-        tmp_r3d.close()
-
         if not name:
             name = DssrFunctions._unused_name("dssr_block")
 
-        try:
+        with tempfile.TemporaryDirectory(prefix="dssr_block_") as directory:
+            tmpfilepdb = os.path.join(directory, "input.pdb")
+            tmpfiler3d = os.path.join(directory, "blocks.r3d")
             if state == 0:
                 try:
                     n_states = int(cmd.count_states(selection))
@@ -1331,25 +975,7 @@ class DssrFunctions:
                 if block_color:
                     args.append("--block-color=" + HelperFunctions.unquote(block_color))
 
-                try:
-                    p = subprocess.Popen(
-                        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
-                    out, err = p.communicate()
-                    rc = p.returncode
-                except OSError:
-                    raise CmdException('Cannot execute exe="%s"' % exe)
-
-                if rc != 0:
-                    err_txt = ""
-                    try:
-                        err_txt = err.decode("utf-8", errors="replace") if err else ""
-                    except Exception:
-                        err_txt = str(err)
-                    raise CmdException(
-                        "DSSR block failed (rc=%s). stderr tail: %s"
-                        % (str(rc), HelperFunctions._safe_tail(err_txt))
-                    )
+                HelperFunctions._run_dssr(args, "DSSR block")
 
                 cmd.load(tmpfiler3d, name, max(1, st), zoom=0)
 
@@ -1359,16 +985,6 @@ class DssrFunctions:
                     'dssr_block: loaded "%s" (block_file=%s, block_depth=%s)'
                     % (name, str(block_file), str(block_depth))
                 )
-
-        finally:
-            try:
-                os.remove(tmpfilepdb)
-            except OSError:
-                pass
-            try:
-                os.remove(tmpfiler3d)
-            except OSError:
-                pass
 
     @staticmethod
     def _wrap_seq(s, width):
@@ -1440,9 +1056,7 @@ class DssrFunctions:
                 out_lines.append(DssrFunctions._wrap_seq(s, wrap))
             else:
                 out_lines.append(
-                    hdr
-                    + ": "
-                    + (DssrFunctions._wrap_seq(s, wrap) if int(wrap) > 0 else s)
+                    hdr + ": " + (DssrFunctions._wrap_seq(s, wrap) if int(wrap) > 0 else s)
                 )
 
         out = "\n".join(out_lines)
@@ -1451,1616 +1065,677 @@ class DssrFunctions:
         return out
 
     @staticmethod
-    def _restore_pretty_colors(objs):
-        for o in objs:
-            try:
-                cmd.spectrum("resi", "rainbow", "(%s) and polymer" % o)
-            except Exception:
-                pass
-            try:
-                cmd.color("atomic", "(%s) and not polymer" % o)
-            except Exception:
-                pass
+    def _select_feature_data(dssr_data, selection, state, feature, index, name,
+                             user_color=None, show_info=0, quiet=1):
+        """Create a feature selection from already analyzed DSSR data."""
+        json_key = FEATURE_MAP[feature]
+        if feature == "pseudoknot":
+            layer_colors = ["blue", "pink", "green", "yellow", "orange"]
+
+            dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
+            nts_list = dssr_data.get("nts", None)
+            if nts_list is None:
+                raise CmdException("No nts found in DSSR output")
+
+            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
+            if not layers:
+                raise CmdException("No pseudoknot layers found in structure")
+
+            layer_keys = sorted(layers.keys())
+
+            if index == 0:
+                print("pseudoknot: %d layer(s)" % len(layer_keys))
+                for j, k in enumerate(layer_keys, 1):
+                    print("  layer %d (key=%s): %d pair(s)" % (j, str(k), len(layers[k])))
+                if not quiet and show_info:
+                    print("pseudoknot dot-bracket: " + str(dotbracket))
+                return
+
+            if index < 1 or index > len(layer_keys):
+                raise CmdException(
+                    "Layer index %d out of range (1..%d)" % (index, len(layer_keys))
+                )
+
+            layer_key = layer_keys[index - 1]
+            pairs = layers[layer_key]
+            layer_color = layer_colors[(index - 1) % len(layer_colors)]
+
+            sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
+            if sel_str is None:
+                raise CmdException("Could not build selection for layer %d" % index)
+
+            DssrFunctions._create_feature_selection(name, selection, sel_str)
+            cmd.color(user_color if user_color else layer_color, name)
+
+            if not quiet:
+                print(
+                    'dssr_select: selection "%s" pseudoknot layer %d with %d pair(s)'
+                    % (name, index, len(pairs))
+                )
+            return
+
+        feature_list = ParsingAlgos.feature_entries(dssr_data, feature)
+        if not feature_list:
+            raise CmdException('No "%s" found in DSSR output' % json_key)
+
+        if index == 0:
+            total = len(feature_list)
+            print("%s: %d item(s)" % (feature, total))
+            show_n = 20 if not quiet else 10
+            show_n = min(show_n, total)
+            for i in range(show_n):
+                print("  " + ParsingAlgos._preview_entry(feature, feature_list[i], i + 1))
+            if total > show_n:
+                print("  ... (%d more)" % (total - show_n))
+            return
+
+        if index < 1 or index > len(feature_list):
+            raise CmdException(
+                "%s index %d out of range (1..%d)" % (feature, index, len(feature_list))
+            )
+
+        sel_str = ParsingAlgos._build_residue_sel_from_dssr(dssr_data, feature, index)
+        if not sel_str:
+            raise CmdException("Could not build selection for %s index %d" % (feature, index))
+        DssrFunctions._create_feature_selection(name, selection, sel_str)
+        cmd.color(user_color if user_color else "pink", name)
+
+        if not quiet:
+            print(
+                'dssr_select: created selection "%s" for %s (index %d) in state %d'
+                % (name, feature, index, state)
+            )
 
     @staticmethod
-    def _clear_keep_molecules(apply_gray):
-        """Clear only objects and selections created by this plugin.
-
-        Older versions deleted every atomless PyMOL object, measurement, and
-        named selection.  That could remove unrelated CGO/map objects and user
-        work.  Molecular recoloring behavior is preserved, but deletion is
-        now limited to names explicitly tracked by DSSR-PyMOL.
-        """
-        try:
-            all_objs = list(cmd.get_object_list())
-        except Exception:
-            all_objs = []
-
-        keep = []
-        for o in all_objs:
+    def _display_feature_selection(name, display=0, stick_radius=0.25, do_zoom=1):
+        if int(display):
+            cmd.show("sticks", name)
             try:
-                n = int(cmd.count_atoms(o))
-            except Exception:
-                n = 0
-            if n > 0:
-                keep.append(o)
-
-        for o in list(_DSSR_BLOCK_OBJECTS):
-            try:
-                cmd.delete(o)
+                cmd.set("stick_radius", float(stick_radius), name)
             except Exception:
                 pass
-        _DSSR_BLOCK_OBJECTS.clear()
+            if int(do_zoom):
+                cmd.zoom(name)
 
-        for selection_name in list(_DSSR_SELECTION_OBJECTS):
-            try:
-                cmd.delete(selection_name)
-            except Exception:
-                pass
-        _DSSR_SELECTION_OBJECTS.clear()
 
-        try:
-            cmd.select("sele", "none")
-        except Exception:
-            pass
 
-        if apply_gray:
-            for o in keep:
-                try:
-                    cmd.color("gray", o)
-                except Exception:
-                    pass
-        else:
-            DssrFunctions._restore_pretty_colors(keep)
 
-        try:
-            cmd.zoom("all")
-        except Exception:
-            pass
-        try:
-            cmd.reset()
-        except Exception:
-            pass
+def _button(text, clicked, tip=""):
+    widget = QtWidgets.QPushButton(text)
+    widget.clicked.connect(clicked)
+    widget.setToolTip(tip)
+    return widget
+
+
+def _checkbox(text, checked=False, changed=None, tip=""):
+    widget = QtWidgets.QCheckBox(text)
+    widget.setChecked(checked)
+    if changed is not None:
+        widget.toggled.connect(changed)
+    widget.setToolTip(tip)
+    return widget
+
+
+def _combo(items, editable=False, tip=""):
+    widget = QtWidgets.QComboBox()
+    widget.setEditable(editable)
+    widget.addItems(items)
+    widget.setToolTip(tip)
+    return widget
+
+
+def _spinbox(minimum, maximum, value, decimals=False, step=1, suffix="", tip=""):
+    widget = QtWidgets.QDoubleSpinBox() if decimals else QtWidgets.QSpinBox()
+    widget.setRange(minimum, maximum)
+    widget.setSingleStep(step)
+    widget.setValue(value)
+    widget.setSuffix(suffix)
+    widget.setToolTip(tip)
+    return widget
+
+
+def _menu_button(text, actions, parent):
+    button = QtWidgets.QToolButton(parent)
+    button.setText(text)
+    button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+    menu = QtWidgets.QMenu(button)
+    for label, callback in actions:
+        menu.addAction(label, callback)
+    button.setMenu(menu)
+    return button
 
 
 class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
+    """One analysis context, feature browser, and embedded RNA editor."""
+
+    PAGE_SIZE = 500
+
     def __init__(self):
-        super(DssrGuiDialog, self).__init__()
-        self.setWindowTitle("DSSR GUI")
-        self.resize(1180, 760)
-
+        super().__init__()
+        self.setWindowTitle("DSSR RNA studio")
+        self.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, True)
+        self.resize(1360, 860)
+        self.setStyleSheet(WHITE_THEME)
+        self.editor = None
+        self._analysis_context = None
+        self._cache_key = self._cache_data = None
         self._current_feature = "pairs"
-        self._cache_key = None
-        self._cache_data = None
-        self._items_all = []
-        self._items_filtered = []
+        self._items_all, self._items_filtered = [], []
         self._page = 0
-        self._query_conditions = []
-        self._json_override = None
-        self._json_override_context = None
-        self._json_view_data = None
-        self._json_text_cache = None
-        self._json_box_data_id = None
+        self._updating_context = False
+        self._loading = False
+        self._editor_sizes = [350, 1010]
+        self._build_widgets()
+        self._context_timer = QtCore.QTimer(self)
+        self._context_timer.setInterval(750)
+        self._context_timer.timeout.connect(self._check_context)
+        self.refresh_objects()
 
+    def _build_widgets(self):
         root = QtWidgets.QVBoxLayout(self)
-        top = QtWidgets.QGridLayout()
+        top = QtWidgets.QHBoxLayout()
         root.addLayout(top)
-
         self.obj_combo = QtWidgets.QComboBox()
-        self.obj_combo.currentIndexChanged.connect(self._on_object_changed)
-
+        self.obj_combo.setEditable(True)
+        self.obj_combo.setMinimumWidth(220)
+        self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         self.state_combo = QtWidgets.QComboBox()
         self.state_combo.currentIndexChanged.connect(self._on_dssr_context_changed)
-        self.count_btn = QtWidgets.QPushButton("count")
-        self.count_btn.clicked.connect(self._count_states_clicked)
+        self.refresh_obj_btn = _button("Refresh objects", self.refresh_objects)
+        self.analyze_btn = _button("Analyze", lambda: self._load_structure(force=True))
+        top.addWidget(QtWidgets.QLabel("Object / selection"))
+        top.addWidget(self.obj_combo, 1)
+        top.addWidget(QtWidgets.QLabel("State"))
+        top.addWidget(self.state_combo)
+        top.addWidget(self.refresh_obj_btn)
+        top.addWidget(self.analyze_btn)
+        self.show_2d_btn = QtWidgets.QPushButton("2D")
+        self.show_2d_btn.setCheckable(True)
+        self.show_2d_btn.setChecked(True)
+        self.show_2d_btn.setToolTip("Show / hide the sequence and 2D panel; keep the edited layout")
+        self.show_2d_btn.toggled.connect(self._set_2d_visible)
+        top.addWidget(self.show_2d_btn)
+        self.settings_btn = QtWidgets.QPushButton("Settings")
+        self.settings_btn.setToolTip("Display options, base blocks, and the DSSR executable path")
+        self.settings_btn.setCheckable(True)
+        top.addWidget(self.settings_btn)
 
+        self.settings_widget = QtWidgets.QWidget()
+        settings = QtWidgets.QGridLayout(self.settings_widget)
+        settings.setContentsMargins(0, 0, 0, 0)
         self.exe_edit = QtWidgets.QLineEdit("x3dna-dssr")
         self.exe_edit.textChanged.connect(self._on_dssr_context_changed)
-
+        self.precolor_cb = _checkbox("Gray precolor", checked=True)
+        self.display_cb = _checkbox("Display sticks", checked=False)
+        self.zoom_cb = _checkbox("Zoom to selection", checked=True)
         self.color_edit = QtWidgets.QLineEdit("auto")
-        self.name_edit = QtWidgets.QLineEdit("")
+        self.block_file_combo = _combo(BLOCK_FEATURES, editable=True)
+        self.block_depth_spin = _spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
+        self.make_blocks_btn = _button("Make blocks", self._make_blocks_clicked)
+        settings.addWidget(QtWidgets.QLabel("DSSR executable"), 0, 0)
+        settings.addWidget(self.exe_edit, 0, 1, 1, 5)
+        settings.addWidget(self.precolor_cb, 1, 0)
+        settings.addWidget(self.display_cb, 1, 1)
+        settings.addWidget(self.zoom_cb, 1, 2)
+        settings.addWidget(QtWidgets.QLabel("Color"), 1, 3)
+        settings.addWidget(self.color_edit, 1, 4, 1, 2)
+        settings.addWidget(QtWidgets.QLabel("Block style"), 2, 0)
+        settings.addWidget(self.block_file_combo, 2, 1)
+        settings.addWidget(QtWidgets.QLabel("Depth"), 2, 2)
+        settings.addWidget(self.block_depth_spin, 2, 3)
+        settings.addWidget(self.make_blocks_btn, 2, 4, 1, 2)
+        root.addWidget(self.settings_widget)
+        self.settings_widget.hide()
+        self.settings_btn.toggled.connect(self.settings_widget.setVisible)
 
-        self.precolor_cb = QtWidgets.QCheckBox("gray precolor")
-        self.precolor_cb.setChecked(True)
-
-        self.display_cb = QtWidgets.QCheckBox("display sticks")
-        self.display_cb.setChecked(False)
-
-        self.zoom_cb = QtWidgets.QCheckBox("zoom")
-        self.zoom_cb.setChecked(True)
-
-        self.showinfo_cb = QtWidgets.QCheckBox("show_info (pseudoknot)")
-        self.showinfo_cb.setChecked(False)
-
-        self.radius_spin = QtWidgets.QDoubleSpinBox()
-        self.radius_spin.setMinimum(0.01)
-        self.radius_spin.setMaximum(5.0)
-        self.radius_spin.setSingleStep(0.05)
-        self.radius_spin.setValue(0.25)
-
-        self.status_label = QtWidgets.QLabel("")
+        self.status_label = QtWidgets.QLabel("Load a molecule, then click Analyze.")
         self.status_label.setWordWrap(True)
-
-        self.block_file_combo = QtWidgets.QComboBox()
-        self.block_file_combo.setEditable(True)
-        self.block_file_combo.addItems(BLOCK_FEATURES)
-
-        self.block_depth_spin = QtWidgets.QDoubleSpinBox()
-        self.block_depth_spin.setMinimum(0.01)
-        self.block_depth_spin.setMaximum(5.0)
-        self.block_depth_spin.setSingleStep(0.05)
-        self.block_depth_spin.setValue(0.5)
-
-        self.make_blocks_btn = QtWidgets.QPushButton("make blocks")
-        self.make_blocks_btn.clicked.connect(self._make_blocks_clicked)
-
-        self.seq_btn = QtWidgets.QPushButton("seq view")
-        self.seq_btn.clicked.connect(self._seq_view_clicked)
-
-        top.addWidget(QtWidgets.QLabel("object"), 0, 0)
-        top.addWidget(self.obj_combo, 0, 1, 1, 2)
-
-        top.addWidget(QtWidgets.QLabel("state"), 0, 3)
-        top.addWidget(self.state_combo, 0, 4)
-        top.addWidget(self.count_btn, 0, 5)
-
-        top.addWidget(QtWidgets.QLabel("exe"), 1, 0)
-        top.addWidget(self.exe_edit, 1, 1, 1, 5)
-
-        top.addWidget(QtWidgets.QLabel("color"), 2, 0)
-        top.addWidget(self.color_edit, 2, 1)
-        top.addWidget(QtWidgets.QLabel("name"), 2, 3)
-        top.addWidget(self.name_edit, 2, 4)
-
-        top.addWidget(QtWidgets.QLabel("block_file"), 3, 0)
-        top.addWidget(self.block_file_combo, 3, 1)
-        top.addWidget(QtWidgets.QLabel("block_depth"), 3, 3)
-        top.addWidget(self.block_depth_spin, 3, 4)
-        top.addWidget(self.make_blocks_btn, 3, 5, 1, 1)
-
-        opts = QtWidgets.QHBoxLayout()
-        opts.addWidget(self.precolor_cb)
-        opts.addWidget(self.display_cb)
-        opts.addWidget(self.zoom_cb)
-        opts.addWidget(self.showinfo_cb)
-        opts.addWidget(QtWidgets.QLabel("stick_radius"))
-        opts.addWidget(self.radius_spin)
-        opts.addStretch(1)
-        root.addLayout(opts)
-
         root.addWidget(self.status_label)
-
-        btn_area = QtWidgets.QWidget()
-        btn_grid = QtWidgets.QGridLayout(btn_area)
-        btn_grid.setContentsMargins(0, 0, 0, 0)
-        btn_grid.setHorizontalSpacing(6)
-        btn_grid.setVerticalSpacing(6)
-
-        self._feature_buttons = {}
-        cols = 6
-        for idx, feat in enumerate(FEATURE_ORDER):
-            b = QtWidgets.QPushButton(FEATURE_LABELS.get(feat, feat))
-            b.setCheckable(True)
-            b.clicked.connect(self._make_feature_handler(feat))
-            r = idx // cols
-            c = idx % cols
-            btn_grid.addWidget(b, r, c)
-            self._feature_buttons[feat] = b
-        if "pairs" in self._feature_buttons:
-            self._feature_buttons["pairs"].setChecked(True)
-
-        root.addWidget(btn_area)
-
-        bar = QtWidgets.QHBoxLayout()
-
-        self.filter_edit = QtWidgets.QLineEdit("")
-        self.filter_edit.setPlaceholderText("filter...")
-        self.filter_edit.setMinimumWidth(170)
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        root.addWidget(self.splitter, 1)
+        sidebar = self.sidebar = QtWidgets.QWidget()
+        sidebar.setMinimumWidth(280)
+        sidebar.setMaximumWidth(440)
+        left = QtWidgets.QVBoxLayout(sidebar)
+        left.setContentsMargins(0, 0, 4, 0)
+        self.feature_combo = QtWidgets.QComboBox()
+        for feature in FEATURE_ORDER:
+            self.feature_combo.addItem(FEATURE_LABELS.get(feature, feature), feature)
+        self.feature_combo.currentIndexChanged.connect(self._on_feature_changed)
+        left.addWidget(self.feature_combo)
+        self.filter_edit = QtWidgets.QLineEdit()
+        self.filter_edit.setPlaceholderText("Filter feature entries...")
         self.filter_edit.textChanged.connect(self._on_filter_changed)
-
-        self.page_size_spin = QtWidgets.QSpinBox()
-        self.page_size_spin.setMinimum(50)
-        self.page_size_spin.setMaximum(5000)
-        self.page_size_spin.setValue(500)
-        self.page_size_spin.valueChanged.connect(self._on_page_size_changed)
-
-        self.prev_btn = QtWidgets.QPushButton("Prev")
-        self.next_btn = QtWidgets.QPushButton("Next")
-        self.prev_btn.clicked.connect(self._prev_page)
-        self.next_btn.clicked.connect(self._next_page)
-
-        self.page_label = QtWidgets.QLabel("")
-
-        self.refresh_obj_btn = QtWidgets.QPushButton("refresh objects")
-        self.refresh_obj_btn.clicked.connect(self.refresh_objects)
-        self.refresh_list_btn = QtWidgets.QPushButton("refresh list")
-        self.refresh_list_btn.clicked.connect(self._refresh_list_clicked)
-
-        self.zoom_all_btn = QtWidgets.QPushButton("zoom all")
-        self.zoom_all_btn.clicked.connect(self._zoom_all)
-
-        self.reset_view_btn = QtWidgets.QPushButton("reset view")
-        self.reset_view_btn.clicked.connect(self._reset_view)
-
-        bar.addWidget(QtWidgets.QLabel("filter"))
-        bar.addWidget(self.filter_edit, 2)
-        bar.addWidget(QtWidgets.QLabel("max/page"))
-        bar.addWidget(self.page_size_spin, 0)
-        bar.addWidget(self.prev_btn)
-        bar.addWidget(self.next_btn)
-        bar.addWidget(self.page_label, 1)
-        bar.addWidget(self.refresh_obj_btn)
-        bar.addWidget(self.refresh_list_btn)
-        bar.addWidget(self.seq_btn)
-        bar.addWidget(self.zoom_all_btn)
-        bar.addWidget(self.reset_view_btn)
-        root.addLayout(bar)
-
-        self.query_group = QtWidgets.QGroupBox("DSSR property query")
-        query_outer = QtWidgets.QVBoxLayout(self.query_group)
-        query_row = QtWidgets.QHBoxLayout()
-
-        self.query_join_combo = QtWidgets.QComboBox()
-        self.query_join_combo.addItems(["AND", "OR"])
-        self.query_field_combo = QtWidgets.QComboBox()
-        self.query_field_combo.setEditable(True)
-        self.query_field_combo.setMinimumWidth(150)
-        self.query_op_combo = QtWidgets.QComboBox()
-        self.query_op_combo.addItems(
-            ["=", "!=", "contains", "not contains", ">", ">=", "<", "<=", "exists", "not exists"]
-        )
-        self.query_value_edit = QtWidgets.QLineEdit()
-        self.query_value_edit.setPlaceholderText("value, e.g. cWH, WC, 3.2, true")
-        self.query_value_edit.returnPressed.connect(self._add_query_condition)
-
-        self.query_add_btn = QtWidgets.QPushButton("add")
-        self.query_add_btn.clicked.connect(self._add_query_condition)
-        self.query_remove_btn = QtWidgets.QPushButton("undo condition")
-        self.query_remove_btn.clicked.connect(self._remove_query_condition)
-        self.query_clear_btn = QtWidgets.QPushButton("clear query")
-        self.query_clear_btn.clicked.connect(self._clear_query_conditions)
-        self.query_select_btn = QtWidgets.QPushButton("select matches in 3D")
-        self.query_select_btn.clicked.connect(self._select_query_matches)
-
-        query_row.addWidget(self.query_join_combo)
-        query_row.addWidget(self.query_field_combo, 1)
-        query_row.addWidget(self.query_op_combo)
-        query_row.addWidget(self.query_value_edit, 2)
-        query_row.addWidget(self.query_add_btn)
-        query_row.addWidget(self.query_remove_btn)
-        query_row.addWidget(self.query_clear_btn)
-        query_row.addWidget(self.query_select_btn)
-        query_outer.addLayout(query_row)
-        self.query_summary_label = QtWidgets.QLabel("No property query — text filter remains available above")
-        self.query_summary_label.setWordWrap(True)
-        query_outer.addWidget(self.query_summary_label)
-        root.addWidget(self.query_group)
-
-        report_bar = QtWidgets.QHBoxLayout()
-        self.report_btn = QtWidgets.QPushButton("Generate RNA Report")
-        self.report_btn.clicked.connect(self._generate_rna_report_clicked)
-
-        self.make_all_sel_btn = QtWidgets.QPushButton("make selections (all)")
-        self.make_all_sel_btn.clicked.connect(self._make_all_selections_clicked)
-
-        self.auto_color_btn = QtWidgets.QPushButton("auto color")
-        self.auto_color_btn.clicked.connect(self._auto_color_clicked)
-
-        self.clear_report_btn = QtWidgets.QPushButton("clear report")
-        self.clear_report_btn.clicked.connect(self._clear_report)
-
-        self.copy_json_btn = QtWidgets.QPushButton("copy JSON")
-        self.copy_json_btn.clicked.connect(self._copy_json_clicked)
-        self.save_json_btn = QtWidgets.QPushButton("save JSON")
-        self.save_json_btn.clicked.connect(self._save_json_clicked)
-        self.load_json_btn = QtWidgets.QPushButton("load JSON")
-        self.load_json_btn.clicked.connect(self._load_json_clicked)
-
-        report_bar.addWidget(self.report_btn)
-        report_bar.addWidget(self.make_all_sel_btn)
-        report_bar.addWidget(self.auto_color_btn)
-        report_bar.addWidget(self.clear_report_btn)
-        report_bar.addWidget(self.copy_json_btn)
-        report_bar.addWidget(self.save_json_btn)
-        report_bar.addWidget(self.load_json_btn)
-        report_bar.addStretch(1)
-        root.addLayout(report_bar)
+        left.addWidget(self.filter_edit)
         self.list_widget = QtWidgets.QListWidget()
-        try:
-            self.list_widget.setSelectionMode(
-                QtWidgets.QAbstractItemView.ExtendedSelection
-            )
-        except Exception:
-            pass
+        self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.list_widget.itemClicked.connect(self._on_item_clicked_preview)
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self.report_box = QtWidgets.QPlainTextEdit()
-        self.report_box.setReadOnly(True)
-        try:
-            self.report_box.setPlaceholderText(
-                "RNA Structure Summary will appear here..."
-            )
-        except Exception:
-            pass
-
+        left.addWidget(self.list_widget, 3)
+        paging = QtWidgets.QHBoxLayout()
+        self.prev_btn = _button("Previous", lambda: self._change_page(-1))
+        self.next_btn = _button("Next", lambda: self._change_page(1))
+        self.page_label = QtWidgets.QLabel()
+        paging.addWidget(self.prev_btn)
+        paging.addWidget(self.page_label, 1)
+        paging.addWidget(self.next_btn)
+        left.addLayout(paging)
         self.details_box = QtWidgets.QPlainTextEdit()
         self.details_box.setReadOnly(True)
-        self.details_box.setPlaceholderText(
-            "Click a DSSR item to inspect every JSON property."
-        )
-        self.json_box = QtWidgets.QPlainTextEdit()
-        self.json_box.setReadOnly(True)
-        self.json_box.setPlaceholderText("Complete DSSR JSON will appear here.")
+        self.report_box = QtWidgets.QPlainTextEdit()
+        self.report_box.setReadOnly(True)
         self.data_tabs = QtWidgets.QTabWidget()
-        self.data_tabs.addTab(self.report_box, "Report")
-        self.data_tabs.addTab(self.details_box, "Item details")
-        self.data_tabs.addTab(self.json_box, "Full JSON")
-        self.data_tabs.currentChanged.connect(self._on_data_tab_changed)
+        self.data_tabs.addTab(self.details_box, "Details")
+        self.data_tabs.addTab(self.report_box, "Summary")
+        self.data_tabs.setCurrentWidget(self.report_box)
+        left.addWidget(self.data_tabs, 1)
+        self.splitter.addWidget(sidebar)
+        self.editor_container = QtWidgets.QWidget()
+        self.editor_layout = QtWidgets.QVBoxLayout(self.editor_container)
+        self.editor_layout.setContentsMargins(0, 0, 0, 0)
+        panel_title = QtWidgets.QHBoxLayout()
+        panel_title.addWidget(QtWidgets.QLabel("Sequence · RNA 2D"))
+        panel_title.addStretch(1)
+        self.minimize_2d_btn = _button("−", lambda: self.show_2d_btn.setChecked(False),
+                                     "Collapse 2D; keep the layout and undo history")
+        self.hide_2d_btn = _button("×", lambda: self.show_2d_btn.setChecked(False),
+                                 "Hide 2D; reopen with the 2D button above")
+        for button in (self.minimize_2d_btn, self.hide_2d_btn):
+            button.setFixedWidth(28)
+            panel_title.addWidget(button)
+        self.editor_layout.addLayout(panel_title)
+        self.empty_label = QtWidgets.QLabel("RNA 2D view\n\nLoad a molecule and click Analyze.")
+        self.empty_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.editor_layout.addWidget(self.empty_label)
+        self.splitter.addWidget(self.editor_container)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([350, 1010])
 
-        split = QtWidgets.QSplitter()
-        split.setOrientation(QtCore.Qt.Horizontal)
-        split.addWidget(self.list_widget)
-        split.addWidget(self.data_tabs)
-        try:
-            split.setStretchFactor(0, 3)
-            split.setStretchFactor(1, 2)
-        except Exception:
-            pass
+    def _set_2d_visible(self, visible):
+        """Collapse the pane without retiring its analysis or edited coordinates."""
+        if not visible:
+            self._editor_sizes = self.splitter.sizes()
+        self.editor_container.setVisible(visible)
+        self.sidebar.setMaximumWidth(440 if visible else 16777215)
+        if visible:
+            self.splitter.setSizes(self._editor_sizes)
+        if self.editor is not None:
+            self.editor.set_view_active(visible and not self.isMinimized())
+            if visible:
+                self.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
 
-        root.addWidget(split, 1)
-
-        self.setStyleSheet(
-            """
-            QDialog { background: #ffffff; color: #263746; }
-            QLabel, QCheckBox, QGroupBox { color: #263746; }
-            QGroupBox {
-                border: 1px solid #d4dde5; border-radius: 9px;
-                margin-top: 8px; padding-top: 8px; background: #ffffff;
-                font-weight: 600;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin; left: 10px; padding: 0 6px;
-                color: #24657d;
-            }
-            QPushButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-                color: #263746; background: #ffffff;
-                border: 1px solid #bdcbd6; border-radius: 6px;
-                padding: 4px 7px; min-height: 21px;
-            }
-            QPushButton:hover, QComboBox:hover, QLineEdit:focus {
-                background: #eef9fd; border-color: #52b9da;
-            }
-            QPushButton:checked {
-                color: #16475b; background: #d8f1fa; border-color: #55b9d9;
-                font-weight: 700;
-            }
-            QPushButton:disabled, QComboBox:disabled {
-                color: #98a6b1; background: #f3f5f7; border-color: #dce2e7;
-            }
-            QListWidget, QPlainTextEdit {
-                color: #263746; background: #ffffff;
-                border: 1px solid #d4dde5; border-radius: 7px;
-                selection-color: #123d50; selection-background-color: #d6f0fa;
-            }
-            QComboBox QAbstractItemView {
-                color: #263746; background: #ffffff;
-                selection-color: #123d50; selection-background-color: #d6f0fa;
-            }
-            QTabWidget::pane { border: 1px solid #d4dde5; border-radius: 7px; }
-            QTabBar::tab {
-                color: #647581; background: #f2f5f7;
-                border: 1px solid #d4dde5; padding: 6px 12px;
-            }
-            QTabBar::tab:selected { color: #174c61; background: #ffffff; }
-            QToolTip { color: #263746; background: #ffffff;
-                border: 1px solid #52b9da; }
-            """
-        )
-
-        self.refresh_objects()
-        self._update_state_combo()
-        self.refresh_list()
-
-    def _update_feature_buttons_state(self, dssr_data):
-        """
-        Dynamically enables/disables structural feature buttons based on
-        the presence of features inside the loaded structure's DSSR output,
-        and labels each button with its detected item count.
-        """
-        for feat, button in self._feature_buttons.items():
-            label = FEATURE_LABELS.get(feat, feat)
-            if not dssr_data:
-                button.setEnabled(False)
-                button.setText(label)
-                continue
-
-            if feat == "pseudoknot":
-                count = ParsingAlgos._count_pseudoknot_layers(dssr_data)
-            else:
-                count = len(ParsingAlgos.feature_entries(dssr_data, feat))
-
-            button.setEnabled(count > 0)
-            button.setText("%s (%d)" % (label, count))
-
-    def _enable_seq_view(self):
-        try:
-            cmd.set("seq_view", 1)
-        except Exception:
-            try:
-                cmd.do("set seq_view, 1")
-            except Exception:
-                pass
-
-    def _seq_view_clicked(self):
-        self._enable_seq_view()
-        sel = self._get_object_text()
-        try:
-            cmd.select("sele", "(%s)" % sel)
-        except Exception:
-            pass
-
-    def _make_feature_handler(self, feat):
-        def handler():
-            self._current_feature = feat
-            self._clear_query_conditions(render=False)
-            for k, b in self._feature_buttons.items():
-                b.setChecked(k == feat)
-            self.refresh_list()
-
-        return handler
-
-    def _invalidate_dssr_cache(self):
-        self._cache_key = None
-        self._cache_data = None
-        self._json_override = None
-        self._json_override_context = None
-
-    def _on_dssr_context_changed(self, *_args):
-        self._invalidate_dssr_cache()
-
-    def _on_object_changed(self, *_args):
-        self._invalidate_dssr_cache()
-        self._update_state_combo()
-
-    def _refresh_list_clicked(self, *_args):
-        self._invalidate_dssr_cache()
-        self.refresh_list()
-
-    def _count_states_clicked(self):
-        obj = self._get_object_text()
-        try:
-            n = int(cmd.count_states(obj))
-        except Exception:
-            n = 0
-        self._update_state_combo(force_n=n)
-        try:
-            QtWidgets.QMessageBox.information(
-                self, "count_states", "count_states %s = %d" % (obj, n)
-            )
-        except Exception:
-            pass
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.WindowStateChange and getattr(self, "editor", None) is not None:
+            self.editor.set_view_active(self.show_2d_btn.isChecked() and not self.isMinimized())
 
     def _get_object_text(self):
-        txt = self.obj_combo.currentText().strip() if self.obj_combo.count() else ""
-        return txt if txt else "all"
-
-    def _update_state_combo(self, force_n=None):
-        obj = self._get_object_text()
-        try:
-            n = int(force_n) if force_n is not None else int(cmd.count_states(obj))
-        except Exception:
-            n = 0
-
-        current = self.state_combo.currentData() if self.state_combo.count() else None
-        self.state_combo.clear()
-
-        self.state_combo.addItem("current", -1)
-        if n and n > 1:
-            for s in range(1, n + 1):
-                self.state_combo.addItem(str(s), s)
-
-        if current is not None:
-            idx = self.state_combo.findData(current)
-            if idx >= 0:
-                self.state_combo.setCurrentIndex(idx)
+        return self.obj_combo.currentText().strip() or "all"
 
     def _get_state_value(self):
-        data = self.state_combo.currentData()
-        try:
-            data = int(data)
-        except Exception:
-            data = -1
-        if data == -1:
-            try:
-                return int(cmd.get_state())
-            except Exception:
-                return 1
-        return data
-
-    def refresh_objects(self):
-        self._invalidate_dssr_cache()
-        try:
-            objs = cmd.get_object_list("enabled")
-            if not objs:
-                objs = cmd.get_object_list()
-        except Exception:
-            objs = []
-
-        current = self.obj_combo.currentText().strip() if self.obj_combo.count() else ""
-        self.obj_combo.clear()
-
-        if not objs:
-            self.obj_combo.addItem("all")
-        else:
-            for o in objs:
-                self.obj_combo.addItem(o)
-
-        if current:
-            i = self.obj_combo.findText(current)
-            if i >= 0:
-                self.obj_combo.setCurrentIndex(i)
-        else:
-            try:
-                enabled = cmd.get_object_list("enabled")
-            except Exception:
-                enabled = []
-            if len(enabled) == 1:
-                i = self.obj_combo.findText(enabled[0])
-                if i >= 0:
-                    self.obj_combo.setCurrentIndex(i)
-
-        self._update_state_combo()
-
-    def _zoom_all(self):
-        try:
-            cmd.zoom("all")
-        except Exception:
-            pass
-
-    def _reset_view(self):
-        apply_gray = True if self.precolor_cb.isChecked() else False
-        DssrFunctions._clear_keep_molecules(apply_gray)
-        self._invalidate_dssr_cache()
-        self.refresh_objects()
-        self.refresh_list()
-
-    def _clear_report(self):
-        try:
-            self.report_box.setPlainText("")
-        except Exception:
-            pass
-
-    @staticmethod
-    def _json_pretty(value):
-        return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
-
-    def _json_text_for_data(self, dssr_data):
-        if dssr_data is self._json_view_data and self._json_text_cache is not None:
-            return self._json_text_cache
-        text = self._json_pretty(dssr_data)
-        if dssr_data is self._json_view_data:
-            self._json_text_cache = text
-        return text
-
-    def _render_json_view(self):
-        data = self._json_view_data
-        if data is None:
-            return
-        data_id = id(data)
-        if self._json_box_data_id == data_id:
-            return
-        try:
-            self.json_box.setPlainText(self._json_text_for_data(data))
-            self._json_box_data_id = data_id
-        except Exception as error:
-            self.json_box.setPlainText("JSON rendering error: %s" % str(error))
-            self._json_box_data_id = None
-
-    def _on_data_tab_changed(self, _index):
-        try:
-            if self.data_tabs.currentWidget() is self.json_box:
-                self._render_json_view()
-        except Exception:
-            pass
-
-    def _refresh_json_view(self, dssr_data):
-        if dssr_data is not self._json_view_data:
-            self._json_view_data = dssr_data
-            self._json_text_cache = None
-            self._json_box_data_id = None
-            try:
-                self.json_box.setPlainText(
-                    "Complete DSSR JSON is ready. Open this tab to render it."
-                )
-            except Exception:
-                pass
-        try:
-            if self.data_tabs.currentWidget() is self.json_box:
-                self._render_json_view()
-        except Exception:
-            pass
-
-    def _copy_json_clicked(self):
-        try:
-            sel_obj, exe, st, precolor_on = self._get_dssr_context()
-            data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            text = self._json_text_for_data(data)
-            QtWidgets.QApplication.clipboard().setText(text)
-            self.status_label.setText("Complete DSSR JSON copied to clipboard")
-        except Exception as error:
-            self.status_label.setText("copy JSON error: %s" % str(error))
-
-    def _save_json_clicked(self):
-        try:
-            path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
-                self,
-                "Save DSSR JSON",
-                "dssr-analysis.json",
-                "JSON files (*.json);;All files (*)",
-            )
-            if not path:
-                return
-            sel_obj, exe, st, precolor_on = self._get_dssr_context()
-            data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(self._json_text_for_data(data))
-                handle.write("\n")
-            self.status_label.setText("DSSR JSON saved: %s" % path)
-        except Exception as error:
-            QtWidgets.QMessageBox.critical(self, "Save DSSR JSON", str(error))
-
-    def _load_json_clicked(self):
-        try:
-            path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
-                self,
-                "Load DSSR JSON",
-                "",
-                "JSON files (*.json);;All files (*)",
-            )
-            if not path:
-                return
-            with open(path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            if not isinstance(data, dict):
-                raise CmdException("DSSR JSON root must be an object")
-            context = (self._get_object_text(), self._get_state_value())
-            self._cache_key = None
-            self._cache_data = data
-            self._json_override = data
-            self._json_override_context = context
-            self._refresh_json_view(data)
-            self.refresh_list()
-            self.status_label.setText(
-                "Loaded DSSR JSON for %s state %s: %s"
-                % (context[0], str(context[1]), path)
-            )
-        except Exception as error:
-            QtWidgets.QMessageBox.critical(self, "Load DSSR JSON", str(error))
-
-    @staticmethod
-    def _query_scalar_paths(value, prefix="", depth=0):
-        paths = set()
-        if not isinstance(value, dict):
-            return paths
-        for key, child in value.items():
-            key = str(key)
-            path = "%s.%s" % (prefix, key) if prefix else key
-            paths.add(path)
-            if isinstance(child, dict) and depth < 2:
-                paths |= DssrGuiDialog._query_scalar_paths(child, path, depth + 1)
-        return paths
-
-    @staticmethod
-    def _query_get_path(entry, path):
-        marker = object()
-        value = entry
-        for part in str(path).split("."):
-            if not isinstance(value, dict) or part not in value:
-                return marker, False
-            value = value[part]
-        return value, True
-
-    @staticmethod
-    def _query_coerce(value):
-        if not isinstance(value, str):
-            return value
-        text = value.strip()
-        if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
-            text = text[1:-1]
-        lowered = text.lower()
-        if lowered == "true":
-            return True
-        if lowered == "false":
-            return False
-        if lowered in ("none", "null"):
-            return None
-        try:
-            return float(text)
-        except Exception:
-            return text
-
-    @staticmethod
-    def _query_compare(entry, field, operator, raw_expected):
-        actual, exists = DssrGuiDialog._query_get_path(entry, field)
-        operator = str(operator).lower().strip()
-        if operator == "exists":
-            return exists and actual is not None
-        if operator == "not exists":
-            return (not exists) or actual is None
-        if not exists:
-            return False
-
-        expected = DssrGuiDialog._query_coerce(raw_expected)
-        actual_coerced = DssrGuiDialog._query_coerce(actual)
-        if isinstance(actual, (dict, list, tuple)):
-            actual_text = json.dumps(actual, sort_keys=True, ensure_ascii=False)
-        else:
-            actual_text = str(actual)
-        expected_text = str(expected)
-
-        if operator == "contains":
-            return expected_text.lower() in actual_text.lower()
-        if operator == "not contains":
-            return expected_text.lower() not in actual_text.lower()
-        if operator in ("=", "!="):
-            if isinstance(actual_coerced, (int, float, bool)) or actual_coerced is None:
-                matched = actual_coerced == expected
-            else:
-                matched = str(actual_coerced).lower() == expected_text.lower()
-            return matched if operator == "=" else not matched
-
-        try:
-            left = float(actual_coerced)
-            right = float(expected)
-        except Exception:
-            left = str(actual_coerced).lower()
-            right = expected_text.lower()
-        if operator == ">":
-            return left > right
-        if operator == ">=":
-            return left >= right
-        if operator == "<":
-            return left < right
-        if operator == "<=":
-            return left <= right
-        return False
-
-    def _entry_for_feature_index(self, dssr_data, feature, index):
-        feature = str(feature).strip()
-        index = int(index)
-        if feature == "pseudoknot":
-            dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
-            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
-            keys = sorted(layers.keys())
-            if 1 <= index <= len(keys):
-                key = keys[index - 1]
-                return {
-                    "layer": key,
-                    "pair_count": len(layers[key]),
-                    "pairs": layers[key],
-                }
-            return None
-        entries = ParsingAlgos.feature_entries(dssr_data, feature)
-        if 1 <= index <= len(entries):
-            entry = entries[index - 1]
-            return entry if isinstance(entry, dict) else {"value": entry}
-        return None
-
-    def _update_query_fields(self, dssr_data):
-        current = self.query_field_combo.currentText().strip()
-        fields = set()
-        for index, _text in self._items_all[:500]:
-            entry = self._entry_for_feature_index(
-                dssr_data, self._current_feature, index
-            )
-            fields |= self._query_scalar_paths(entry)
-        self.query_field_combo.blockSignals(True)
-        self.query_field_combo.clear()
-        self.query_field_combo.addItems(sorted(fields, key=lambda item: item.lower()))
-        if current and current in fields:
-            self.query_field_combo.setCurrentText(current)
-        self.query_field_combo.blockSignals(False)
-        enabled = bool(fields)
-        for widget in (
-            self.query_field_combo,
-            self.query_op_combo,
-            self.query_value_edit,
-            self.query_add_btn,
-            self.query_select_btn,
-        ):
-            widget.setEnabled(enabled)
-
-    def _query_summary_text(self):
-        if not self._query_conditions:
-            return "No property query — text filter remains available above"
-        chunks = []
-        for pos, condition in enumerate(self._query_conditions):
-            join, field, operator, value = condition
-            prefix = "" if pos == 0 else (join + " ")
-            if operator in ("exists", "not exists"):
-                chunks.append("%s%s %s" % (prefix, field, operator))
-            else:
-                chunks.append("%s%s %s %s" % (prefix, field, operator, value))
-        return "Query: " + " ".join(chunks)
-
-    def _add_query_condition(self):
-        field = self.query_field_combo.currentText().strip()
-        operator = self.query_op_combo.currentText().strip()
-        value = self.query_value_edit.text().strip()
-        if not field:
-            return
-        if operator not in ("exists", "not exists") and value == "":
-            self.status_label.setText("Enter a query value")
-            return
-        join = self.query_join_combo.currentText().strip().upper() or "AND"
-        self._query_conditions.append((join, field, operator, value))
-        self.query_value_edit.clear()
-        self.query_summary_label.setText(self._query_summary_text())
-        self._page = 0
-        self._render_list()
-
-    def _remove_query_condition(self):
-        if self._query_conditions:
-            self._query_conditions.pop()
-        self.query_summary_label.setText(self._query_summary_text())
-        self._page = 0
-        self._render_list()
-
-    def _clear_query_conditions(self, render=True):
-        self._query_conditions = []
-        try:
-            self.query_summary_label.setText(self._query_summary_text())
-        except Exception:
-            pass
-        if render:
-            self._page = 0
-            self._render_list()
-
-    def _entry_matches_query(self, entry):
-        if not self._query_conditions:
-            return True
-        result = None
-        for join, field, operator, value in self._query_conditions:
-            matched = self._query_compare(entry, field, operator, value)
-            if result is None:
-                result = matched
-            elif join == "OR":
-                result = bool(result or matched)
-            else:
-                result = bool(result and matched)
-        return bool(result)
-
-    def _select_query_matches(self):
-        try:
-            self._render_list()
-            if not self._items_filtered:
-                raise CmdException("No items match the current text/property query")
-            sel_obj, exe, st, precolor_on = self._get_dssr_context()
-            dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            parts = []
-            for index, _text in self._items_filtered:
-                try:
-                    parts.append(
-                        "(%s)"
-                        % ParsingAlgos._build_residue_sel_from_dssr(
-                            dssr_data,
-                            self._current_feature,
-                            index,
-                        )
-                    )
-                except Exception:
-                    pass
-            if not parts:
-                raise CmdException("Matched JSON items could not be mapped to PyMOL")
-            name = "dssr_query_matches"
-            cmd.select(name, "((%s) and (%s))" % (sel_obj, " or ".join(parts)))
-            _DSSR_SELECTION_OBJECTS.add(name)
-            cmd.color("cyan", name)
-            if self.zoom_cb.isChecked():
-                cmd.zoom(name, buffer=4.0)
-            self.status_label.setText(
-                "Selected %d matching DSSR item(s) as %s"
-                % (len(self._items_filtered), name)
-            )
-        except Exception as error:
-            self.status_label.setText("query selection error: %s" % str(error))
-
-    def _show_item_details(self, dssr_data, feature, index):
-        entry = self._entry_for_feature_index(dssr_data, feature, index)
-        payload = {
-            "feature": feature,
-            "array_index": int(index),
-            "data": entry,
-        }
-        self.details_box.setPlainText(self._json_pretty(payload))
-        self.data_tabs.setCurrentWidget(self.details_box)
+        state = self.state_combo.currentData()
+        return max(1, int(cmd.get_state())) if state in (None, -1) else int(state)
 
     def _get_dssr_context(self):
-        sel_obj = self._get_object_text()
-        exe = self.exe_edit.text().strip() or "x3dna-dssr"
-        st = self._get_state_value()
-        precolor_on = 1 if self.precolor_cb.isChecked() else 0
-        return sel_obj, exe, st, precolor_on
+        return (self._get_object_text(), self.exe_edit.text().strip() or "x3dna-dssr",
+                self._get_state_value(), int(self.precolor_cb.isChecked()))
 
-    def _append_report(self, text):
+    def _context(self):
+        selection, exe, state, _precolor = self._get_dssr_context()
+        return selection, state, exe
+
+    def _molecule_objects(self):
+        objects = cmd.get_object_list()
+        return [name for name in objects if name not in _DSSR_BLOCK_OBJECTS
+                and not name.startswith("_dssr_2d_") and cmd.count_atoms(name) > 0]
+
+    def _update_state_combo(self, wanted=None):
+        selected = self.state_combo.currentData() if wanted is None else wanted
         try:
-            cur = self.report_box.toPlainText()
+            count = max(1, int(cmd.count_states(self._get_object_text())))
         except Exception:
-            cur = ""
-        if cur:
-            out = cur.rstrip("\n") + "\n\n" + str(text).rstrip("\n") + "\n"
-        else:
-            out = str(text).rstrip("\n") + "\n"
+            count = 1
+        self.state_combo.blockSignals(True)
+        self.state_combo.clear()
+        self.state_combo.addItem("Current", -1)
+        for state in range(1, count + 1):
+            self.state_combo.addItem(str(state), state)
+        index = self.state_combo.findData(selected)
+        self.state_combo.setCurrentIndex(max(0, index))
+        self.state_combo.blockSignals(False)
+
+    def refresh_objects(self):
+        objects = self._molecule_objects()
+        previous = self.obj_combo.currentText().strip()
         try:
-            self.report_box.setPlainText(out)
+            keep_previous = bool(previous and cmd.count_atoms(previous) > 0)
         except Exception:
-            pass
-
-    def _generate_rna_report_clicked(self):
-        sel_obj, exe, st, precolor_on = self._get_dssr_context()
+            keep_previous = False
+        self._updating_context = True
         try:
-            dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            report = ParsingAlgos._format_rna_summary_text(dssr_data)
-            try:
-                self.report_box.setPlainText(report + "\n")
-            except Exception:
-                self._append_report(report)
-        except Exception as e:
-            msg = "RNA report error: %s" % str(e)
-            self._append_report(msg)
-            try:
-                QtWidgets.QMessageBox.critical(self, "RNA Report", msg)
-            except Exception:
-                pass
+            self.obj_combo.clear()
+            self.obj_combo.addItems(objects)
+            if keep_previous and objects:
+                self.obj_combo.setEditText(previous)
+            elif objects:
+                self.obj_combo.setCurrentIndex(0)
+            else:
+                self.obj_combo.setEditText("")
+            self._update_state_combo()
+        finally:
+            self._updating_context = False
+        if not objects:
+            self._clear_analysis("No molecule loaded. Load a PDB/CIF file, then click Analyze.")
+        elif self._analysis_context != self._context():
+            self._clear_analysis("Choose an object / selection, then click Analyze.")
 
-    def _make_all_selections_clicked(self):
-        sel_obj, exe, st, precolor_on = self._get_dssr_context()
+    def _on_object_changed(self, *_args):
+        if not self._updating_context:
+            self._update_state_combo()
+            self._on_dssr_context_changed()
+
+    def _on_dssr_context_changed(self, *_args):
+        if not self._updating_context:
+            self._clear_analysis("Analysis context changed. Click Analyze to update the structure.")
+
+    def _invalidate_dssr_cache(self):
+        self._cache_key = self._cache_data = None
+
+    def _dispose_editor(self):
+        if self.editor is not None:
+            editor, self.editor = self.editor, None
+            editor.shutdown()
+            self.editor_layout.removeWidget(editor)
+            editor.hide()
+            editor.deleteLater()
+
+    def _clear_analysis(self, message):
+        self._dispose_editor()
+        self._analysis_context = None
+        self._invalidate_dssr_cache()
+        self._items_all, self._items_filtered = [], []
+        self._page = 0
+        self.details_box.clear()
+        self.report_box.clear()
+        self._update_feature_counts(None)
+        self._render_list()
+        self.empty_label.setText(message)
+        self.empty_label.show()
+        self.status_label.setText(message)
+
+    def _check_context(self):
+        if self._loading or self._analysis_context is None or not self.isVisible():
+            return
         try:
-            dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            made, skipped = self._make_all_selections(dssr_data, sel_obj)
-            self._append_report(
-                "Created selections: %s" % (" ".join(made) if made else "(none)")
-            )
-            if skipped:
-                self._append_report("Skipped (empty): %s" % (" ".join(skipped)))
-        except Exception as e:
-            msg = "make selections error: %s" % str(e)
-            self._append_report(msg)
-            try:
-                QtWidgets.QMessageBox.critical(self, "make selections", msg)
-            except Exception:
-                pass
+            selection, state, _exe = self._context()
+            if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
+                self._clear_analysis("The analyzed structure is no longer loaded. Click Analyze after loading it.")
+            elif self._analysis_context != self._context():
+                self._on_dssr_context_changed()
+        except Exception as error:
+            self._clear_analysis("Structure context is unavailable: %s" % error)
 
-    def _auto_color_clicked(self):
-        sel_obj, exe, st, precolor_on = self._get_dssr_context()
-        try:
-            dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            self._make_all_selections(dssr_data, sel_obj)
-            self._apply_auto_colors()
-            self._append_report(
-                "Auto color applied: stems green, hairpins blue, pseudoknots red, aminors purple"
-            )
-        except Exception as e:
-            msg = "auto color error: %s" % str(e)
-            self._append_report(msg)
-            try:
-                QtWidgets.QMessageBox.critical(self, "auto color", msg)
-            except Exception:
-                pass
-
-    def _make_all_selections(self, dssr_data, obj_sel):
-        targets = [
-            ("pairs", "pairs_all"),
-            ("hairpins", "hairpins_all"),
-            ("stems", "stems_all"),
-            ("bulges", "bulges_all"),
-            ("junctions", "junctions_all"),
-            ("pseudoknot", "pseudoknots_all"),
-            ("aminors", "aminors_all"),
-            ("stacks", "stacks_all"),
-            ("uturns", "uturns_all"),
-        ]
-
-        made = []
-        skipped = []
-
-        for feat, name in targets:
-            residues = ParsingAlgos._collect_residues_all(dssr_data, feat)
-            sel_core = ParsingAlgos._compact_sel_from_residues(residues)
-            if not sel_core:
-                skipped.append(name)
-                try:
-                    cmd.delete(name)
-                except Exception:
-                    pass
-                continue
-
-            expr = "((%s) and (%s))" % (obj_sel, sel_core)
-            try:
-                cmd.select(name, expr)
-                _DSSR_SELECTION_OBJECTS.add(str(name))
-                made.append(name)
-            except Exception:
-                skipped.append(name)
-                try:
-                    cmd.delete(name)
-                except Exception:
-                    pass
-
-        return made, skipped
-
-    def _apply_auto_colors(self):
-        try:
-            cmd.color("green", "stems_all")
-        except Exception:
-            pass
-        try:
-            cmd.color("blue", "hairpins_all")
-        except Exception:
-            pass
-        try:
-            cmd.color("red", "pseudoknots_all")
-        except Exception:
-            pass
-        try:
-            cmd.color("purple", "aminors_all")
-        except Exception:
-            pass
-
-    def _big_object_warning(self, sel):
-        thresh = 50000
-        try:
-            n_atoms = int(cmd.count_atoms(sel))
-        except Exception:
-            n_atoms = 0
-        if n_atoms >= thresh:
-            self.status_label.setText(
-                "Warning: Large selection (%d atoms). DSSR analysis may be slow. Consider selecting a specific chain."
-                % n_atoms
-            )
-        else:
-            self.status_label.setText("")
+    def _require_analysis(self):
+        self._check_context()
+        if self._analysis_context != self._context() or self._cache_data is None:
+            raise CmdException("Click Analyze for the current object and state first.")
+        return self._cache_data
 
     def _get_dssr_data(self, selection, state, exe, precolor_on):
-        override_context = (str(selection), int(state))
-        if (
-            self._json_override is not None
-            and self._json_override_context == override_context
-        ):
-            if int(precolor_on):
-                try:
-                    cmd.color("gray", selection)
-                except Exception:
-                    pass
-            self._refresh_json_view(self._json_override)
-            return self._json_override
-
-        try:
-            atom_count = int(cmd.count_atoms(selection, state=state))
-        except Exception:
-            try:
-                atom_count = int(cmd.count_atoms(selection))
-            except Exception:
-                atom_count = -1
-        try:
-            extent = cmd.get_extent(selection, state=state)
-            extent_key = tuple(
-                round(float(value), 3)
-                for point in extent
-                for value in point
-            )
-        except Exception:
-            extent_key = ()
-
-        cache_key = (
-            str(selection),
-            int(state),
-            str(exe),
-            atom_count,
-            extent_key,
-        )
-        if self._cache_key == cache_key and self._cache_data is not None:
-            if int(precolor_on):
-                try:
-                    cmd.color("gray", selection)
-                except Exception:
-                    pass
-            self._refresh_json_view(self._cache_data)
+        key = (str(selection), int(state), str(exe))
+        if key == self._cache_key and self._cache_data is not None:
             return self._cache_data
-
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
-        tmpfilepdb = tmp.name
-        tmp.close()
-
-        try:
-            cmd.save(tmpfilepdb, selection, state)
-            if int(precolor_on):
-                cmd.color("gray", selection)
-            data = HelperFunctions.run_dssr_json(tmpfilepdb, exe)
-        finally:
-            try:
-                os.remove(tmpfilepdb)
-            except OSError:
-                pass
-
-        self._cache_key = cache_key
-        self._cache_data = data
-        self._refresh_json_view(data)
+        if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
+            raise CmdException("No atoms in the requested object / selection.")
+        data = HelperFunctions._selection_json(selection, state, exe)
+        if precolor_on:
+            cmd.color("gray", selection)
+        self._cache_key, self._cache_data = key, data
         return data
 
-    def _on_filter_changed(self, _):
-        self._page = 0
-        self._render_list()
+    def _load_structure(self, force=True):
+        if self._loading:
+            return self.editor
+        selection, exe, state, precolor = self._get_dssr_context()
+        if not force and self.editor is not None and self._analysis_context == (selection, state, exe):
+            return self.editor
+        self._loading = True
+        self.analyze_btn.setEnabled(False)
+        self.status_label.setText("Analyzing %s, state %d..." % (selection, state))
+        try:
+            if force:
+                self._dispose_editor()
+                self._invalidate_dssr_cache()
+            data = self._get_dssr_data(selection, state, exe, precolor)
+            return self.show_analysis(data, selection, state, exe, force=force)
+        except Exception as error:
+            self._clear_analysis("Analysis error: %s" % error)
+            return None
+        finally:
+            self._loading = False
+            self.analyze_btn.setEnabled(True)
 
-    def _on_page_size_changed(self, _):
-        self._page = 0
-        self._render_list()
+    def show_analysis(self, data, selection, state, exe, algorithm="standard",
+                      number_every=10, show_tertiary=0, title="", force=False):
+        context = (str(selection), int(state), str(exe))
+        if not force and self.editor is not None and context == self._analysis_context:
+            if not self._loading:
+                self._update_state_combo(wanted=int(state))
+            requested = str(algorithm or "standard").strip().lower()
+            requested = requested if requested in LAYOUT_CHOICES else "standard"
+            if self.editor.layout_combo.currentText() != requested:
+                self.editor.layout_combo.setCurrentText(requested)
+            self.editor.number_spin.setValue(max(0, int(number_every)))
+            self.editor.tertiary_cb.setChecked(bool(int(show_tertiary)))
+            if title:
+                self.editor.model.title = str(title)
+            return self.editor
+        model = Dssr2DModel.from_dssr(data, title=title or "%s — state %d" % (selection, state))
+        self._dispose_editor()
+        keep_current = self._loading and self.state_combo.currentData() == -1
+        self._updating_context = True
+        try:
+            self.obj_combo.setEditText(str(selection))
+            self.exe_edit.setText(str(exe))
+            self._update_state_combo(wanted=-1 if keep_current else int(state))
+        finally:
+            self._updating_context = False
+        self._analysis_context = self._cache_key = context
+        self._cache_data = data
+        self.editor = Dssr2DEditor(model, selection, algorithm, number_every, show_tertiary, parent=self)
+        self.editor.pymol_state = int(state)
+        self.editor_layout.addWidget(self.editor)
+        self.empty_label.hide()
+        self.editor.show()
+        self.editor.set_view_active(self.show_2d_btn.isChecked() and not self.isMinimized())
+        if self.editor.isVisible():
+            self.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
+        self._update_feature_counts(data)
+        self.refresh_list()
+        self.report_box.setPlainText(ParsingAlgos._format_rna_summary_text(data))
+        self.data_tabs.setCurrentWidget(self.report_box)
+        self.status_label.setText("%s | state %d | %s" % (selection, state, model.summary()))
+        QtCore.QTimer.singleShot(0, self.editor.fit_scene)
+        return self.editor
 
-    def _prev_page(self):
-        if self._page > 0:
-            self._page -= 1
-            self._render_list()
+    def _update_feature_counts(self, data):
+        for index, feature in enumerate(FEATURE_ORDER):
+            count = 0 if data is None else (ParsingAlgos._count_pseudoknot_layers(data)
+                if feature == "pseudoknot" else len(ParsingAlgos.feature_entries(data, feature)))
+            self.feature_combo.setItemText(index, "%s (%d)" % (FEATURE_LABELS.get(feature, feature), count))
+        self.feature_combo.setEnabled(data is not None)
+        self.make_blocks_btn.setEnabled(data is not None)
 
-    def _next_page(self):
-        pages = self._total_pages()
-        if self._page + 1 < pages:
-            self._page += 1
-            self._render_list()
-
-    def _total_pages(self):
-        page_size = int(self.page_size_spin.value())
-        total = len(self._items_filtered)
-        if page_size <= 0:
-            return 1
-        pages = (total + page_size - 1) // page_size
-        return max(1, pages)
+    def _on_feature_changed(self, *_args):
+        self._current_feature = str(self.feature_combo.currentData() or "pairs")
+        self.details_box.clear()
+        self.refresh_list()
 
     def refresh_list(self):
-        sel = self._get_object_text()
-        feat = self._current_feature
-        exe = self.exe_edit.text().strip() or "x3dna-dssr"
-        st = self._get_state_value()
-        precolor_on = 1 if self.precolor_cb.isChecked() else 0
-
-        self._big_object_warning(sel)
-
-        self.list_widget.clear()
-
-        # Guard Check: If there is no structure loaded in PyMOL, do not trigger DSSR or update with loading status.
-        if not cmd.get_object_list():
-            msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
-            self.list_widget.addItem(
-                "Please load a PDB/CIF file before running DSSR-PyMOL"
-            )
-            self.status_label.setText(msg)
-            self._update_feature_buttons_state(None)
-            return
-
-        self.list_widget.addItem("loading...")
-        QtWidgets.QApplication.processEvents()
-
-        try:
-            dssr_data = self._get_dssr_data(sel, st, exe, precolor_on)
-            self._update_feature_buttons_state(dssr_data)
-
-            items = []
-
-            if feat == "pseudoknot":
-                dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
-                nts_list = dssr_data.get("nts", None)
-                if nts_list is None:
-                    self.list_widget.clear()
-                    self.list_widget.addItem("No nucleotides found in DSSR output.")
-                    return
-
-                layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
-                if not layers:
-                    self.list_widget.clear()
-                    self.list_widget.addItem(
-                        "No pseudoknot layers found in this structure."
-                    )
-                    return
-
-                layer_keys = sorted(layers.keys())
-                for j, k in enumerate(layer_keys, 1):
-                    line = "%d: layer key=%s pairs=%d" % (j, str(k), len(layers[k]))
-                    items.append((j, line))
-
+        self._items_all = []
+        data = self._cache_data
+        if data is not None:
+            if self._current_feature == "pseudoknot":
+                layers = ParsingAlgos.parse_dotbracket_pseudoknots(ParsingAlgos._extract_dotbracket(data))
+                self._items_all = [(i, "%d: layer %s, %d pairs" % (i, key, len(layers[key])))
+                                   for i, key in enumerate(sorted(layers), 1)]
             else:
-                if feat not in FEATURE_MAP:
-                    raise CmdException('Unknown feature "%s"' % feat)
-                json_key = FEATURE_MAP[feat]
-                feature_list = ParsingAlgos.feature_entries(dssr_data, feat)
-                if not feature_list:
-                    nice_names = {
-                        "pairs": "base pairs",
-                        "stems": "stems",
-                        "helices": "helices",
-                        "stacks": "stacks",
-                        "nonstack": "non-stacking nucleotides",
-                        "coaxstacks": "coaxial stacks",
-                        "atom2bases": "atom-to-base interactions",
-                        "aminors": "A-minor interactions",
-                        "splayunits": "splayed units",
-                        "hairpins": "hairpin loops",
-                        "bulges": "bulge loops",
-                        "iloops": "internal loops",
-                        "internal": "internal loops",
-                        "junctions": "junction loops",
-                        "sssegments": "single-stranded segments",
-                        "ssSegments": "single-stranded segments",
-                        "multiplets": "multiplets",
-                        "nts": "nucleotides",
-                        "pseudoknot": "pseudoknot layers",
-                        "uturns": "U-turns",
-                    }
-                    feat_name = nice_names.get(feat, feat)
-                    self.list_widget.clear()
-                    self.list_widget.addItem(
-                        "No %s found in this structure." % feat_name
-                    )
-                    self.page_label.setText("items 0, filtered 0, page 1/1")
-                    self.prev_btn.setEnabled(False)
-                    self.next_btn.setEnabled(False)
-                    return
+                self._items_all = [(i, self._entry_label(self._current_feature, entry, i))
+                    for i, entry in enumerate(ParsingAlgos.feature_entries(data, self._current_feature), 1)]
+        self._page = 0
+        self._render_list()
 
-                total = len(feature_list)
-                for i in range(total):
-                    line = ParsingAlgos._preview_entry(feat, feature_list[i], i + 1)
-                    items.append((i + 1, line))
-
-            self._items_all = items
-            self._update_query_fields(dssr_data)
-            self._page = 0
-            self._render_list()
-
-        except Exception as e:
-            self._items_all = []
-            self._items_filtered = []
-            self.list_widget.clear()
-            self._update_feature_buttons_state(None)
-            self.list_widget.addItem("ERROR: %s" % str(e))
+    @staticmethod
+    def _entry_label(feature, entry, index):
+        """Compact display labels only; DSSR identifiers and item indices stay intact."""
+        def short_id(match):
+            identifier = match.group(0)
             try:
-                print("dssr_gui error: %s" % str(e))
-            except Exception:
-                pass
+                chain, resi = ParsingAlgos.parse_nt_id(identifier)
+                parts = identifier.split("|")
+                atom = "/" + parts[5] if len(parts) > 5 and parts[5] else ""
+                return "%s:%s%s%s" % (chain or "–", parts[3], resi, atom)
+            except (CmdException, IndexError):
+                return identifier
+        text = ParsingAlgos._preview_entry(feature, entry, index)
+        return re.sub(r"[^\s,;()]+\|[^\s,;()]*", short_id, text)
+
+    def _on_filter_changed(self, *_args):
+        self._page = 0
+        self._render_list()
+
+    def _change_page(self, delta):
+        self._page = max(0, self._page + delta)
+        self._render_list()
 
     def _render_list(self):
-        q = self.filter_edit.text().strip().lower()
-        filtered = list(self._items_all)
-        if self._query_conditions:
-            dssr_data = self._json_override or self._cache_data or {}
-            query_filtered = []
-            for item in filtered:
-                entry = self._entry_for_feature_index(
-                    dssr_data, self._current_feature, item[0]
-                )
-                if entry is not None and self._entry_matches_query(entry):
-                    query_filtered.append(item)
-            filtered = query_filtered
-        if q:
-            filtered = [it for it in filtered if q in it[1].lower()]
-        self._items_filtered = filtered
-
-        total_all = len(self._items_all)
-        total_f = len(self._items_filtered)
-
-        page_size = int(self.page_size_spin.value())
-        pages = self._total_pages()
-
-        if self._page >= pages:
-            self._page = max(0, pages - 1)
-
-        start = self._page * page_size
-        end = start + page_size
-        page_items = self._items_filtered[start:end]
-
+        query = self.filter_edit.text().strip().lower()
+        self._items_filtered = [item for item in self._items_all if query in item[1].lower()]
+        count = len(self._items_filtered)
+        pages = max(1, (count + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self._page = min(self._page, pages - 1)
         self.list_widget.clear()
-        for idx, text in page_items:
-            it = QtWidgets.QListWidgetItem(text)
-            it.setData(QtCore.Qt.UserRole, int(idx))
-            self.list_widget.addItem(it)
-
-        self.page_label.setText(
-            "items %d, filtered %d, page %d/%d"
-            % (total_all, total_f, self._page + 1, pages)
-        )
+        start = self._page * self.PAGE_SIZE
+        for index, text in self._items_filtered[start:start + self.PAGE_SIZE]:
+            item = QtWidgets.QListWidgetItem(text)
+            item.setData(QtCore.Qt.UserRole, index)
+            self.list_widget.addItem(item)
+        self.page_label.setText("%d items · %d/%d" % (count, self._page + 1, pages))
         self.prev_btn.setEnabled(self._page > 0)
         self.next_btn.setEnabled(self._page + 1 < pages)
 
-        try:
-            self.setWindowTitle("DSSR GUI - %s" % self._current_feature)
-        except Exception:
-            pass
+    def _entry_for_feature_index(self, data, feature, index):
+        if feature == "pseudoknot":
+            layers = ParsingAlgos.parse_dotbracket_pseudoknots(ParsingAlgos._extract_dotbracket(data))
+            key = sorted(layers)[index - 1]
+            return {"layer": key, "pair_count": len(layers[key]), "pairs": layers[key]}
+        return ParsingAlgos.feature_entries(data, feature)[index - 1]
+
+    def _show_item_details(self, data, feature, index):
+        entry = self._entry_for_feature_index(data, feature, index)
+        lines = ["%s #%d" % (FEATURE_LABELS.get(feature, feature), index)]
+        for key, value in entry.items():
+            if isinstance(value, (list, dict)):
+                value = "%d entries" % len(value)
+            lines.append("%s: %s" % (key, str(value)[:200]))
+        self.details_box.setPlainText("\n".join(lines))
+        self.data_tabs.setCurrentWidget(self.details_box)
 
     def _on_item_clicked_preview(self, item):
-        self._enable_seq_view()
-
-        data = item.data(QtCore.Qt.UserRole)
-        if data is None:
+        index = item.data(QtCore.Qt.UserRole)
+        if index is None:
             return
         try:
-            idx = int(data)
-        except Exception:
-            return
-
-        sel_obj = self._get_object_text()
-        feat = self._current_feature
-        exe = self.exe_edit.text().strip() or "x3dna-dssr"
-        st = self._get_state_value()
-        precolor_on = 1 if self.precolor_cb.isChecked() else 0
-
-        try:
-            dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            sel_str = ParsingAlgos._build_residue_sel_from_dssr(
-                dssr_data, feat, idx
-            )
-            cmd.select("sele", "((%s) and (%s))" % (sel_obj, sel_str))
-            cmd.select("sele", "byres (sele)")
-            self._show_item_details(dssr_data, feat, idx)
-        except Exception as e:
-            try:
-                self.status_label.setText("preview error: %s" % str(e))
-            except Exception:
-                pass
+            data = self._require_analysis()
+            selection = self._analysis_context[0]
+            core = ParsingAlgos._build_residue_sel_from_dssr(data, self._current_feature, int(index))
+            cmd.select("sele", "byres ((%s) and (%s))" % (selection, core))
+            self._show_item_details(data, self._current_feature, int(index))
+            if self.editor is not None:
+                self.editor._sync_timer.stop()
+                self.editor._sync_pending = False
+                self.editor._last_pymol_signature = None
+                self.editor._pull_pymol_selection()
+        except Exception as error:
+            self.status_label.setText("Selection error: %s" % error)
 
     def _on_item_double_clicked(self, item):
-        data = item.data(QtCore.Qt.UserRole)
-        if data is None:
+        index = item.data(QtCore.Qt.UserRole)
+        if index is None:
             return
         try:
-            idx = int(data)
-        except Exception:
-            return
-
-        sel = self._get_object_text()
-        feat = self._current_feature
-        exe = self.exe_edit.text().strip() or "x3dna-dssr"
-        st = self._get_state_value()
-
-        nm = self.name_edit.text().strip()
-        if not nm:
-            nm = "%s%d" % (feat, idx)
-
-        col = self.color_edit.text().strip() or "auto"
-        precolor_on = 1 if self.precolor_cb.isChecked() else 0
-        display_on = 1 if self.display_cb.isChecked() else 0
-        zoom_on = 1 if self.zoom_cb.isChecked() else 0
-        showinfo_on = 1 if self.showinfo_cb.isChecked() else 0
-        radius = float(self.radius_spin.value())
-
-        try:
-            DssrFunctions.dssr(
-                sel=sel,
-                f=feat,
-                i=idx,
-                n=nm,
-                q=0,
-                si=showinfo_on,
-                st=st,
-                exe=exe,
-                color=col,
-                display=display_on,
-                stick_radius=radius,
-                do_zoom=zoom_on,
-                pc=precolor_on,
-            )
-        except Exception as e:
-            try:
-                QtWidgets.QMessageBox.critical(self, "DSSR GUI error", str(e))
-            except Exception:
-                pass
-            try:
-                print("dssr_gui select error: %s" % str(e))
-            except Exception:
-                pass
+            data = self._require_analysis()
+            selection, state, _exe = self._analysis_context
+            feature, index = self._current_feature, int(index)
+            user_color = HelperFunctions._resolve_color_spec(
+                HelperFunctions.unquote(self.color_edit.text().strip() or "auto").strip())
+            if self.precolor_cb.isChecked():
+                cmd.color("gray", selection)
+            name = "%s%d" % (feature.lower(), index)
+            DssrFunctions._select_feature_data(
+                data, selection, state, feature, index, name, user_color, quiet=0)
+            DssrFunctions._display_feature_selection(
+                name, int(self.display_cb.isChecked()), 0.25, int(self.zoom_cb.isChecked()))
+        except Exception as error:
+            self.status_label.setText("Selection error: %s" % error)
 
     def _make_blocks_clicked(self):
-        self._enable_seq_view()
-
-        sel_obj = self._get_object_text()
-        exe = self.exe_edit.text().strip() or "x3dna-dssr"
-        st = self._get_state_value()
-
-        block_file = self.block_file_combo.currentText().strip() or "face"
-        block_depth = float(self.block_depth_spin.value())
-
-        base = self.name_edit.text().strip()
-        if not base:
-            base = "blk"
-
-        items = []
         try:
-            items = list(self.list_widget.selectedItems())
-        except Exception:
-            items = []
+            data = self._require_analysis()
+            selection, state, exe = self._analysis_context
+            indices = [item.data(QtCore.Qt.UserRole) for item in self.list_widget.selectedItems()]
+            parts = [ParsingAlgos._build_residue_sel_from_dssr(data, self._current_feature, int(index))
+                     for index in indices if index is not None]
+            core = " or ".join("(%s)" % part for part in parts) if parts else "sele"
+            scope = "byres ((%s) and (%s))" % (selection, core)
+            if cmd.count_atoms(scope, state=state) <= 0:
+                raise CmdException("Select a feature or some bases first.")
+            name = DssrFunctions._unused_name("dssr_blocks")
+            DssrFunctions.dssr_block(selection=scope, state=state,
+                block_file=self.block_file_combo.currentText().strip() or "face",
+                block_depth=float(self.block_depth_spin.value()), name=name, exe=exe, quiet=1)
+            if self.zoom_cb.isChecked():
+                cmd.zoom(name)
+            self.status_label.setText("Created %s for the selected bases." % name)
+        except Exception as error:
+            self.status_label.setText("Blocks error: %s" % error)
 
-        dssr_data = None
-        if items:
-            try:
-                precolor_on = 1 if self.precolor_cb.isChecked() else 0
-                dssr_data = self._get_dssr_data(sel_obj, st, exe, precolor_on)
-            except Exception as e:
-                try:
-                    QtWidgets.QMessageBox.critical(self, "make blocks error", str(e))
-                except Exception:
-                    pass
-                return
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._context_timer.start()
 
-        made_names = []
+    def closeEvent(self, event):
+        self._context_timer.stop()
+        self._clear_analysis("Click Analyze to load the structure again.")
+        super().closeEvent(event)
 
-        try:
-            if items:
-                feat = self._current_feature
-                for it in items:
-                    data = it.data(QtCore.Qt.UserRole)
-                    if data is None:
-                        continue
-                    try:
-                        idx = int(data)
-                    except Exception:
-                        continue
-
-                    sel_str = ParsingAlgos._build_residue_sel_from_dssr(
-                        dssr_data, feat, idx
-                    )
-                    sel_for_block = "byres (%s)" % sel_str
-
-                    obj_name = "%s_%s_%d" % (base, feat, idx)
-                    try:
-                        cmd.delete(obj_name)
-                    except Exception:
-                        pass
-
-                    DssrFunctions.dssr_block(
-                        selection=sel_for_block,
-                        state=st,
-                        block_file=block_file,
-                        block_depth=block_depth,
-                        name=obj_name,
-                        exe=exe,
-                        quiet=1,
-                    )
-
-                    _DSSR_BLOCK_OBJECTS.add(obj_name)
-                    made_names.append(obj_name)
-
-            else:
-                try:
-                    n = int(cmd.count_atoms("sele"))
-                except Exception:
-                    n = 0
-                if n > 0:
-                    sel_for_block = "byres (sele)"
-                else:
-                    sel_for_block = "(%s)" % sel_obj
-
-                obj_name = "%s_sel" % base
-                try:
-                    cmd.delete(obj_name)
-                except Exception:
-                    pass
-
-                DssrFunctions.dssr_block(
-                    selection=sel_for_block,
-                    state=st,
-                    block_file=block_file,
-                    block_depth=block_depth,
-                    name=obj_name,
-                    exe=exe,
-                    quiet=1,
-                )
-
-                _DSSR_BLOCK_OBJECTS.add(obj_name)
-                made_names.append(obj_name)
-
-            if made_names and self.zoom_cb.isChecked():
-                try:
-                    cmd.zoom("(%s)" % " or ".join(made_names))
-                except Exception:
-                    try:
-                        cmd.zoom("all")
-                    except Exception:
-                        pass
-
-        except Exception as e:
-            try:
-                QtWidgets.QMessageBox.critical(self, "make blocks error", str(e))
-            except Exception:
-                pass
-            try:
-                print("make blocks error: %s" % str(e))
-            except Exception:
-                pass
+    def reject(self):
+        self._context_timer.stop()
+        self._clear_analysis("Click Analyze to load the structure again.")
+        super().reject()
 
     @staticmethod
     def dssr_gui():
         global _DSSR_GUI_DIALOG
-        if QtWidgets is None or QtCore is None:
-            raise CmdException("Qt is not available in this PyMOL build")
-
-        # Check if a structure is available before showing GUI or running DSSR
-        no_struct = not cmd.get_object_list()
-
         if _DSSR_GUI_DIALOG is None:
             _DSSR_GUI_DIALOG = DssrGuiDialog()
-        _DSSR_GUI_DIALOG.show()
-        _DSSR_GUI_DIALOG.raise_()
-        _DSSR_GUI_DIALOG.activateWindow()
-
-        # Visual pop-up dialog warning and console diagnostic print if no structure is available
-        if no_struct:
-            msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
-            print(msg)
-            _DSSR_GUI_DIALOG.status_label.setText(msg)
-            QtWidgets.QMessageBox.warning(_DSSR_GUI_DIALOG, "No Structure Loaded", msg)
-
-dssr_select = DssrFunctions.dssr_select
-dssr_gui = DssrGuiDialog.dssr_gui
-dssr_block = DssrFunctions.dssr_block
-dssr_seq = DssrFunctions.dssr_seq
-
-cmd.extend("dssr_select", dssr_select)
-cmd.extend("dssr_gui", dssr_gui)
-cmd.extend("dssr_block", dssr_block)
-
-# Restore tab-completion of arguments for dssr_block
-try:
-    cmd.auto_arg[0].update(
-        {
-            "dssr_block": cmd.auto_arg[0]["zoom"],
-        }
-    )
-    cmd.auto_arg[2].update(
-        {
-            "dssr_block": [
-                cmd.Shortcut(BLOCK_FEATURES),
-                "block_file",
-                "",
-            ],
-        }
-    )
-except Exception:
-    pass
+        host = _DSSR_GUI_DIALOG
+        host.show()
+        host.raise_()
+        host.activateWindow()
+        host._check_context()
+        if host.editor is None:
+            host.refresh_objects()
+            if host._molecule_objects():
+                host._load_structure(force=False)
+        if host.editor is not None and host.editor.isVisible():
+            host.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
+        return host
 
 
 
-def __init_plugin__(app=None):
-    addmenuitemqt("DSSR", dssr_gui)
 
-try:
-    print("Loaded DSSR helper %s from: %s" % (__DSSR_PLUGIN_VERSION__, __file__))
-except Exception:
-    pass
-
-# ============================================================================
-# Pure-Python RNA 2D extension for DSSR-PyMOL
-#
-# This extension is intentionally appended to the original plugin without
-# removing or rewriting any of the original source above.  It replaces the
-# external Java/Jmol/VARNA runtime requirement with an in-process Python/Qt
-# viewer.  The implementation is original Python code.  It follows established
-# RNA-visualization architecture (model -> layout -> scene -> interaction), but
-# does not copy or translate VARNA's GPL source code.
-# ============================================================================
-
-import math
-import random
-
-try:
-    from pymol.Qt import QtGui
-except Exception:
-    QtGui = None
-
-try:
-    from pymol.Qt import QtSvg
-except Exception:
-    QtSvg = None
-
-__DSSR_PY2D_EXTENSION_VERSION__ = "v1.0.0-pure-python"
-_DSSR_PY2D_DIALOGS = []
-
-
+# RNA data model
 class Dssr2DModel:
     """Normalized sequence, dot-bracket, residue, and pairing information."""
 
@@ -3201,9 +1876,7 @@ class Dssr2DModel:
             target_len = nts_count
 
         if target_len <= 0:
-            raise CmdException(
-                "DSSR output contains no usable sequence or dot-bracket structure"
-            )
+            raise CmdException("DSSR output contains no usable sequence or dot-bracket structure")
 
         if nts_count and target_len != nts_count:
             # DSSR's nts array is the most useful source for PyMOL residue mapping.
@@ -3314,8 +1987,7 @@ class Dssr2DModel:
                 stack = stacks.setdefault(opener, [])
                 if not stack:
                     self.warnings.append(
-                        "Unmatched pseudoknot symbol %s at nucleotide %d"
-                        % (char, idx + 1)
+                        "Unmatched pseudoknot symbol %s at nucleotide %d" % (char, idx + 1)
                     )
                     continue
                 i = stack.pop()
@@ -3336,8 +2008,7 @@ class Dssr2DModel:
         for opener, stack in stacks.items():
             for idx in stack:
                 self.warnings.append(
-                    "Unmatched opening symbol %s at nucleotide %d"
-                    % (opener, idx + 1)
+                    "Unmatched opening symbol %s at nucleotide %d" % (opener, idx + 1)
                 )
 
         pairs.sort(key=lambda p: (p["i"], p["j"]))
@@ -3394,9 +2065,7 @@ class Dssr2DModel:
                     "dssr": entry,
                 }
 
-        self.tertiary_pairs = sorted(
-            tertiary_by_key.values(), key=lambda p: (p["i"], p["j"])
-        )
+        self.tertiary_pairs = sorted(tertiary_by_key.values(), key=lambda p: (p["i"], p["j"]))
 
     def planar_secondary_pairs(self):
         """Return a deterministic non-crossing scaffold for layout.
@@ -3454,17 +2123,15 @@ class Dssr2DModel:
         return len(self.chain_breaks) + 1
 
     def summary(self):
-        return (
-            "%d nt | %d chain(s) | %d secondary pair(s) | %d additional DSSR pair(s)"
-            % (
-                len(self.nts),
-                self.chain_count(),
-                len(self.secondary_pairs),
-                len(self.tertiary_pairs),
-            )
+        return "%d nt | %d chain(s) | %d secondary pair(s) | %d additional DSSR pair(s)" % (
+            len(self.nts),
+            self.chain_count(),
+            len(self.secondary_pairs),
+            len(self.tertiary_pairs),
         )
 
 
+# RNA layout algorithms
 class Dssr2DLayout:
     """Dependency-free layout algorithms for RNA graphs."""
 
@@ -3499,20 +2166,6 @@ class Dssr2DLayout:
             mid = (out[0][0] + out[-1][0]) / 2.0
             out = [(x - mid, y) for x, y in out]
         return out
-
-    @staticmethod
-    def _graph_edges(model):
-        edges = []
-        n = len(model.nts)
-        for i in range(n - 1):
-            if i not in model.chain_breaks:
-                edges.append((i, i + 1, 44.0, 1.00))
-        for pair in model.planar_secondary_pairs():
-            layer = int(pair.get("layer", 0))
-            weight = 1.35 if layer == 0 else 0.95
-            target = 39.0 if layer == 0 else 52.0
-            edges.append((int(pair["i"]), int(pair["j"]), target, weight))
-        return edges
 
     @staticmethod
     def _v_add(a, b):
@@ -3617,7 +2270,7 @@ class Dssr2DLayout:
         return stems
 
     @staticmethod
-    def radiate(model):
+    def _radiate_general(model):
         """Draw a planar stem/loop scaffold and overlay pseudoknots later.
 
         This is an original, dependency-free radial layout.  Consecutive base
@@ -3681,8 +2334,7 @@ class Dssr2DLayout:
             else:
                 max_angle = math.radians(min(78.0, 35.0 + 15.0 * (count - 1)))
                 angles = [
-                    -max_angle + (2.0 * max_angle * k / float(count - 1))
-                    for k in range(count)
+                    -max_angle + (2.0 * max_angle * k / float(count - 1)) for k in range(count)
                 ]
 
             branch_distance = 85.0 + 10.0 * max(0, count - 2)
@@ -3703,8 +2355,7 @@ class Dssr2DLayout:
         elif top_count <= 4:
             max_angle = math.radians(70.0)
             angles = [
-                -max_angle + (2.0 * max_angle * k / float(top_count - 1))
-                for k in range(top_count)
+                -max_angle + (2.0 * max_angle * k / float(top_count - 1)) for k in range(top_count)
             ]
             for stem, angle in zip(top_level, angles):
                 direction = Dssr2DLayout._v_rotate((0.0, 1.0), angle)
@@ -3731,9 +2382,7 @@ class Dssr2DLayout:
                 average_direction = (0.0, 0.0)
                 for value in (directions[previous], directions[following]):
                     if value is not None:
-                        average_direction = Dssr2DLayout._v_add(
-                            average_direction, value
-                        )
+                        average_direction = Dssr2DLayout._v_add(average_direction, value)
                 if math.hypot(*average_direction) < 0.1:
                     chord = (b[0] - a[0], b[1] - a[1])
                     average_direction = (-chord[1], chord[0])
@@ -3749,21 +2398,13 @@ class Dssr2DLayout:
                         half_chord + 1.0,
                         ((count + 1) * 34.0 + chord_length) / (2.0 * math.pi),
                     )
-                    center_distance = math.sqrt(
-                        max(1.0, radius * radius - half_chord * half_chord)
-                    )
+                    center_distance = math.sqrt(max(1.0, radius * radius - half_chord * half_chord))
                     circle_center = Dssr2DLayout._v_add(
                         midpoint,
-                        Dssr2DLayout._v_mul(
-                            average_direction, center_distance
-                        ),
+                        Dssr2DLayout._v_mul(average_direction, center_distance),
                     )
-                    theta_a = math.atan2(
-                        a[1] - circle_center[1], a[0] - circle_center[0]
-                    )
-                    theta_b = math.atan2(
-                        b[1] - circle_center[1], b[0] - circle_center[0]
-                    )
+                    theta_a = math.atan2(a[1] - circle_center[1], a[0] - circle_center[0])
+                    theta_b = math.atan2(b[1] - circle_center[1], b[0] - circle_center[0])
                     minor_sweep = (theta_b - theta_a) % (2.0 * math.pi)
                     long_sweep = 2.0 * math.pi - minor_sweep
                     for offset, index in enumerate(range(start, end + 1), 1):
@@ -3866,972 +2507,50 @@ class Dssr2DLayout:
 
         center_x = sum(point[0] for point in positions) / float(n)
         center_y = sum(point[1] for point in positions) / float(n)
-        return [
-            (point[0] - center_x, point[1] - center_y) for point in positions
-        ]
-
-    @staticmethod
-    def force(model):
-        n = len(model.nts)
-        if n <= 2:
-            return Dssr2DLayout.linear(model)
-        if n > 900:
-            # A quadratic force solver is intentionally avoided for very large
-            # structures.  Circular remains deterministic and immediately usable.
-            return Dssr2DLayout.circular(model)
-
-        initial = Dssr2DLayout.circular(model)
-        rng = random.Random(1731 + n)
-        pos = [
-            [x + rng.uniform(-3.0, 3.0), y + rng.uniform(-3.0, 3.0)]
-            for x, y in initial
-        ]
-        vel = [[0.0, 0.0] for _ in range(n)]
-        edges = Dssr2DLayout._graph_edges(model)
-
-        if n <= 120:
-            iterations = 260
-        elif n <= 300:
-            iterations = 180
-        elif n <= 600:
-            iterations = 100
-        else:
-            iterations = 55
-
-        repulsion = 18000.0
-        max_repulsion_distance = 240.0
-        max_repulsion_sq = max_repulsion_distance * max_repulsion_distance
-        spring_k = 0.045
-        gravity = 0.0018
-
-        for iteration in range(iterations):
-            forces = [[-gravity * p[0], -gravity * p[1]] for p in pos]
-
-            # Pairwise repulsion.  The cutoff keeps medium-sized RNAs responsive.
-            for i in range(n):
-                xi, yi = pos[i]
-                for j in range(i + 1, n):
-                    dx = xi - pos[j][0]
-                    dy = yi - pos[j][1]
-                    d2 = dx * dx + dy * dy
-                    if d2 > max_repulsion_sq:
-                        continue
-                    if d2 < 4.0:
-                        dx += rng.uniform(-1.0, 1.0)
-                        dy += rng.uniform(-1.0, 1.0)
-                        d2 = max(4.0, dx * dx + dy * dy)
-                    d = math.sqrt(d2)
-                    f = repulsion / d2
-                    fx = f * dx / d
-                    fy = f * dy / d
-                    forces[i][0] += fx
-                    forces[i][1] += fy
-                    forces[j][0] -= fx
-                    forces[j][1] -= fy
-
-            # Backbone and base-pair springs.
-            for i, j, target, weight in edges:
-                dx = pos[j][0] - pos[i][0]
-                dy = pos[j][1] - pos[i][1]
-                d2 = dx * dx + dy * dy
-                if d2 < 1.0e-8:
-                    continue
-                d = math.sqrt(d2)
-                f = spring_k * weight * (d - target)
-                fx = f * dx / d
-                fy = f * dy / d
-                forces[i][0] += fx
-                forces[i][1] += fy
-                forces[j][0] -= fx
-                forces[j][1] -= fy
-
-            # Light local straightening keeps stems/backbones readable without
-            # imposing a rigid template.
-            for i in range(1, n - 1):
-                if (i - 1) in model.chain_breaks or i in model.chain_breaks:
-                    continue
-                mx = (pos[i - 1][0] + pos[i + 1][0]) * 0.5
-                my = (pos[i - 1][1] + pos[i + 1][1]) * 0.5
-                forces[i][0] += (mx - pos[i][0]) * 0.012
-                forces[i][1] += (my - pos[i][1]) * 0.012
-
-            cooling = 1.0 - 0.70 * (float(iteration) / max(1.0, iterations - 1.0))
-            max_step = 9.0 * cooling + 1.5
-            for i in range(n):
-                vel[i][0] = (vel[i][0] + forces[i][0]) * 0.78
-                vel[i][1] = (vel[i][1] + forces[i][1]) * 0.78
-                speed = math.hypot(vel[i][0], vel[i][1])
-                if speed > max_step:
-                    scale = max_step / speed
-                    vel[i][0] *= scale
-                    vel[i][1] *= scale
-                pos[i][0] += vel[i][0]
-                pos[i][1] += vel[i][1]
-
-        # Center the final coordinates.
-        cx = sum(p[0] for p in pos) / n
-        cy = sum(p[1] for p in pos) / n
-        return [(p[0] - cx, p[1] - cy) for p in pos]
+        return [(point[0] - center_x, point[1] - center_y) for point in positions]
 
     @staticmethod
     def compute(model, algorithm):
-        name = str(algorithm or "radiate").strip().lower()
-        if name in ("linear", "line", "feynman"):
-            return Dssr2DLayout.linear(model)
+        name = str(algorithm or "standard").strip().lower()
+        if name in (
+            "standard",
+            "naview",
+            "varna",
+            "classic",
+            "publication",
+            "smart",
+            "auto",
+        ):
+            return _layout_naview_layout(model)
+        if name in ("legacy radiate", "legacy", "radiate", "radial"):
+            model._dssr2d_layout_variant = "legacy radiate"
+            return Dssr2DLayout.radiate(model)
         if name in ("circular", "circle"):
+            model._dssr2d_layout_variant = "circular"
             return Dssr2DLayout.circular(model)
-        if name in ("force", "spring", "graph"):
-            return Dssr2DLayout.force(model)
-        return Dssr2DLayout.radiate(model)
-
-
-if QtWidgets is not None and QtCore is not None and QtGui is not None:
-
-    class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
-        def __init__(self, scene, parent=None):
-            super(Dssr2DGraphicsView, self).__init__(scene, parent)
-            try:
-                self.setRenderHints(
-                    QtGui.QPainter.Antialiasing
-                    | QtGui.QPainter.TextAntialiasing
-                    | QtGui.QPainter.SmoothPixmapTransform
-                )
-            except Exception:
-                try:
-                    self.setRenderHint(QtGui.QPainter.Antialiasing, True)
-                except Exception:
-                    pass
-            try:
-                self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
-                self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
-                self.setResizeAnchor(QtWidgets.QGraphicsView.AnchorViewCenter)
-            except Exception:
-                pass
-            try:
-                self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("white")))
-            except Exception:
-                pass
-
-        def wheelEvent(self, event):
-            try:
-                delta = event.angleDelta().y()
-            except Exception:
-                try:
-                    delta = event.delta()
-                except Exception:
-                    delta = 0
-            factor = 1.18 if delta > 0 else (1.0 / 1.18)
-            try:
-                self.scale(factor, factor)
-                event.accept()
-            except Exception:
-                super(Dssr2DGraphicsView, self).wheelEvent(event)
-
-
-    class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
-        def __init__(
-            self,
-            node_a,
-            node_b,
-            kind="backbone",
-            layer=0,
-            lw="",
-            linear_layout=False,
-        ):
-            super(Dssr2DEdgeItem, self).__init__()
-            self.node_a = node_a
-            self.node_b = node_b
-            self.kind = str(kind)
-            self.layer = int(layer)
-            self.lw = str(lw or "")
-            self.linear_layout = bool(linear_layout)
-            self.setZValue(-5.0 if self.kind == "backbone" else -3.0)
-            self._set_style()
-            self.update_geometry()
-
-        def _set_style(self):
-            if self.kind == "backbone":
-                color = QtGui.QColor(95, 95, 95)
-                width = 1.5
-                style = QtCore.Qt.SolidLine
-            elif self.kind == "tertiary":
-                color = QtGui.QColor(145, 90, 170)
-                width = 1.25
-                style = QtCore.Qt.DashLine
-            elif self.layer > 0:
-                palette = [
-                    QtGui.QColor(210, 60, 60),
-                    QtGui.QColor(230, 125, 35),
-                    QtGui.QColor(165, 70, 190),
-                    QtGui.QColor(30, 150, 150),
-                ]
-                color = palette[(self.layer - 1) % len(palette)]
-                width = 1.8
-                style = QtCore.Qt.SolidLine
-            else:
-                color = QtGui.QColor(60, 95, 205)
-                width = 1.8
-                style = QtCore.Qt.SolidLine
-            pen = QtGui.QPen(color)
-            pen.setWidthF(width)
-            try:
-                pen.setStyle(style)
-                pen.setCapStyle(QtCore.Qt.RoundCap)
-            except Exception:
-                pass
-            self.setPen(pen)
-            if self.lw:
-                self.setToolTip("Base pair: %s" % self.lw)
-
-        def update_geometry(self):
-            p1 = self.node_a.pos()
-            p2 = self.node_b.pos()
-            path = QtGui.QPainterPath()
-            path.moveTo(p1)
-
-            if self.linear_layout and self.kind != "backbone":
-                span = abs(int(self.node_a.nt_index) - int(self.node_b.nt_index))
-                height = min(330.0, 30.0 + 7.0 * span)
-                sign = -1.0 if self.layer % 2 else 1.0
-                if self.kind == "tertiary":
-                    sign *= -1.0
-                ctrl = QtCore.QPointF((p1.x() + p2.x()) * 0.5, sign * height)
-                path.quadTo(ctrl, p2)
-            else:
-                path.lineTo(p2)
-
-            self.setPath(path)
-
-
-    class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
-        RADIUS = 13.0
-
-        def __init__(self, viewer, nt, x, y):
-            r = self.RADIUS
-            super(Dssr2DNodeItem, self).__init__(-r, -r, 2.0 * r, 2.0 * r)
-            self.viewer = viewer
-            self.nt = nt
-            self.nt_index = int(nt.get("index", 0))
-            self.edge_items = []
-            self.setPos(float(x), float(y))
-            self.setZValue(5.0)
-
-            try:
-                flags = (
-                    QtWidgets.QGraphicsItem.ItemIsSelectable
-                    | QtWidgets.QGraphicsItem.ItemIsMovable
-                    | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges
-                )
-                self.setFlags(flags)
-            except Exception:
-                pass
-
-            self._apply_style(False)
-            self._add_text()
-            self.setToolTip(self._tooltip())
-
-        def _base_fill(self):
-            base = str(self.nt.get("base", "N")).upper()[:1]
-            if not getattr(self.viewer, "base_colors", True):
-                return QtGui.QColor(250, 250, 250)
-            colors = {
-                "A": QtGui.QColor(224, 244, 218),
-                "C": QtGui.QColor(218, 235, 251),
-                "G": QtGui.QColor(252, 240, 194),
-                "U": QtGui.QColor(250, 220, 220),
-                "T": QtGui.QColor(250, 220, 220),
-                "I": QtGui.QColor(235, 224, 248),
-            }
-            return colors.get(base, QtGui.QColor(242, 242, 242))
-
-        def _apply_style(self, selected):
-            if selected:
-                pen = QtGui.QPen(QtGui.QColor(230, 55, 35))
-                pen.setWidthF(2.8)
-            else:
-                pen = QtGui.QPen(QtGui.QColor(45, 45, 45))
-                pen.setWidthF(1.2)
-            self.setPen(pen)
-            self.setBrush(QtGui.QBrush(self._base_fill()))
-
-        def _add_text(self):
-            text = QtWidgets.QGraphicsSimpleTextItem(
-                str(self.nt.get("base", "N")), self
-            )
-            font = QtGui.QFont("Sans Serif")
-            font.setPointSize(9)
-            font.setBold(True)
-            text.setFont(font)
-            rect = text.boundingRect()
-            text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
-            text.setBrush(QtGui.QBrush(QtGui.QColor(25, 25, 25)))
-            self.base_text_item = text
-
-        def _tooltip(self):
-            pieces = ["nt %d" % int(self.nt.get("number", self.nt_index + 1))]
-            if self.nt.get("nt_id"):
-                pieces.append(str(self.nt.get("nt_id")))
-            else:
-                if self.nt.get("chain"):
-                    pieces.append("chain %s" % self.nt.get("chain"))
-                if self.nt.get("resi"):
-                    pieces.append("resi %s" % self.nt.get("resi"))
-            return "\n".join(pieces)
-
-        def itemChange(self, change, value):
-            try:
-                if change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-                    for edge in list(self.edge_items):
-                        edge.update_geometry()
-            except Exception:
-                pass
-            return super(Dssr2DNodeItem, self).itemChange(change, value)
-
-        def mousePressEvent(self, event):
-            try:
-                self.viewer.select_nucleotide(self.nt_index)
-            except Exception:
-                pass
-            super(Dssr2DNodeItem, self).mousePressEvent(event)
-
-        def set_selected_style(self, selected):
-            self._apply_style(bool(selected))
-
-
-    class DssrPython2DDialog(QtWidgets.QDialog):
-        def __init__(
-            self,
-            model,
-            pymol_selection="all",
-            algorithm="radiate",
-            number_every=10,
-            show_tertiary=True,
-            parent=None,
-        ):
-            super(DssrPython2DDialog, self).__init__(parent)
-            self.model = model
-            self.pymol_selection = str(pymol_selection or "all")
-            self.algorithm = str(algorithm or "radiate")
-            self.number_every = max(0, int(number_every))
-            self.show_tertiary = bool(show_tertiary)
-            self.base_colors = True
-            self.nodes = []
-            self.edges = []
-            self._selected_node = None
-
-            self.setWindowTitle("RNA 2D viewer — %s" % self.model.title)
-            self.resize(1120, 820)
-
-            root = QtWidgets.QVBoxLayout(self)
-            controls = QtWidgets.QHBoxLayout()
-            root.addLayout(controls)
-
-            controls.addWidget(QtWidgets.QLabel("layout"))
-            self.layout_combo = QtWidgets.QComboBox()
-            self.layout_combo.addItems(["radiate", "force", "circular", "linear"])
-            idx = self.layout_combo.findText(self.algorithm)
-            if idx >= 0:
-                self.layout_combo.setCurrentIndex(idx)
-            controls.addWidget(self.layout_combo)
-
-            controls.addWidget(QtWidgets.QLabel("number every"))
-            self.number_spin = QtWidgets.QSpinBox()
-            self.number_spin.setMinimum(0)
-            self.number_spin.setMaximum(10000)
-            self.number_spin.setValue(self.number_every)
-            controls.addWidget(self.number_spin)
-
-            self.tertiary_cb = QtWidgets.QCheckBox("DSSR extra pairs")
-            self.tertiary_cb.setChecked(self.show_tertiary)
-            controls.addWidget(self.tertiary_cb)
-
-            self.base_colors_cb = QtWidgets.QCheckBox("base colors")
-            self.base_colors_cb.setChecked(True)
-            controls.addWidget(self.base_colors_cb)
-
-            self.redraw_btn = QtWidgets.QPushButton("redraw")
-            self.redraw_btn.clicked.connect(self.redraw)
-            controls.addWidget(self.redraw_btn)
-
-            self.fit_btn = QtWidgets.QPushButton("fit")
-            self.fit_btn.clicked.connect(self.fit_scene)
-            controls.addWidget(self.fit_btn)
-
-            self.copy_btn = QtWidgets.QPushButton("copy DBN")
-            self.copy_btn.clicked.connect(self.copy_dbn)
-            controls.addWidget(self.copy_btn)
-
-            self.export_btn = QtWidgets.QPushButton("export image")
-            self.export_btn.clicked.connect(self.export_image)
-            controls.addWidget(self.export_btn)
-            controls.addStretch(1)
-
-            self.scene = QtWidgets.QGraphicsScene(self)
-            self.view = Dssr2DGraphicsView(self.scene, self)
-            root.addWidget(self.view, 1)
-
-            self.status_label = QtWidgets.QLabel(self.model.summary())
-            self.status_label.setWordWrap(True)
-            root.addWidget(self.status_label)
-
-            self.layout_combo.currentTextChanged.connect(self.redraw)
-            self.number_spin.valueChanged.connect(self.redraw)
-            self.tertiary_cb.toggled.connect(self.redraw)
-            self.base_colors_cb.toggled.connect(self.redraw)
-
-            self.redraw()
-            try:
-                QtCore.QTimer.singleShot(0, self.fit_scene)
-            except Exception:
-                self.fit_scene()
-
-        def _add_edge(self, i, j, kind, layer=0, lw="", linear=False):
-            if i < 0 or j < 0 or i >= len(self.nodes) or j >= len(self.nodes):
-                return None
-            edge = Dssr2DEdgeItem(
-                self.nodes[i],
-                self.nodes[j],
-                kind=kind,
-                layer=layer,
-                lw=lw,
-                linear_layout=linear,
-            )
-            self.scene.addItem(edge)
-            self.nodes[i].edge_items.append(edge)
-            self.nodes[j].edge_items.append(edge)
-            self.edges.append(edge)
-            return edge
-
-        def redraw(self, *_args):
-            algorithm = self.layout_combo.currentText().strip().lower()
-            self.algorithm = algorithm
-            self.number_every = int(self.number_spin.value())
-            self.show_tertiary = bool(self.tertiary_cb.isChecked())
-            self.base_colors = bool(self.base_colors_cb.isChecked())
-
-            self.scene.clear()
-            self.nodes = []
-            self.edges = []
-            self._selected_node = None
-
-            positions = Dssr2DLayout.compute(self.model, algorithm)
-            linear = algorithm == "linear"
-
-            # Nodes are created before edges so all edges can follow node motion.
-            for nt, (x, y) in zip(self.model.nts, positions):
-                node = Dssr2DNodeItem(self, nt, x, y)
-                self.scene.addItem(node)
-                self.nodes.append(node)
-
-            for i in range(len(self.nodes) - 1):
-                if i not in self.model.chain_breaks:
-                    self._add_edge(i, i + 1, "backbone", linear=linear)
-
-            for pair in self.model.secondary_pairs:
-                self._add_edge(
-                    int(pair["i"]),
-                    int(pair["j"]),
-                    "secondary",
-                    layer=int(pair.get("layer", 0)),
-                    lw=pair.get("lw", ""),
-                    linear=linear,
-                )
-
-            if self.show_tertiary:
-                for pair in self.model.tertiary_pairs:
-                    self._add_edge(
-                        int(pair["i"]),
-                        int(pair["j"]),
-                        "tertiary",
-                        layer=-1,
-                        lw=pair.get("lw", ""),
-                        linear=linear,
-                    )
-
-            self._add_number_labels()
-            self._add_chain_labels()
-            rect = self.scene.itemsBoundingRect().adjusted(-70.0, -70.0, 70.0, 70.0)
-            self.scene.setSceneRect(rect)
-            self.status_label.setText(
-                self.model.summary()
-                + " | layout=%s | wheel=zoom, drag background=pan, drag bases=edit"
-                % algorithm
-            )
-            self.fit_scene()
-
-        def _add_number_labels(self):
-            period = int(self.number_every)
-            n = len(self.nodes)
-            if n <= 0:
-                return
-            label_indices = {0, n - 1}
-            if period > 0:
-                label_indices.update(i for i in range(n) if (i + 1) % period == 0)
-            for break_after in self.model.chain_breaks:
-                if 0 <= break_after < n:
-                    label_indices.add(break_after)
-                if 0 <= break_after + 1 < n:
-                    label_indices.add(break_after + 1)
-
-            for i in sorted(label_indices):
-                node = self.nodes[i]
-                nt = self.model.nts[i]
-                text_value = str(nt.get("resi") or nt.get("number", i + 1))
-                text = QtWidgets.QGraphicsSimpleTextItem(text_value, node)
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(8)
-                text.setFont(font)
-                text.setBrush(QtGui.QBrush(QtGui.QColor(35, 35, 35)))
-                text.setPos(15.0, -24.0)
-                text.setZValue(8.0)
-
-        def _add_chain_labels(self):
-            seen = set()
-            for i, nt in enumerate(self.model.nts):
-                chain = str(nt.get("chain", ""))
-                if not chain or chain in seen or i >= len(self.nodes):
-                    continue
-                seen.add(chain)
-                label = QtWidgets.QGraphicsSimpleTextItem(
-                    "chain %s" % chain, self.nodes[i]
-                )
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(9)
-                font.setBold(True)
-                label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
-                label.setPos(-18.0, -48.0)
-                label.setZValue(8.0)
-
-        def fit_scene(self):
-            try:
-                rect = self.scene.itemsBoundingRect().adjusted(-35, -35, 35, 35)
-                self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
-            except Exception:
-                pass
-
-        def _selection_for_nt(self, nt):
-            clauses = ["(%s)" % self.pymol_selection]
-            chain = str(nt.get("chain", "")).strip()
-            resi = str(nt.get("resi", "")).strip()
-            if chain:
-                clauses.append("chain %s" % chain)
-            if resi:
-                clauses.append("resi %s" % resi)
-            return "byres (%s)" % " and ".join(clauses)
-
-        def select_nucleotide(self, index):
-            if index < 0 or index >= len(self.model.nts):
-                return
-            if self._selected_node is not None:
-                try:
-                    self._selected_node.set_selected_style(False)
-                except Exception:
-                    pass
-            node = self.nodes[index]
-            node.set_selected_style(True)
-            self._selected_node = node
-            nt = self.model.nts[index]
-            expr = self._selection_for_nt(nt)
-            try:
-                cmd.select("sele", expr)
-                self.status_label.setText(
-                    "Selected nt %d: %s | %s"
-                    % (index + 1, nt.get("nt_id") or expr, self.model.summary())
-                )
-            except Exception as e:
-                self.status_label.setText("PyMOL selection error: %s" % str(e))
-
-        def copy_dbn(self):
-            text = ">%s\n%s\n%s" % (
-                self.model.title,
-                self.model.raw_sequence or self.model.sequence,
-                self.model.raw_structure or self.model.structure,
-            )
-            try:
-                QtWidgets.QApplication.clipboard().setText(text)
-                self.status_label.setText("DBN copied to clipboard")
-            except Exception as e:
-                self.status_label.setText("Clipboard error: %s" % str(e))
-
-        def export_image(self):
-            filters = "PNG image (*.png)"
-            if QtSvg is not None:
-                filters += ";;SVG image (*.svg)"
-            try:
-                result = QtWidgets.QFileDialog.getSaveFileName(
-                    self,
-                    "Export RNA 2D image",
-                    "rna_2d.png",
-                    filters,
-                )
-                path = result[0] if isinstance(result, (tuple, list)) else result
-            except Exception:
-                path = ""
-            if not path:
-                return
-            path = str(path)
-            try:
-                if path.lower().endswith(".svg") and QtSvg is not None:
-                    self._export_svg(path)
-                else:
-                    if not path.lower().endswith(".png"):
-                        path += ".png"
-                    self._export_png(path)
-                self.status_label.setText("Exported: %s" % path)
-            except Exception as e:
-                msg = "Export failed: %s" % str(e)
-                self.status_label.setText(msg)
-                try:
-                    QtWidgets.QMessageBox.critical(self, "RNA 2D export", msg)
-                except Exception:
-                    pass
-
-        def _export_png(self, path):
-            rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
-            scale = 2.0
-            width = max(1, int(math.ceil(rect.width() * scale)))
-            height = max(1, int(math.ceil(rect.height() * scale)))
-            max_dim = 12000
-            if width > max_dim or height > max_dim:
-                factor = min(float(max_dim) / width, float(max_dim) / height)
-                width = max(1, int(width * factor))
-                height = max(1, int(height * factor))
-            image = QtGui.QImage(width, height, QtGui.QImage.Format_ARGB32)
-            image.fill(QtGui.QColor("white"))
-            painter = QtGui.QPainter(image)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            self.scene.render(
-                painter,
-                QtCore.QRectF(0, 0, width, height),
-                rect,
-                QtCore.Qt.KeepAspectRatio,
-            )
-            painter.end()
-            if not image.save(path):
-                raise CmdException("Qt could not save PNG file")
-
-        def _export_svg(self, path):
-            rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
-            generator = QtSvg.QSvgGenerator()
-            generator.setFileName(path)
-            generator.setSize(QtCore.QSize(max(1, int(rect.width())), max(1, int(rect.height()))))
-            generator.setViewBox(rect)
-            generator.setTitle(self.model.title)
-            generator.setDescription("RNA secondary structure derived by DSSR")
-            painter = QtGui.QPainter(generator)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            self.scene.render(painter, rect, rect, QtCore.Qt.KeepAspectRatio)
-            painter.end()
-
-
-class DssrPython2DIntegration:
-    @staticmethod
-    def _open_dialog(
-        dssr_data,
-        selection="all",
-        title="RNA secondary structure",
-        algorithm="radiate",
-        number_every=10,
-        show_tertiary=1,
-        parent=None,
-    ):
-        if QtWidgets is None or QtCore is None or QtGui is None:
-            raise CmdException("Qt graphics support is unavailable in this PyMOL build")
-        model = Dssr2DModel.from_dssr(dssr_data, title=title)
-        dialog = DssrPython2DDialog(
-            model=model,
-            pymol_selection=selection,
-            algorithm=algorithm,
-            number_every=number_every,
-            show_tertiary=bool(int(show_tertiary)),
-            parent=parent,
-        )
-        _DSSR_PY2D_DIALOGS.append(dialog)
-
-        def _remove_dialog(*_args):
-            try:
-                _DSSR_PY2D_DIALOGS.remove(dialog)
-            except Exception:
-                pass
-
-        try:
-            dialog.destroyed.connect(_remove_dialog)
-        except Exception:
-            pass
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-        return dialog
+        if name in ("linear", "line"):
+            model._dssr2d_layout_variant = "linear"
+            return Dssr2DLayout.linear(model)
+        return _layout_naview_layout(model)
 
     @staticmethod
-    def install_gui_controls(dialog):
-        if QtWidgets is None or QtCore is None:
-            return
-        if getattr(dialog, "_dssr_python2d_controls_installed", False):
-            return
-        dialog._dssr_python2d_controls_installed = True
+    def radiate(model):
+        topology = _layout_detect_trna_topology(model)
+        if topology is not None:
+            return _layout_trna_cloverleaf(model, topology)
+        model._dssr2d_layout_variant = "general radiate"
+        return Dssr2DLayout._radiate_general(model)
 
-        group = QtWidgets.QGroupBox("RNA 2D (pure Python — no Java/Jmol)")
-        row = QtWidgets.QHBoxLayout(group)
-
-        row.addWidget(QtWidgets.QLabel("layout"))
-        dialog.py2d_layout_combo = QtWidgets.QComboBox()
-        dialog.py2d_layout_combo.addItems(["radiate", "force", "circular", "linear"])
-        row.addWidget(dialog.py2d_layout_combo)
-
-        row.addWidget(QtWidgets.QLabel("number every"))
-        dialog.py2d_number_spin = QtWidgets.QSpinBox()
-        dialog.py2d_number_spin.setMinimum(0)
-        dialog.py2d_number_spin.setMaximum(10000)
-        dialog.py2d_number_spin.setValue(10)
-        row.addWidget(dialog.py2d_number_spin)
-
-        dialog.py2d_tertiary_cb = QtWidgets.QCheckBox("show DSSR extra pairs")
-        dialog.py2d_tertiary_cb.setChecked(True)
-        row.addWidget(dialog.py2d_tertiary_cb)
-
-        dialog.py2d_open_btn = QtWidgets.QPushButton("open 2D")
-        dialog.py2d_open_btn.setToolTip(
-            "Open an in-process Python/Qt RNA secondary-structure viewer. "
-            "No Jmol ZIP, Java, browser, or network connection is required."
-        )
-        dialog.py2d_open_btn.clicked.connect(
-            lambda: DssrPython2DIntegration.gui_open(dialog)
-        )
-        row.addWidget(dialog.py2d_open_btn)
-        row.addStretch(1)
-
-        root = dialog.layout()
-        if root is not None:
-            try:
-                root.insertWidget(max(0, root.count() - 1), group)
-            except Exception:
-                root.addWidget(group)
-        dialog.py2d_group = group
+    smart = radiate
 
     @staticmethod
-    def gui_open(dialog):
-        try:
-            if not cmd.get_object_list():
-                raise CmdException(
-                    "No structure loaded. Please load a PDB/CIF file before opening 2D view"
-                )
-            selection, exe, state, precolor_on = dialog._get_dssr_context()
-            dssr_data = dialog._get_dssr_data(selection, state, exe, precolor_on)
-            algorithm = dialog.py2d_layout_combo.currentText().strip().lower()
-            number_every = int(dialog.py2d_number_spin.value())
-            show_tertiary = 1 if dialog.py2d_tertiary_cb.isChecked() else 0
-            title = "%s state %d — secondary structure derived by DSSR" % (
-                selection,
-                state,
-            )
-            viewer = DssrPython2DIntegration._open_dialog(
-                dssr_data=dssr_data,
-                selection=selection,
-                title=title,
-                algorithm=algorithm,
-                number_every=number_every,
-                show_tertiary=show_tertiary,
-                parent=dialog,
-            )
-            try:
-                dialog.status_label.setText(
-                    "Opened pure-Python RNA 2D viewer: %s" % viewer.model.summary()
-                )
-            except Exception:
-                pass
-            try:
-                dialog._append_report(
-                    "Python 2D opened: %s; layout=%s"
-                    % (viewer.model.summary(), algorithm)
-                )
-            except Exception:
-                pass
-        except Exception as e:
-            msg = "RNA 2D viewer error: %s" % str(e)
-            try:
-                dialog.status_label.setText(msg)
-            except Exception:
-                pass
-            try:
-                dialog._append_report(msg)
-            except Exception:
-                pass
-            try:
-                QtWidgets.QMessageBox.critical(dialog, "RNA 2D viewer", msg)
-            except Exception:
-                pass
+    def naview(model):
+        return _layout_naview_layout(model)
+
+    standard = naview
 
 
-def dssr_2d(
-    selection="all",
-    state=-1,
-    exe="x3dna-dssr",
-    layout="radiate",
-    number_every=10,
-    show_tertiary=1,
-    title="",
-    quiet=1,
-):
-    """
-    DESCRIPTION
-
-        Open an interactive RNA secondary-structure viewer implemented entirely
-        in Python/Qt.  It requires no Java, Jmol, VARNA, ZIP extraction, browser,
-        or network connection.  X3DNA-DSSR remains the annotation engine.
-
-    USAGE
-
-        dssr_2d [ selection [, state [, exe [, layout [, number_every
-            [, show_tertiary [, title [, quiet ]]]]]]]]
-
-    ARGUMENTS
-
-        selection = str: PyMOL atom selection {default: all}
-
-        state = int: object state {-1: current state}
-
-        exe = str: path to x3dna-dssr {default: x3dna-dssr}
-
-        layout = radiate|force|circular|linear {default: radiate}
-
-        number_every = int: residue-number labeling period; 0 disables periodic
-        labels {default: 10}
-
-        show_tertiary = 0|1: show DSSR pairs not present in the secondary DBN
-        scaffold as dashed lines {default: 1}
-
-        title = str: optional viewer title
-
-        quiet = 0|1: print a summary {default: 1}
-
-    EXAMPLE
-
-        fetch 1ehz, async=0
-        dssr_2d 1ehz
-    """
-    selection = HelperFunctions.unquote(selection)
-    exe = HelperFunctions.unquote(exe)
-    layout = HelperFunctions.unquote(layout)
-    title = HelperFunctions.unquote(title)
-    try:
-        state = int(state)
-    except Exception:
-        state = -1
-    try:
-        number_every = int(number_every)
-    except Exception:
-        number_every = 10
-    try:
-        show_tertiary = int(show_tertiary)
-    except Exception:
-        show_tertiary = 1
-    try:
-        quiet = int(quiet)
-    except Exception:
-        quiet = 1
-
-    if state <= 0:
-        try:
-            state = int(cmd.get_state())
-        except Exception:
-            state = 1
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".pdb", delete=False)
-    tmpfilepdb = tmp.name
-    tmp.close()
-    try:
-        cmd.save(tmpfilepdb, selection, state)
-        dssr_data = HelperFunctions.run_dssr_json(tmpfilepdb, exe)
-    finally:
-        try:
-            os.remove(tmpfilepdb)
-        except OSError:
-            pass
-
-    if not str(title).strip():
-        title = "%s state %d — secondary structure derived by DSSR" % (
-            selection,
-            state,
-        )
-
-    dialog = DssrPython2DIntegration._open_dialog(
-        dssr_data=dssr_data,
-        selection=selection,
-        title=title,
-        algorithm=layout,
-        number_every=number_every,
-        show_tertiary=show_tertiary,
-        parent=None,
-    )
-
-    if not quiet:
-        print("dssr_2d: opened pure-Python viewer — %s" % dialog.model.summary())
-    return dialog
-
-
-# Add the controls without altering the original GUI implementation.
-if not getattr(DssrGuiDialog, "_dssr_python2d_patched", False):
-    _DSSR_PY2D_ORIGINAL_DIALOG_INIT = DssrGuiDialog.__init__
-
-    def _dssr_python2d_extended_dialog_init(self, *args, **kwargs):
-        _DSSR_PY2D_ORIGINAL_DIALOG_INIT(self, *args, **kwargs)
-        try:
-            DssrPython2DIntegration.install_gui_controls(self)
-        except Exception as e:
-            try:
-                print("DSSR pure-Python 2D GUI setup error: %s" % str(e))
-            except Exception:
-                pass
-
-    DssrGuiDialog.__init__ = _dssr_python2d_extended_dialog_init
-    DssrGuiDialog._dssr_python2d_patched = True
-
-
-DssrFunctions.dssr_2d = staticmethod(dssr_2d)
-cmd.extend("dssr_2d", dssr_2d)
-
-try:
-    cmd.auto_arg[0].update({"dssr_2d": cmd.auto_arg[0]["zoom"]})
-except Exception:
-    pass
-
-try:
-    print(
-        "Loaded DSSR pure-Python RNA 2D extension %s (no Java/Jmol required)"
-        % __DSSR_PY2D_EXTENSION_VERSION__
-    )
-except Exception:
-    pass
-
-# ============================================================================
-# DSSR pure-Python RNA 2D publication-layout + manual-editor patch v3.0
-#
-# This section is APPENDED.  No source code above is deleted or rewritten.
-# It adds a topology-aware tRNA cloverleaf layout and a true manual editor:
-# free base dragging, group/rubber-band selection, undo/redo, keyboard nudging,
-# middle-button or Space+drag panning, and JSON layout save/load.
-#
-# Design references were studied from VARNA, RNAcanvas, RiboSketch, and Qt's
-# Graphics View framework.  This implementation is original Python code and
-# does not translate/copy VARNA GPL method bodies.
-# ============================================================================
-
-__DSSR_PY2D_EDITOR_PATCH_VERSION__ = "v3.0.0-smart-free-editor"
-
-import bisect
-
-
-# ---------------------------------------------------------------------------
-# Publication-oriented automatic layout
-# ---------------------------------------------------------------------------
-
-_DSSR_PY2D_RADIATE_BEFORE_V3 = Dssr2DLayout.radiate
-_DSSR_PY2D_COMPUTE_BEFORE_V3 = Dssr2DLayout.compute
-
-
-def _dssr2d_v3_solve_circle(edge_lengths):
+def _layout_solve_circle(edge_lengths):
     """Solve a circle whose successive chord lengths close one revolution."""
     lengths = [max(1.0, float(value)) for value in edge_lengths]
     if not lengths:
@@ -4840,10 +2559,7 @@ def _dssr2d_v3_solve_circle(edge_lengths):
     lower = max(lengths) * 0.5 + 1.0e-7
 
     def angles_at(radius):
-        return [
-            2.0 * math.asin(min(1.0, length / (2.0 * radius)))
-            for length in lengths
-        ]
+        return [2.0 * math.asin(min(1.0, length / (2.0 * radius))) for length in lengths]
 
     lower_angles = angles_at(lower)
     lower_total = sum(lower_angles)
@@ -4866,14 +2582,14 @@ def _dssr2d_v3_solve_circle(edge_lengths):
     return radius, angles_at(radius)
 
 
-def _dssr2d_v3_normalize(vector, fallback=(0.0, 1.0)):
+def _layout_normalize(vector, fallback=(0.0, 1.0)):
     length = math.hypot(float(vector[0]), float(vector[1]))
     if length <= 1.0e-12:
         return fallback
     return (float(vector[0]) / length, float(vector[1]) / length)
 
 
-def _dssr2d_v3_quadratic_equal(indices, start, stop, control, positions):
+def _layout_quadratic_equal(indices, start, stop, control, positions):
     """Place indices at near-equal arc-length intervals on a quadratic curve."""
     indices = list(indices)
     if not indices:
@@ -4886,21 +2602,14 @@ def _dssr2d_v3_quadratic_equal(indices, start, stop, control, positions):
         u = 1.0 - t
         points.append(
             (
-                u * u * start[0]
-                + 2.0 * u * t * control[0]
-                + t * t * stop[0],
-                u * u * start[1]
-                + 2.0 * u * t * control[1]
-                + t * t * stop[1],
+                u * u * start[0] + 2.0 * u * t * control[0] + t * t * stop[0],
+                u * u * start[1] + 2.0 * u * t * control[1] + t * t * stop[1],
             )
         )
 
     cumulative = [0.0]
     for first, second in zip(points, points[1:]):
-        cumulative.append(
-            cumulative[-1]
-            + math.hypot(second[0] - first[0], second[1] - first[1])
-        )
+        cumulative.append(cumulative[-1] + math.hypot(second[0] - first[0], second[1] - first[1]))
     total = cumulative[-1]
     if total <= 1.0e-12:
         return
@@ -4918,7 +2627,7 @@ def _dssr2d_v3_quadratic_equal(indices, start, stop, control, positions):
         )
 
 
-def _dssr2d_v3_place_loop_circle(
+def _layout_place_loop_circle(
     indices,
     start,
     stop,
@@ -4932,10 +2641,9 @@ def _dssr2d_v3_place_loop_circle(
     if not indices:
         return
 
-    outward = _dssr2d_v3_normalize(outward_direction)
-    radius, angles = _dssr2d_v3_solve_circle(
-        [float(backbone_distance)] * (len(indices) + 1)
-        + [float(pair_distance)]
+    outward = _layout_normalize(outward_direction)
+    radius, angles = _layout_solve_circle(
+        [float(backbone_distance)] * (len(indices) + 1) + [float(pair_distance)]
     )
 
     midpoint = (
@@ -4965,8 +2673,7 @@ def _dssr2d_v3_place_loop_circle(
                 )
             )
         score = sum(
-            (point[0] - midpoint[0]) * outward[0]
-            + (point[1] - midpoint[1]) * outward[1]
+            (point[0] - midpoint[0]) * outward[0] + (point[1] - midpoint[1]) * outward[1]
             for point in candidate
         ) / float(max(1, len(candidate)))
         candidates.append((score, candidate))
@@ -4976,7 +2683,7 @@ def _dssr2d_v3_place_loop_circle(
         positions[index] = point
 
 
-def _dssr2d_v3_detect_trna_topology(model):
+def _layout_detect_trna_topology(model):
     """Detect a tRNA-like cloverleaf from topology, never from a PDB name."""
     total = len(model.nts)
     if total < 55 or total > 110 or model.chain_count() != 1:
@@ -5020,7 +2727,7 @@ def _dssr2d_v3_detect_trna_topology(model):
     }
 
 
-def _dssr2d_v3_trna_cloverleaf(model, topology):
+def _layout_trna_cloverleaf(model, topology):
     """Generate a clean, conventional four-arm tRNA cloverleaf."""
     total = len(model.nts)
     root = topology["root"]
@@ -5032,7 +2739,7 @@ def _dssr2d_v3_trna_cloverleaf(model, topology):
     backbone_distance = 34.0
 
     def place_stem(stem, outer_center, direction):
-        direction = _dssr2d_v3_normalize(direction)
+        direction = _layout_normalize(direction)
         normal = (-direction[1], direction[0])
         for offset, (left, right) in enumerate(stem["pairs"]):
             center = (
@@ -5064,7 +2771,7 @@ def _dssr2d_v3_trna_cloverleaf(model, topology):
     for arm, center, direction in zip(arms, arm_centers, arm_directions):
         place_stem(arm, center, direction)
         loop_indices = range(arm["inner_i"] + 1, arm["inner_j"])
-        _dssr2d_v3_place_loop_circle(
+        _layout_place_loop_circle(
             loop_indices,
             positions[arm["inner_i"]],
             positions[arm["inner_j"]],
@@ -5082,7 +2789,7 @@ def _dssr2d_v3_trna_cloverleaf(model, topology):
         (arms[2]["outer_j"], root["inner_j"], (106.0, -106.0)),
     ]
     for first, last, control in junctions:
-        _dssr2d_v3_quadratic_equal(
+        _layout_quadratic_equal(
             range(first + 1, last),
             positions[first],
             positions[last],
@@ -5107,7 +2814,7 @@ def _dssr2d_v3_trna_cloverleaf(model, topology):
 
     # Defensive recovery if a modified/atypical tRNA contains a residue outside
     # the four recognized regions.
-    fallback = _DSSR_PY2D_RADIATE_BEFORE_V3(model)
+    fallback = Dssr2DLayout._radiate_general(model)
     for index in range(total):
         if positions[index] is None:
             positions[index] = fallback[index]
@@ -5115,2624 +2822,16 @@ def _dssr2d_v3_trna_cloverleaf(model, topology):
     center_x = sum(point[0] for point in positions) / float(total)
     center_y = sum(point[1] for point in positions) / float(total)
     model._dssr2d_layout_variant = "tRNA cloverleaf"
-    return [
-        (point[0] - center_x, point[1] - center_y)
-        for point in positions
-    ]
+    return [(point[0] - center_x, point[1] - center_y) for point in positions]
 
 
-def _dssr2d_v3_smart_layout(model):
-    topology = _dssr2d_v3_detect_trna_topology(model)
-    if topology is not None:
-        return _dssr2d_v3_trna_cloverleaf(model, topology)
-    model._dssr2d_layout_variant = "general radiate"
-    return _DSSR_PY2D_RADIATE_BEFORE_V3(model)
-
-
-def _dssr2d_v3_compute(model, algorithm):
-    name = str(algorithm or "smart").strip().lower()
-    if name in ("smart", "publication", "auto", "editor"):
-        return _dssr2d_v3_smart_layout(model)
-    if name in ("radiate", "radial"):
-        # Compatibility: radiate also gets the topology-aware tRNA template.
-        return _dssr2d_v3_smart_layout(model)
-    return _DSSR_PY2D_COMPUTE_BEFORE_V3(model, name)
-
-
-Dssr2DLayout.smart = staticmethod(_dssr2d_v3_smart_layout)
-Dssr2DLayout.radiate = staticmethod(_dssr2d_v3_smart_layout)
-Dssr2DLayout.compute = staticmethod(_dssr2d_v3_compute)
-Dssr2DLayout._smart_editor_v3_installed = True
-
-
-# ---------------------------------------------------------------------------
-# Curved non-scaffold interaction overlays
-# ---------------------------------------------------------------------------
-
-if "Dssr2DEdgeItem" in globals():
-    def _dssr2d_v3_edge_geometry(self):
-        first = self.node_a.pos()
-        second = self.node_b.pos()
-        path = QtGui.QPainterPath()
-        path.moveTo(first)
-
-        if self.kind == "backbone":
-            path.lineTo(second)
-        elif self.linear_layout:
-            span = abs(int(self.node_a.nt_index) - int(self.node_b.nt_index))
-            height = min(350.0, 30.0 + 7.0 * span)
-            sign = -1.0 if int(self.layer) % 2 else 1.0
-            if self.kind == "tertiary":
-                sign *= -1.0
-            control = QtCore.QPointF(
-                0.5 * (first.x() + second.x()),
-                sign * height,
-            )
-            path.quadTo(control, second)
-        elif self.kind == "tertiary" or int(self.layer) > 0:
-            dx = second.x() - first.x()
-            dy = second.y() - first.y()
-            distance = math.hypot(dx, dy)
-            if distance <= 1.0e-8:
-                path.lineTo(second)
-            else:
-                nx = -dy / distance
-                ny = dx / distance
-                middle_x = 0.5 * (first.x() + second.x())
-                middle_y = 0.5 * (first.y() + second.y())
-                curvature = min(
-                    240.0,
-                    max(36.0, distance * (0.28 if self.kind == "tertiary" else 0.21)),
-                )
-                option_a = (
-                    middle_x + nx * curvature,
-                    middle_y + ny * curvature,
-                )
-                option_b = (
-                    middle_x - nx * curvature,
-                    middle_y - ny * curvature,
-                )
-                if math.hypot(*option_b) > math.hypot(*option_a):
-                    nx = -nx
-                    ny = -ny
-                separation = (
-                    int(self.node_a.nt_index) * 17
-                    + int(self.node_b.nt_index) * 31
-                    + int(self.layer) * 7
-                ) % 3
-                curvature += (separation - 1) * 12.0
-                control = QtCore.QPointF(
-                    middle_x + nx * curvature,
-                    middle_y + ny * curvature,
-                )
-                path.quadTo(control, second)
-        else:
-            path.lineTo(second)
-        self.setPath(path)
-
-    Dssr2DEdgeItem.update_geometry = _dssr2d_v3_edge_geometry
-    Dssr2DEdgeItem._smart_editor_v3_installed = True
-
-
-# ---------------------------------------------------------------------------
-# True manual editor (Qt Graphics View)
-# ---------------------------------------------------------------------------
-
-if QtWidgets is not None and QtCore is not None and QtGui is not None:
-    _DSSR_PY2D_VIEW_BEFORE_V3 = Dssr2DGraphicsView
-    _DSSR_PY2D_NODE_BEFORE_V3 = Dssr2DNodeItem
-    _DSSR_PY2D_DIALOG_BEFORE_V3 = DssrPython2DDialog
-
-    def _dssr2d_v3_no_mouse(item):
-        try:
-            item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        except Exception:
-            pass
-
-    class Dssr2DGraphicsViewV3(_DSSR_PY2D_VIEW_BEFORE_V3):
-        """Rubber-band selection plus dedicated pan/zoom/editor shortcuts."""
-
-        def __init__(self, scene, parent=None):
-            super(Dssr2DGraphicsViewV3, self).__init__(scene, parent)
-            self.editor = parent
-            self._v3_panning = False
-            self._v3_space_down = False
-            self._v3_pan_last = None
-            try:
-                self.setInteractive(True)
-                self.setDragMode(QtWidgets.QGraphicsView.RubberBandDrag)
-                self.setRubberBandSelectionMode(QtCore.Qt.IntersectsItemShape)
-                self.setFocusPolicy(QtCore.Qt.StrongFocus)
-                self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
-                self.setResizeAnchor(QtWidgets.QGraphicsView.AnchorViewCenter)
-            except Exception:
-                pass
-
-        def mousePressEvent(self, event):
-            try:
-                is_middle = event.button() == QtCore.Qt.MiddleButton
-                is_space_left = (
-                    event.button() == QtCore.Qt.LeftButton and self._v3_space_down
-                )
-            except Exception:
-                is_middle = False
-                is_space_left = False
-
-            if is_middle or is_space_left:
-                self._v3_panning = True
-                self._v3_pan_last = event.pos()
-                try:
-                    self.setCursor(QtCore.Qt.ClosedHandCursor)
-                except Exception:
-                    pass
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV3, self).mousePressEvent(event)
-
-        def mouseMoveEvent(self, event):
-            if self._v3_panning and self._v3_pan_last is not None:
-                delta = event.pos() - self._v3_pan_last
-                self._v3_pan_last = event.pos()
-                try:
-                    self.horizontalScrollBar().setValue(
-                        self.horizontalScrollBar().value() - delta.x()
-                    )
-                    self.verticalScrollBar().setValue(
-                        self.verticalScrollBar().value() - delta.y()
-                    )
-                except Exception:
-                    pass
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV3, self).mouseMoveEvent(event)
-
-        def mouseReleaseEvent(self, event):
-            if self._v3_panning:
-                self._v3_panning = False
-                self._v3_pan_last = None
-                try:
-                    self.unsetCursor()
-                except Exception:
-                    pass
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV3, self).mouseReleaseEvent(event)
-
-        def keyPressEvent(self, event):
-            key = event.key()
-            modifiers = event.modifiers()
-            control = bool(modifiers & QtCore.Qt.ControlModifier)
-            shift = bool(modifiers & QtCore.Qt.ShiftModifier)
-
-            if key == QtCore.Qt.Key_Space:
-                self._v3_space_down = True
-                try:
-                    self.setCursor(QtCore.Qt.OpenHandCursor)
-                except Exception:
-                    pass
-                event.accept()
-                return
-            if control and key == QtCore.Qt.Key_Z:
-                if shift:
-                    self.editor.redo_layout()
-                else:
-                    self.editor.undo_layout()
-                event.accept()
-                return
-            if control and key == QtCore.Qt.Key_Y:
-                self.editor.redo_layout()
-                event.accept()
-                return
-            if control and key == QtCore.Qt.Key_A:
-                self.editor.select_all_bases()
-                event.accept()
-                return
-            if key == QtCore.Qt.Key_Escape:
-                self.editor.clear_base_selection()
-                event.accept()
-                return
-            if key in (
-                QtCore.Qt.Key_Left,
-                QtCore.Qt.Key_Right,
-                QtCore.Qt.Key_Up,
-                QtCore.Qt.Key_Down,
-            ):
-                amount = 10.0 if shift else 2.0
-                dx = 0.0
-                dy = 0.0
-                if key == QtCore.Qt.Key_Left:
-                    dx = -amount
-                elif key == QtCore.Qt.Key_Right:
-                    dx = amount
-                elif key == QtCore.Qt.Key_Up:
-                    dy = -amount
-                elif key == QtCore.Qt.Key_Down:
-                    dy = amount
-                self.editor.nudge_selected(dx, dy)
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV3, self).keyPressEvent(event)
-
-        def keyReleaseEvent(self, event):
-            if event.key() == QtCore.Qt.Key_Space:
-                self._v3_space_down = False
-                try:
-                    self.unsetCursor()
-                except Exception:
-                    pass
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV3, self).keyReleaseEvent(event)
-
-        def mouseDoubleClickEvent(self, event):
-            try:
-                item = self.itemAt(event.pos())
-            except Exception:
-                item = None
-            if item is None:
-                try:
-                    self.editor.fit_scene()
-                    event.accept()
-                    return
-                except Exception:
-                    pass
-            super(Dssr2DGraphicsViewV3, self).mouseDoubleClickEvent(event)
-
-
-    class Dssr2DNodeItemV3(_DSSR_PY2D_NODE_BEFORE_V3):
-        """A nucleotide that can be moved freely, alone or in a selected group."""
-
-        def __init__(self, viewer, nt, x, y):
-            super(Dssr2DNodeItemV3, self).__init__(viewer, nt, x, y)
-            self._v3_dragging = False
-            self._v3_drag_origin = None
-            self._v3_drag_starts = {}
-            self._v3_drag_before = None
-            self._v3_pan_dragging = False
-            self._v3_pan_last = None
-            try:
-                self.setFlag(QtWidgets.QGraphicsItem.ItemIsFocusable, True)
-                self.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, False)
-                self.setAcceptHoverEvents(True)
-                self.setCursor(QtCore.Qt.OpenHandCursor)
-            except Exception:
-                pass
-            _dssr2d_v3_no_mouse(getattr(self, "base_text_item", None))
-
-        def itemChange(self, change, value):
-            result = super(Dssr2DNodeItemV3, self).itemChange(change, value)
-            try:
-                if change == QtWidgets.QGraphicsItem.ItemSelectedHasChanged:
-                    self._apply_style(bool(value))
-                elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-                    self.viewer._v3_schedule_scene_rect()
-            except Exception:
-                pass
-            return result
-
-        def mousePressEvent(self, event):
-            button = event.button()
-            pan_requested = (
-                button == QtCore.Qt.MiddleButton
-                or (
-                    button == QtCore.Qt.LeftButton
-                    and bool(getattr(self.viewer.view, "_v3_space_down", False))
-                )
-            )
-            if pan_requested:
-                self._v3_pan_dragging = True
-                try:
-                    self._v3_pan_last = event.screenPos()
-                    self.viewer.view.setCursor(QtCore.Qt.ClosedHandCursor)
-                except Exception:
-                    self._v3_pan_last = None
-                event.accept()
-                return
-
-            if button != QtCore.Qt.LeftButton:
-                super(Dssr2DNodeItemV3, self).mousePressEvent(event)
-                return
-
-            modifiers = event.modifiers()
-            control = bool(modifiers & QtCore.Qt.ControlModifier)
-            shift = bool(modifiers & QtCore.Qt.ShiftModifier)
-            scene = self.scene()
-
-            if control:
-                self.setSelected(not self.isSelected())
-                if not self.isSelected():
-                    self.viewer._v3_active_index = None
-                    self.viewer._v3_sync_pymol_selection()
-                    event.accept()
-                    return
-            elif shift:
-                self.setSelected(True)
-            else:
-                if not self.isSelected():
-                    try:
-                        scene.clearSelection()
-                    except Exception:
-                        pass
-                    self.setSelected(True)
-
-            self.viewer._v3_active_index = self.nt_index
-            selected = [node for node in self.viewer.nodes if node.isSelected()]
-            if self not in selected:
-                selected.append(self)
-                self.setSelected(True)
-
-            self._v3_dragging = True
-            self._v3_drag_origin = event.scenePos()
-            self._v3_drag_before = self.viewer._v3_capture_positions()
-            self._v3_drag_starts = {
-                node.nt_index: QtCore.QPointF(node.pos()) for node in selected
-            }
-            try:
-                self.setCursor(QtCore.Qt.ClosedHandCursor)
-                self.viewer.view.setFocus()
-            except Exception:
-                pass
-            self.viewer._v3_sync_pymol_selection()
-            event.accept()
-
-        def mouseMoveEvent(self, event):
-            if self._v3_pan_dragging and self._v3_pan_last is not None:
-                current = event.screenPos()
-                delta = current - self._v3_pan_last
-                self._v3_pan_last = current
-                view = self.viewer.view
-                view.horizontalScrollBar().setValue(
-                    view.horizontalScrollBar().value() - delta.x()
-                )
-                view.verticalScrollBar().setValue(
-                    view.verticalScrollBar().value() - delta.y()
-                )
-                event.accept()
-                return
-
-            if not self._v3_dragging or self._v3_drag_origin is None:
-                super(Dssr2DNodeItemV3, self).mouseMoveEvent(event)
-                return
-
-            delta = event.scenePos() - self._v3_drag_origin
-            snap = False
-            grid = 1.0
-            try:
-                snap = bool(self.viewer.snap_cb.isChecked())
-                grid = max(1.0, float(self.viewer.grid_spin.value()))
-            except Exception:
-                pass
-
-            for index, start in self._v3_drag_starts.items():
-                if index < 0 or index >= len(self.viewer.nodes):
-                    continue
-                x = start.x() + delta.x()
-                y = start.y() + delta.y()
-                if snap:
-                    x = round(x / grid) * grid
-                    y = round(y / grid) * grid
-                self.viewer.nodes[index].setPos(x, y)
-            event.accept()
-
-        def mouseReleaseEvent(self, event):
-            if self._v3_pan_dragging:
-                self._v3_pan_dragging = False
-                self._v3_pan_last = None
-                try:
-                    self.viewer.view.unsetCursor()
-                except Exception:
-                    pass
-                event.accept()
-                return
-
-            if self._v3_dragging:
-                self._v3_dragging = False
-                after = self.viewer._v3_capture_positions()
-                self.viewer._v3_push_history(
-                    self._v3_drag_before,
-                    after,
-                    "move base%s"
-                    % ("s" if len(self._v3_drag_starts) != 1 else ""),
-                )
-                self._v3_drag_origin = None
-                self._v3_drag_starts = {}
-                self._v3_drag_before = None
-                try:
-                    self.setCursor(QtCore.Qt.OpenHandCursor)
-                except Exception:
-                    pass
-                self.viewer._v3_update_editor_status("manual move")
-                event.accept()
-                return
-            super(Dssr2DNodeItemV3, self).mouseReleaseEvent(event)
-
-        def contextMenuEvent(self, event):
-            menu = QtWidgets.QMenu()
-            select_only = menu.addAction("Select only this base")
-            add_pair = menu.addAction("Select its base pair")
-            add_stem = menu.addAction("Select its whole stem")
-            menu.addSeparator()
-            reset_selected = menu.addAction("Reset selected bases to automatic layout")
-            undo_action = menu.addAction("Undo last move")
-
-            try:
-                chosen = menu.exec_(event.screenPos())
-            except Exception:
-                try:
-                    chosen = menu.exec(event.screenPos())
-                except Exception:
-                    chosen = None
-
-            if chosen == select_only:
-                self.viewer.select_indices([self.nt_index], replace=True)
-            elif chosen == add_pair:
-                indices = [self.nt_index]
-                partner = self.viewer._v3_pair_partner(self.nt_index)
-                if partner >= 0:
-                    indices.append(partner)
-                self.viewer.select_indices(indices, replace=True)
-            elif chosen == add_stem:
-                self.viewer.select_indices(
-                    self.viewer._v3_stem_indices(self.nt_index), replace=True
-                )
-            elif chosen == reset_selected:
-                self.viewer.reset_selected_bases()
-            elif chosen == undo_action:
-                self.viewer.undo_layout()
-            event.accept()
-
-
-    # Runtime lookups in the original dialog now create the enhanced classes.
-    Dssr2DGraphicsView = Dssr2DGraphicsViewV3
-    Dssr2DNodeItem = Dssr2DNodeItemV3
-
-
-    class DssrPython2DDialogV3(_DSSR_PY2D_DIALOG_BEFORE_V3):
-        HISTORY_LIMIT = 100
-
-        def __init__(
-            self,
-            model,
-            pymol_selection="all",
-            algorithm="smart",
-            number_every=10,
-            show_tertiary=False,
-            parent=None,
-        ):
-            self._v3_rebuilding = False
-            self._v3_force_relayout = True
-            self._v3_auto_positions = []
-            self._v3_undo = []
-            self._v3_redo = []
-            self._v3_active_index = None
-            self._v3_scene_rect_pending = False
-            self._v3_selection_sync_pending = False
-            self._v3_editor_installed = False
-            if str(algorithm or "").strip().lower() in ("", "radiate"):
-                algorithm = "smart"
-            self._v3_requested_algorithm = str(algorithm or "smart").strip().lower()
-
-            super(DssrPython2DDialogV3, self).__init__(
-                model=model,
-                pymol_selection=pymol_selection,
-                algorithm=algorithm,
-                number_every=number_every,
-                show_tertiary=show_tertiary,
-                parent=parent,
-            )
-            self._v3_install_editor_controls()
-            try:
-                self.scene.selectionChanged.connect(self._v3_selection_changed)
-            except Exception:
-                pass
-            self._v3_update_history_buttons()
-            self._v3_update_editor_status("ready")
-
-        # ---------- scene construction and persistence ----------
-
-        def redraw(self, *_args):
-            if self._v3_rebuilding:
-                return
-            self._v3_rebuilding = True
-            try:
-                algorithm = self.layout_combo.currentText().strip().lower() or "smart"
-                self.algorithm = algorithm
-                self.number_every = int(self.number_spin.value())
-                self.show_tertiary = bool(self.tertiary_cb.isChecked())
-                self.base_colors = bool(self.base_colors_cb.isChecked())
-
-                sender = self.sender()
-                current_positions = self._v3_capture_positions()
-                selected_indices = [
-                    node.nt_index for node in self.nodes if node.isSelected()
-                ]
-                preserve_positions = (
-                    bool(current_positions)
-                    and not self._v3_force_relayout
-                    and sender is not self.layout_combo
-                    and sender is not self.redraw_btn
-                )
-
-                old_transform = None
-                old_center = None
-                if preserve_positions:
-                    try:
-                        old_transform = QtGui.QTransform(self.view.transform())
-                        old_center = self.view.mapToScene(
-                            self.view.viewport().rect().center()
-                        )
-                    except Exception:
-                        old_transform = None
-                        old_center = None
-
-                if preserve_positions:
-                    positions = current_positions
-                else:
-                    positions = Dssr2DLayout.compute(self.model, algorithm)
-                    self._v3_auto_positions = [
-                        (float(x), float(y)) for x, y in positions
-                    ]
-
-                try:
-                    self.scene.blockSignals(True)
-                except Exception:
-                    pass
-                self.scene.clear()
-                self.nodes = []
-                self.edges = []
-                self._selected_node = None
-
-                for nt, (x, y) in zip(self.model.nts, positions):
-                    node = Dssr2DNodeItem(self, nt, x, y)
-                    self.scene.addItem(node)
-                    self.nodes.append(node)
-
-                linear = algorithm == "linear"
-                for index in range(len(self.nodes) - 1):
-                    if index not in self.model.chain_breaks:
-                        self._add_edge(index, index + 1, "backbone", linear=linear)
-
-                for pair in self.model.secondary_pairs:
-                    self._add_edge(
-                        int(pair["i"]),
-                        int(pair["j"]),
-                        "secondary",
-                        layer=int(pair.get("layer", 0)),
-                        lw=pair.get("lw", ""),
-                        linear=linear,
-                    )
-
-                if self.show_tertiary:
-                    for pair in self.model.tertiary_pairs:
-                        self._add_edge(
-                            int(pair["i"]),
-                            int(pair["j"]),
-                            "tertiary",
-                            layer=-1,
-                            lw=pair.get("lw", ""),
-                            linear=linear,
-                        )
-
-                self._add_number_labels()
-                self._add_chain_labels()
-                self._v3_update_scene_rect()
-
-                for index in selected_indices:
-                    if 0 <= index < len(self.nodes):
-                        self.nodes[index].setSelected(True)
-                try:
-                    self.scene.blockSignals(False)
-                except Exception:
-                    pass
-
-                if preserve_positions and old_transform is not None:
-                    try:
-                        self.view.setTransform(old_transform)
-                        if old_center is not None:
-                            self.view.centerOn(old_center)
-                    except Exception:
-                        pass
-                else:
-                    self.fit_scene()
-
-                self._v3_force_relayout = False
-                self._v3_update_editor_status(
-                    "redrawn" if preserve_positions else "automatic layout"
-                )
-            finally:
-                try:
-                    self.scene.blockSignals(False)
-                except Exception:
-                    pass
-                self._v3_rebuilding = False
-
-        def _add_number_labels(self):
-            total = len(self.nodes)
-            if total <= 0:
-                return
-            period = int(self.number_every)
-            indices = {0, total - 1}
-            if period > 0:
-                indices.update(
-                    index for index in range(total) if (index + 1) % period == 0
-                )
-            for break_after in self.model.chain_breaks:
-                if 0 <= break_after < total:
-                    indices.add(break_after)
-                if 0 <= break_after + 1 < total:
-                    indices.add(break_after + 1)
-
-            center_x = sum(node.pos().x() for node in self.nodes) / float(total)
-            center_y = sum(node.pos().y() for node in self.nodes) / float(total)
-            for index in sorted(indices):
-                node = self.nodes[index]
-                nt = self.model.nts[index]
-                value = str(nt.get("resi") or nt.get("number", index + 1))
-                label = QtWidgets.QGraphicsSimpleTextItem(value, node)
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(8)
-                label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(35, 35, 35)))
-                dx = node.pos().x() - center_x
-                dy = node.pos().y() - center_y
-                length = math.hypot(dx, dy)
-                if length <= 1.0e-8:
-                    dx, dy, length = 1.0, -1.0, math.sqrt(2.0)
-                dx = 25.0 * dx / length
-                dy = 25.0 * dy / length
-                rect = label.boundingRect()
-                label.setPos(dx - 0.5 * rect.width(), dy - 0.5 * rect.height())
-                label.setZValue(8.0)
-                _dssr2d_v3_no_mouse(label)
-
-        def _add_chain_labels(self):
-            total = len(self.nodes)
-            if total <= 0:
-                return
-            segments = []
-            start = 0
-            for break_after in sorted(self.model.chain_breaks):
-                if break_after >= start:
-                    segments.append((start, min(total - 1, break_after)))
-                    start = break_after + 1
-            if start < total:
-                segments.append((start, total - 1))
-            if not segments:
-                segments = [(0, total - 1)]
-
-            for segment_number, (first, last) in enumerate(segments, 1):
-                for index, text_value, offset in (
-                    (first, "5′", (-35.0, -22.0)),
-                    (last, "3′", (20.0, -22.0)),
-                ):
-                    label = QtWidgets.QGraphicsSimpleTextItem(
-                        text_value, self.nodes[index]
-                    )
-                    font = QtGui.QFont("Sans Serif")
-                    font.setPointSize(10)
-                    font.setBold(True)
-                    label.setFont(font)
-                    label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
-                    label.setPos(offset[0], offset[1])
-                    label.setZValue(8.0)
-                    _dssr2d_v3_no_mouse(label)
-
-                if len(segments) > 1:
-                    chain = str(self.model.nts[first].get("chain", "")).strip()
-                    text_value = "chain %s" % (chain or segment_number)
-                    label = QtWidgets.QGraphicsSimpleTextItem(
-                        text_value, self.nodes[first]
-                    )
-                    font = QtGui.QFont("Sans Serif")
-                    font.setPointSize(8)
-                    font.setBold(True)
-                    label.setFont(font)
-                    label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
-                    label.setPos(-42.0, -46.0)
-                    label.setZValue(8.0)
-                    _dssr2d_v3_no_mouse(label)
-
-        def _v3_capture_positions(self):
-            if not getattr(self, "nodes", None):
-                return []
-            return [
-                (float(node.pos().x()), float(node.pos().y()))
-                for node in self.nodes
-            ]
-
-        def _v3_apply_positions(self, positions):
-            if len(positions) != len(self.nodes):
-                raise CmdException(
-                    "Layout has %d coordinates but this RNA has %d nucleotides"
-                    % (len(positions), len(self.nodes))
-                )
-            for node, point in zip(self.nodes, positions):
-                node.setPos(float(point[0]), float(point[1]))
-            for edge in self.edges:
-                try:
-                    edge.update_geometry()
-                except Exception:
-                    pass
-            self._v3_update_scene_rect()
-
-        def _v3_positions_changed(self, first, second):
-            if not first or not second or len(first) != len(second):
-                return False
-            return any(
-                abs(a[0] - b[0]) > 1.0e-5 or abs(a[1] - b[1]) > 1.0e-5
-                for a, b in zip(first, second)
-            )
-
-        def _v3_push_history(self, before, after, label="edit"):
-            if not self._v3_positions_changed(before, after):
-                return
-            self._v3_undo.append(
-                {
-                    "before": [(float(x), float(y)) for x, y in before],
-                    "after": [(float(x), float(y)) for x, y in after],
-                    "label": str(label),
-                }
-            )
-            if len(self._v3_undo) > self.HISTORY_LIMIT:
-                self._v3_undo = self._v3_undo[-self.HISTORY_LIMIT :]
-            self._v3_redo = []
-            self._v3_update_history_buttons()
-
-        def undo_layout(self):
-            if not self._v3_undo:
-                return
-            entry = self._v3_undo.pop()
-            self._v3_apply_positions(entry["before"])
-            self._v3_redo.append(entry)
-            self._v3_update_history_buttons()
-            self._v3_update_editor_status("undo: %s" % entry["label"])
-
-        def redo_layout(self):
-            if not self._v3_redo:
-                return
-            entry = self._v3_redo.pop()
-            self._v3_apply_positions(entry["after"])
-            self._v3_undo.append(entry)
-            self._v3_update_history_buttons()
-            self._v3_update_editor_status("redo: %s" % entry["label"])
-
-        def reset_layout(self):
-            before = self._v3_capture_positions()
-            algorithm = self.layout_combo.currentText().strip().lower() or "smart"
-            after = Dssr2DLayout.compute(self.model, algorithm)
-            self._v3_auto_positions = [(float(x), float(y)) for x, y in after]
-            self._v3_apply_positions(after)
-            self._v3_push_history(before, self._v3_capture_positions(), "reset layout")
-            self.fit_scene()
-            self._v3_update_editor_status("automatic layout reset")
-
-        def reset_selected_bases(self):
-            if len(self._v3_auto_positions) != len(self.nodes):
-                self._v3_auto_positions = Dssr2DLayout.compute(
-                    self.model,
-                    self.layout_combo.currentText().strip().lower() or "smart",
-                )
-            selected = [node for node in self.nodes if node.isSelected()]
-            if not selected:
-                return
-            before = self._v3_capture_positions()
-            for node in selected:
-                x, y = self._v3_auto_positions[node.nt_index]
-                node.setPos(float(x), float(y))
-            after = self._v3_capture_positions()
-            self._v3_push_history(before, after, "reset selected")
-            self._v3_update_scene_rect()
-            self._v3_update_editor_status("selected bases reset")
-
-        def nudge_selected(self, dx, dy):
-            selected = [node for node in self.nodes if node.isSelected()]
-            if not selected:
-                return
-            before = self._v3_capture_positions()
-            for node in selected:
-                node.moveBy(float(dx), float(dy))
-            after = self._v3_capture_positions()
-            self._v3_push_history(before, after, "nudge")
-            self._v3_update_editor_status("nudged %d base(s)" % len(selected))
-
-        # ---------- selection ----------
-
-        def select_indices(self, indices, replace=True):
-            wanted = set(int(index) for index in indices)
-            if replace:
-                try:
-                    self.scene.clearSelection()
-                except Exception:
-                    pass
-            for index in wanted:
-                if 0 <= index < len(self.nodes):
-                    self.nodes[index].setSelected(True)
-            self._v3_active_index = min(wanted) if wanted else None
-            self._v3_sync_pymol_selection()
-
-        def select_all_bases(self):
-            self.select_indices(range(len(self.nodes)), replace=True)
-
-        def clear_base_selection(self):
-            try:
-                self.scene.clearSelection()
-            except Exception:
-                pass
-            self._v3_active_index = None
-            self._v3_sync_pymol_selection()
-
-        def select_nucleotide(self, index):
-            self.select_indices([index], replace=True)
-
-        def _v3_pair_partner(self, index):
-            table = Dssr2DLayout._planar_pair_table(self.model)
-            if 0 <= index < len(table):
-                return int(table[index])
-            return -1
-
-        def _v3_stem_indices(self, index):
-            table = Dssr2DLayout._planar_pair_table(self.model)
-            stems = Dssr2DLayout._stem_tree(table, self.model.chain_breaks)
-            for stem in stems:
-                indices = set()
-                for first, second in stem.get("pairs", []):
-                    indices.add(int(first))
-                    indices.add(int(second))
-                if index in indices:
-                    return sorted(indices)
-            partner = self._v3_pair_partner(index)
-            return [index] if partner < 0 else sorted([index, partner])
-
-        def _v3_selection_changed(self):
-            if self._v3_rebuilding:
-                return
-            self._v3_sync_pymol_selection()
-            self._v3_update_editor_status("selection changed")
-
-        def _v3_sync_pymol_selection(self):
-            selected = sorted(
-                (node for node in self.nodes if node.isSelected()),
-                key=lambda node: node.nt_index,
-            )
-            if not selected:
-                try:
-                    cmd.select("sele", "none")
-                except Exception:
-                    pass
-                return
-
-            residues = set()
-            fallback_clauses = []
-            for node in selected:
-                nt = self.model.nts[node.nt_index]
-                chain = str(nt.get("chain", "")).strip()
-                resi = str(nt.get("resi", "")).strip()
-                if chain and resi:
-                    residues.add((chain, resi))
-                elif resi:
-                    fallback_clauses.append("resi %s" % resi)
-
-            core = ParsingAlgos._compact_sel_from_residues(residues)
-            pieces = []
-            if core:
-                pieces.append("(%s)" % core)
-            pieces.extend("(%s)" % clause for clause in fallback_clauses)
-            if pieces:
-                expression = "((%s) and (%s))" % (
-                    self.pymol_selection,
-                    " or ".join(pieces),
-                )
-                try:
-                    cmd.select("sele", "byres (%s)" % expression)
-                except Exception as error:
-                    self.status_label.setText(
-                        "PyMOL selection error: %s" % str(error)
-                    )
-
-        # ---------- layout files ----------
-
-        def save_layout(self):
-            default_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.model.title)
-            default_name = (default_name.strip("_") or "rna_2d") + ".dssr2d.json"
-            path, _chosen = QtWidgets.QFileDialog.getSaveFileName(
-                self,
-                "Save RNA 2D layout",
-                default_name,
-                "DSSR RNA 2D layout (*.dssr2d.json *.json);;All files (*)",
-            )
-            if not path:
-                return
-            if not path.lower().endswith(".json"):
-                path += ".dssr2d.json"
-            payload = {
-                "format": "DSSR-PyMOL-RNA2D",
-                "version": 1,
-                "title": self.model.title,
-                "sequence": self.model.sequence,
-                "structure": self.model.structure,
-                "layout": self.layout_combo.currentText().strip().lower(),
-                "positions": [
-                    [round(x, 6), round(y, 6)]
-                    for x, y in self._v3_capture_positions()
-                ],
-            }
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, ensure_ascii=False)
-            self._v3_update_editor_status("layout saved: %s" % path)
-
-        def load_layout(self):
-            path, _chosen = QtWidgets.QFileDialog.getOpenFileName(
-                self,
-                "Load RNA 2D layout",
-                "",
-                "DSSR RNA 2D layout (*.dssr2d.json *.json);;All files (*)",
-            )
-            if not path:
-                return
-            with open(path, "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            positions = payload.get("positions", [])
-            if len(positions) != len(self.nodes):
-                raise CmdException(
-                    "Saved layout contains %d bases; current RNA contains %d"
-                    % (len(positions), len(self.nodes))
-                )
-            saved_sequence = str(payload.get("sequence", ""))
-            if saved_sequence and saved_sequence != self.model.sequence:
-                answer = QtWidgets.QMessageBox.question(
-                    self,
-                    "Sequence mismatch",
-                    "This layout was saved for a different sequence. Load its "
-                    "coordinates anyway?",
-                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                    QtWidgets.QMessageBox.No,
-                )
-                if answer != QtWidgets.QMessageBox.Yes:
-                    return
-            before = self._v3_capture_positions()
-            self._v3_apply_positions(positions)
-            self._v3_push_history(before, self._v3_capture_positions(), "load layout")
-            self.fit_scene()
-            self._v3_update_editor_status("layout loaded: %s" % path)
-
-        # ---------- UI/state helpers ----------
-
-        def _v3_install_editor_controls(self):
-            if self._v3_editor_installed:
-                return
-            self._v3_editor_installed = True
-
-            if self.layout_combo.findText("smart") < 0:
-                self.layout_combo.insertItem(0, "smart")
-            preferred = str(
-                getattr(self, "_v3_requested_algorithm", self.algorithm)
-            ).strip().lower()
-            index = self.layout_combo.findText(preferred)
-            if index < 0:
-                index = self.layout_combo.findText("smart")
-            if index >= 0:
-                self.layout_combo.setCurrentIndex(index)
-
-            try:
-                self.redraw_btn.clicked.disconnect()
-            except Exception:
-                pass
-            self.redraw_btn.setText("reset layout")
-            self.redraw_btn.setToolTip(
-                "Recompute the automatic layout. Manual coordinates are otherwise "
-                "preserved when labels/colors/extra-pairs are toggled."
-            )
-            self.redraw_btn.clicked.connect(self.reset_layout)
-
-            group = QtWidgets.QGroupBox("manual editor")
-            row = QtWidgets.QHBoxLayout(group)
-
-            self.undo_btn = QtWidgets.QPushButton("undo")
-            self.undo_btn.clicked.connect(self.undo_layout)
-            row.addWidget(self.undo_btn)
-
-            self.redo_btn = QtWidgets.QPushButton("redo")
-            self.redo_btn.clicked.connect(self.redo_layout)
-            row.addWidget(self.redo_btn)
-
-            self.select_all_btn = QtWidgets.QPushButton("select all")
-            self.select_all_btn.clicked.connect(self.select_all_bases)
-            row.addWidget(self.select_all_btn)
-
-            self.clear_selection_btn = QtWidgets.QPushButton("clear selection")
-            self.clear_selection_btn.clicked.connect(self.clear_base_selection)
-            row.addWidget(self.clear_selection_btn)
-
-            self.reset_selected_btn = QtWidgets.QPushButton("reset selected")
-            self.reset_selected_btn.clicked.connect(self.reset_selected_bases)
-            row.addWidget(self.reset_selected_btn)
-
-            self.save_layout_btn = QtWidgets.QPushButton("save layout")
-            self.save_layout_btn.clicked.connect(self.save_layout)
-            row.addWidget(self.save_layout_btn)
-
-            self.load_layout_btn = QtWidgets.QPushButton("load layout")
-            self.load_layout_btn.clicked.connect(self.load_layout)
-            row.addWidget(self.load_layout_btn)
-
-            self.snap_cb = QtWidgets.QCheckBox("snap")
-            self.snap_cb.setChecked(False)
-            self.snap_cb.setToolTip(
-                "Optional coordinate grid. Off by default: bases move completely freely."
-            )
-            row.addWidget(self.snap_cb)
-
-            self.grid_spin = QtWidgets.QDoubleSpinBox()
-            self.grid_spin.setMinimum(1.0)
-            self.grid_spin.setMaximum(100.0)
-            self.grid_spin.setSingleStep(1.0)
-            self.grid_spin.setValue(5.0)
-            self.grid_spin.setSuffix(" px")
-            self.grid_spin.setEnabled(False)
-            self.snap_cb.toggled.connect(self.grid_spin.setEnabled)
-            row.addWidget(self.grid_spin)
-
-            help_label = QtWidgets.QLabel(
-                "drag base • Shift/Ctrl multi-select • drag empty area=box select • "
-                "middle or Space+drag=pan • arrows=nudge"
-            )
-            help_label.setWordWrap(True)
-            row.addWidget(help_label, 1)
-
-            root = self.layout()
-            if root is not None:
-                try:
-                    root.insertWidget(1, group)
-                except Exception:
-                    root.addWidget(group)
-            self.editor_group = group
-
-        def _v3_update_history_buttons(self):
-            try:
-                self.undo_btn.setEnabled(bool(self._v3_undo))
-                self.redo_btn.setEnabled(bool(self._v3_redo))
-                if self._v3_undo:
-                    self.undo_btn.setToolTip(
-                        "Undo: %s" % self._v3_undo[-1].get("label", "edit")
-                    )
-                if self._v3_redo:
-                    self.redo_btn.setToolTip(
-                        "Redo: %s" % self._v3_redo[-1].get("label", "edit")
-                    )
-            except Exception:
-                pass
-
-        def _v3_update_editor_status(self, action=""):
-            selected = sum(1 for node in self.nodes if node.isSelected())
-            variant = str(
-                getattr(self.model, "_dssr2d_layout_variant", self.algorithm)
-            )
-            text = (
-                self.model.summary()
-                + " | layout=%s (%s)" % (self.algorithm, variant)
-                + " | selected=%d" % selected
-                + " | drag any base freely; Shift/Ctrl=multi-select; middle/Space=pan"
-            )
-            if action:
-                text += " | %s" % action
-            self.status_label.setText(text)
-
-        def _v3_schedule_scene_rect(self):
-            if self._v3_scene_rect_pending:
-                return
-            self._v3_scene_rect_pending = True
-
-            def update():
-                self._v3_scene_rect_pending = False
-                self._v3_update_scene_rect()
-
-            try:
-                QtCore.QTimer.singleShot(0, update)
-            except Exception:
-                update()
-
-        def _v3_update_scene_rect(self):
-            try:
-                rect = self.scene.itemsBoundingRect().adjusted(
-                    -120.0, -120.0, 120.0, 120.0
-                )
-                self.scene.setSceneRect(rect)
-            except Exception:
-                pass
-
-
-    DssrPython2DDialog = DssrPython2DDialogV3
-    DssrPython2DDialog._smart_editor_v3_installed = True
-
-
-# ---------------------------------------------------------------------------
-# Main DSSR GUI and PyMOL command defaults
-# ---------------------------------------------------------------------------
-
-if not getattr(DssrPython2DIntegration, "_smart_editor_v3_installed", False):
-    _DSSR_PY2D_INSTALL_CONTROLS_BEFORE_V3 = (
-        DssrPython2DIntegration.install_gui_controls
-    )
-    _DSSR_PY2D_OPEN_DIALOG_BEFORE_V3 = DssrPython2DIntegration._open_dialog
-
-    def _dssr2d_v3_install_gui_controls(dialog):
-        _DSSR_PY2D_INSTALL_CONTROLS_BEFORE_V3(dialog)
-        try:
-            combo = dialog.py2d_layout_combo
-            if combo.findText("smart") < 0:
-                combo.insertItem(0, "smart")
-            combo.setCurrentIndex(combo.findText("smart"))
-            dialog.py2d_tertiary_cb.setChecked(False)
-            dialog.py2d_tertiary_cb.setToolTip(
-                "Optional non-secondary DSSR contacts. Off by default so the "
-                "secondary-structure scaffold stays readable."
-            )
-            dialog.py2d_open_btn.setToolTip(
-                "Open the pure-Python interactive editor. Bases can be dragged "
-                "freely; no Java, Jmol, browser, or network is required."
-            )
-        except Exception:
-            pass
-
-    def _dssr2d_v3_open_dialog(
-        dssr_data,
-        selection="all",
-        title="RNA secondary structure",
-        algorithm="smart",
-        number_every=10,
-        show_tertiary=0,
-        parent=None,
-    ):
-        return _DSSR_PY2D_OPEN_DIALOG_BEFORE_V3(
-            dssr_data=dssr_data,
-            selection=selection,
-            title=title,
-            algorithm=algorithm,
-            number_every=number_every,
-            show_tertiary=show_tertiary,
-            parent=parent,
-        )
-
-    DssrPython2DIntegration.install_gui_controls = staticmethod(
-        _dssr2d_v3_install_gui_controls
-    )
-    DssrPython2DIntegration._open_dialog = staticmethod(
-        _dssr2d_v3_open_dialog
-    )
-    DssrPython2DIntegration._smart_editor_v3_installed = True
-
-
-_DSSR_PY2D_COMMAND_BEFORE_V3 = dssr_2d
-
-
-def dssr_2d(
-    selection="all",
-    state=-1,
-    exe="x3dna-dssr",
-    layout="smart",
-    number_every=10,
-    show_tertiary=0,
-    title="",
-    quiet=1,
-):
-    """Open the pure-Python RNA 2D publication layout and manual editor.
-
-    ``layout=smart`` recognizes tRNA-like topology and otherwise uses the
-    general radiate layout.  Every nucleotide can be dragged independently;
-    selected groups move together.  No Java/Jmol dependency is used.
-    """
-    return _DSSR_PY2D_COMMAND_BEFORE_V3(
-        selection=selection,
-        state=state,
-        exe=exe,
-        layout=layout,
-        number_every=number_every,
-        show_tertiary=show_tertiary,
-        title=title,
-        quiet=quiet,
-    )
-
-
-DssrFunctions.dssr_2d = staticmethod(dssr_2d)
-cmd.extend("dssr_2d", dssr_2d)
-
-try:
-    print(
-        "Loaded DSSR Python RNA 2D editor %s: smart tRNA layout; free base "
-        "dragging; multi-select; undo/redo; save/load"
-        % __DSSR_PY2D_EDITOR_PATCH_VERSION__
-    )
-except Exception:
-    pass
-
-# ============================================================================
-# DSSR pure-Python RNA 2D editor hotfix v3.0.1
-#
-# APPEND-ONLY HOTFIX: nothing above is removed or rewritten.
-#
-# Why this is needed:
-# The v3 editor replaces the public class names (DssrPython2DDialog,
-# Dssr2DGraphicsView, Dssr2DNodeItem) with enhanced subclasses.  Some legacy
-# methods use the two-argument spelling ``super(ClassName, self)``.  Because
-# ``ClassName`` is looked up from the module globals at call time, rebinding the
-# public name to the subclass can make the legacy method resolve to itself
-# again, producing ``RecursionError: maximum recursion depth exceeded`` during
-# dialog/node construction.  The wrappers below temporarily bind each legacy
-# method's original class name while that method runs.
-# ============================================================================
-
-__DSSR_PY2D_EDITOR_HOTFIX_VERSION__ = "v3.0.1-bound-super-hotfix"
-
-import functools as _dssr2d_functools
-import traceback as _dssr2d_traceback
-
-
-def _dssr2d_bind_legacy_super(owner_class, method_name, global_class_name):
-    """Make a legacy ``super(ClassName, self)`` method alias-safe.
-
-    This does not alter the method body.  It only restores the class-name
-    binding expected by that method for the duration of the call, then restores
-    the enhanced public class alias.  PyMOL's GUI runs these calls on the Qt GUI
-    thread, so the temporary binding is deterministic in normal plugin use.
-    """
-    if owner_class is None:
-        return False
+def _layout_no_mouse(item):
     try:
-        method = getattr(owner_class, method_name)
-    except Exception:
-        return False
-    if getattr(method, "_dssr2d_bound_super_hotfix", False):
-        return True
-
-    @_dssr2d_functools.wraps(method)
-    def alias_safe_method(*args, **kwargs):
-        namespace = globals()
-        marker = object()
-        previous = namespace.get(global_class_name, marker)
-        namespace[global_class_name] = owner_class
-        try:
-            return method(*args, **kwargs)
-        finally:
-            if previous is marker:
-                namespace.pop(global_class_name, None)
-            else:
-                namespace[global_class_name] = previous
-
-    alias_safe_method._dssr2d_bound_super_hotfix = True
-    alias_safe_method._dssr2d_original_method = method
-    setattr(owner_class, method_name, alias_safe_method)
-    return True
-
-
-_DSSR_PY2D_HOTFIXED_METHODS = []
-
-if QtWidgets is not None and QtCore is not None and QtGui is not None:
-    # Legacy dialog constructor: fixes super(DssrPython2DDialog, self).
-    if "_DSSR_PY2D_DIALOG_BEFORE_V3" in globals():
-        if _dssr2d_bind_legacy_super(
-            _DSSR_PY2D_DIALOG_BEFORE_V3,
-            "__init__",
-            "DssrPython2DDialog",
-        ):
-            _DSSR_PY2D_HOTFIXED_METHODS.append("dialog.__init__")
-
-    # Legacy graphics-view methods: fixes super(Dssr2DGraphicsView, self).
-    if "_DSSR_PY2D_VIEW_BEFORE_V3" in globals():
-        for _method_name in ("__init__", "wheelEvent"):
-            if _dssr2d_bind_legacy_super(
-                _DSSR_PY2D_VIEW_BEFORE_V3,
-                _method_name,
-                "Dssr2DGraphicsView",
-            ):
-                _DSSR_PY2D_HOTFIXED_METHODS.append(
-                    "view.%s" % _method_name
-                )
-
-    # Legacy nucleotide methods: fixes super(Dssr2DNodeItem, self).
-    if "_DSSR_PY2D_NODE_BEFORE_V3" in globals():
-        for _method_name in ("__init__", "itemChange", "mousePressEvent"):
-            if _dssr2d_bind_legacy_super(
-                _DSSR_PY2D_NODE_BEFORE_V3,
-                _method_name,
-                "Dssr2DNodeItem",
-            ):
-                _DSSR_PY2D_HOTFIXED_METHODS.append(
-                    "node.%s" % _method_name
-                )
-
-
-# Replace the shallow GUI error message with a complete diagnostic traceback.
-# This is intentionally appended as a runtime override; the original method is
-# retained above unchanged.
-if "DssrPython2DIntegration" in globals():
-
-    @staticmethod
-    def _dssr2d_gui_open_with_traceback(dialog):
-        try:
-            if not cmd.get_object_list():
-                raise CmdException(
-                    "No structure loaded. Please load a PDB/CIF file before "
-                    "opening 2D view"
-                )
-
-            selection, exe, state, precolor_on = dialog._get_dssr_context()
-            dssr_data = dialog._get_dssr_data(
-                selection, state, exe, precolor_on
-            )
-            algorithm = (
-                dialog.py2d_layout_combo.currentText().strip().lower()
-                or "smart"
-            )
-            number_every = int(dialog.py2d_number_spin.value())
-            show_tertiary = 1 if dialog.py2d_tertiary_cb.isChecked() else 0
-            title = "%s state %d — secondary structure derived by DSSR" % (
-                selection,
-                state,
-            )
-
-            viewer = DssrPython2DIntegration._open_dialog(
-                dssr_data=dssr_data,
-                selection=selection,
-                title=title,
-                algorithm=algorithm,
-                number_every=number_every,
-                show_tertiary=show_tertiary,
-                parent=dialog,
-            )
-            try:
-                dialog.status_label.setText(
-                    "Opened pure-Python RNA 2D editor: %s"
-                    % viewer.model.summary()
-                )
-            except Exception:
-                pass
-            try:
-                dialog._append_report(
-                    "Python 2D opened: %s; layout=%s; editor hotfix=%s"
-                    % (
-                        viewer.model.summary(),
-                        algorithm,
-                        __DSSR_PY2D_EDITOR_HOTFIX_VERSION__,
-                    )
-                )
-            except Exception:
-                pass
-            return viewer
-
-        except Exception as error:
-            trace = _dssr2d_traceback.format_exc()
-            msg = "RNA 2D editor error: %s" % str(error)
-            try:
-                print(msg)
-                print(trace)
-            except Exception:
-                pass
-            try:
-                dialog.status_label.setText(msg)
-            except Exception:
-                pass
-            try:
-                dialog._append_report(msg + "\n\n" + trace)
-            except Exception:
-                pass
-            try:
-                QtWidgets.QMessageBox.critical(
-                    dialog,
-                    "RNA 2D editor",
-                    msg
-                    + "\n\nA complete traceback was printed in the PyMOL "
-                    "console and added to the report panel.",
-                )
-            except Exception:
-                pass
-            return None
-
-    DssrPython2DIntegration.gui_open = _dssr2d_gui_open_with_traceback
-
-
-try:
-    print(
-        "Loaded DSSR RNA 2D editor hotfix %s (%s)"
-        % (
-            __DSSR_PY2D_EDITOR_HOTFIX_VERSION__,
-            ", ".join(_DSSR_PY2D_HOTFIXED_METHODS) or "no Qt methods patched",
-        )
-    )
-except Exception:
-    pass
-
-# ============================================================================
-# DSSR pure-Python RNA 2D editor v4.0 — Gel UI + structure-aware interaction
-#
-# APPEND-ONLY PATCH: all code above remains intact.
-#
-# Design goals:
-#   * glossy, soft "gel" nucleotides with springy hover/press feedback
-#   * left-drag on empty canvas pans; Shift/Ctrl-drag makes box selection
-#   * structure-aware drag modes: soft, base, pair, loop, stem, branch, selection
-#   * Alt-drag always moves only the clicked nucleotide
-#   * smooth kinetic panning, centered zoom, fit/jump conveniences
-#   * no Java, Jmol, browser, network, or third-party Python GUI dependency
-# ============================================================================
-
-__DSSR_PY2D_GEL_EDITOR_VERSION__ = "v4.0-gel-structure-editor"
-
-import time as _dssr2d_time
-from collections import deque as _dssr2d_deque
-
-
-if QtWidgets is not None and QtCore is not None and QtGui is not None:
-    _DSSR_PY2D_VIEW_BEFORE_V4 = Dssr2DGraphicsView
-    _DSSR_PY2D_NODE_BEFORE_V4 = Dssr2DNodeItem
-    _DSSR_PY2D_DIALOG_BEFORE_V4 = DssrPython2DDialog
-
-    # ---------------------------------------------------------------------
-    # Softer edge rendering: a faint halo under a crisp rounded line.
-    # This is patched in place so the old edge constructor is not rebound.
-    # ---------------------------------------------------------------------
-
-    def _dssr2d_v4_edge_paint(self, painter, option, widget=None):
-        try:
-            painter.save()
-            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            kind = str(getattr(self, "kind", "backbone"))
-            layer = int(getattr(self, "layer", 0))
-
-            if kind == "backbone":
-                color = QtGui.QColor(72, 88, 98, 170)
-                width = 1.65
-                style = QtCore.Qt.SolidLine
-                halo_alpha = 22
-            elif kind == "tertiary":
-                color = QtGui.QColor(145, 88, 178, 145)
-                width = 1.35
-                style = QtCore.Qt.DashLine
-                halo_alpha = 18
-            elif layer > 0:
-                palette = [
-                    QtGui.QColor(226, 75, 84, 215),
-                    QtGui.QColor(238, 139, 47, 215),
-                    QtGui.QColor(174, 82, 199, 215),
-                    QtGui.QColor(42, 158, 164, 215),
-                ]
-                color = palette[(layer - 1) % len(palette)]
-                width = 2.05
-                style = QtCore.Qt.SolidLine
-                halo_alpha = 28
-            else:
-                color = QtGui.QColor(69, 112, 216, 220)
-                width = 2.05
-                style = QtCore.Qt.SolidLine
-                halo_alpha = 30
-
-            halo_color = QtGui.QColor(color)
-            halo_color.setAlpha(halo_alpha)
-            halo = QtGui.QPen(halo_color)
-            halo.setWidthF(width + 4.2)
-            halo.setStyle(style)
-            halo.setCapStyle(QtCore.Qt.RoundCap)
-            halo.setJoinStyle(QtCore.Qt.RoundJoin)
-            painter.setPen(halo)
-            painter.setBrush(QtCore.Qt.NoBrush)
-            painter.drawPath(self.path())
-
-            main = QtGui.QPen(color)
-            main.setWidthF(width)
-            main.setStyle(style)
-            main.setCapStyle(QtCore.Qt.RoundCap)
-            main.setJoinStyle(QtCore.Qt.RoundJoin)
-            painter.setPen(main)
-            painter.drawPath(self.path())
-            painter.restore()
-        except Exception:
-            try:
-                painter.restore()
-            except Exception:
-                pass
-            try:
-                QtWidgets.QGraphicsPathItem.paint(self, painter, option, widget)
-            except Exception:
-                pass
-
-    try:
-        Dssr2DEdgeItem.paint = _dssr2d_v4_edge_paint
-        Dssr2DEdgeItem._gel_editor_v4_installed = True
+        item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
     except Exception:
         pass
 
 
-    class Dssr2DGraphicsViewV4(_DSSR_PY2D_VIEW_BEFORE_V4):
-        """Easy canvas navigation: background drag pans, modifiers box-select."""
-
-        def __init__(self, scene, parent=None):
-            super(Dssr2DGraphicsViewV4, self).__init__(scene, parent)
-            self.editor = parent
-            self._v4_canvas_panning = False
-            self._v4_pan_last = None
-            self._v4_pan_samples = []
-            self._v4_rubber = False
-            self._v4_velocity = QtCore.QPointF(0.0, 0.0)
-            self._v4_inertia_timer = QtCore.QTimer(self)
-            self._v4_inertia_timer.setInterval(16)
-            self._v4_inertia_timer.timeout.connect(self._v4_inertia_tick)
-            try:
-                self.setDragMode(QtWidgets.QGraphicsView.NoDrag)
-                self.setInteractive(True)
-                self.setRubberBandSelectionMode(QtCore.Qt.IntersectsItemShape)
-                self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
-                self.setResizeAnchor(QtWidgets.QGraphicsView.AnchorViewCenter)
-                self.setViewportUpdateMode(
-                    QtWidgets.QGraphicsView.BoundingRectViewportUpdate
-                )
-                self.setFocusPolicy(QtCore.Qt.StrongFocus)
-            except Exception:
-                pass
-
-        @staticmethod
-        def _v4_is_node_item(item):
-            current = item
-            for _ in range(6):
-                if current is None:
-                    return False
-                if isinstance(current, Dssr2DNodeItemV4):
-                    return True
-                try:
-                    current = current.parentItem()
-                except Exception:
-                    current = None
-            return False
-
-        def _v4_stop_inertia(self):
-            try:
-                self._v4_inertia_timer.stop()
-            except Exception:
-                pass
-            self._v4_velocity = QtCore.QPointF(0.0, 0.0)
-
-        def _v4_begin_pan(self, event):
-            self._v4_stop_inertia()
-            self._v4_canvas_panning = True
-            self._v4_pan_last = event.pos()
-            self._v4_pan_samples = []
-            try:
-                self.setCursor(QtCore.Qt.ClosedHandCursor)
-            except Exception:
-                pass
-            event.accept()
-
-        def mousePressEvent(self, event):
-            try:
-                item = self.itemAt(event.pos())
-                button = event.button()
-                modifiers = event.modifiers()
-                on_node = self._v4_is_node_item(item)
-            except Exception:
-                item = None
-                button = None
-                modifiers = 0
-                on_node = False
-
-            if on_node:
-                self._v4_stop_inertia()
-                super(Dssr2DGraphicsViewV4, self).mousePressEvent(event)
-                return
-
-            select_modifier = bool(
-                modifiers
-                & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
-            )
-            if button == QtCore.Qt.LeftButton and select_modifier:
-                self._v4_stop_inertia()
-                self._v4_rubber = True
-                try:
-                    self.setDragMode(QtWidgets.QGraphicsView.RubberBandDrag)
-                except Exception:
-                    pass
-                super(Dssr2DGraphicsViewV4, self).mousePressEvent(event)
-                return
-
-            if button in (QtCore.Qt.LeftButton, QtCore.Qt.RightButton, QtCore.Qt.MiddleButton):
-                self._v4_begin_pan(event)
-                return
-
-            super(Dssr2DGraphicsViewV4, self).mousePressEvent(event)
-
-        def mouseMoveEvent(self, event):
-            if self._v4_canvas_panning and self._v4_pan_last is not None:
-                delta = event.pos() - self._v4_pan_last
-                self._v4_pan_last = event.pos()
-                now = _dssr2d_time.monotonic()
-                self._v4_pan_samples.append((now, float(delta.x()), float(delta.y())))
-                self._v4_pan_samples = self._v4_pan_samples[-8:]
-                try:
-                    self.horizontalScrollBar().setValue(
-                        self.horizontalScrollBar().value() - delta.x()
-                    )
-                    self.verticalScrollBar().setValue(
-                        self.verticalScrollBar().value() - delta.y()
-                    )
-                except Exception:
-                    pass
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV4, self).mouseMoveEvent(event)
-
-        def mouseReleaseEvent(self, event):
-            if self._v4_rubber:
-                self._v4_rubber = False
-                super(Dssr2DGraphicsViewV4, self).mouseReleaseEvent(event)
-                try:
-                    self.setDragMode(QtWidgets.QGraphicsView.NoDrag)
-                except Exception:
-                    pass
-                return
-
-            if self._v4_canvas_panning:
-                self._v4_canvas_panning = False
-                self._v4_pan_last = None
-                try:
-                    self.unsetCursor()
-                except Exception:
-                    pass
-                self._v4_start_inertia()
-                event.accept()
-                return
-            super(Dssr2DGraphicsViewV4, self).mouseReleaseEvent(event)
-
-        def _v4_start_inertia(self):
-            samples = list(self._v4_pan_samples)
-            self._v4_pan_samples = []
-            if len(samples) < 2:
-                return
-            cutoff = samples[-1][0] - 0.12
-            recent = [sample for sample in samples if sample[0] >= cutoff]
-            if not recent:
-                return
-            dx = sum(sample[1] for sample in recent)
-            dy = sum(sample[2] for sample in recent)
-            elapsed = max(0.016, recent[-1][0] - recent[0][0])
-            vx = max(-42.0, min(42.0, dx / elapsed * 0.016))
-            vy = max(-42.0, min(42.0, dy / elapsed * 0.016))
-            if math.hypot(vx, vy) < 1.5:
-                return
-            self._v4_velocity = QtCore.QPointF(vx, vy)
-            self._v4_inertia_timer.start()
-
-        def _v4_inertia_tick(self):
-            vx = float(self._v4_velocity.x()) * 0.89
-            vy = float(self._v4_velocity.y()) * 0.89
-            self._v4_velocity = QtCore.QPointF(vx, vy)
-            try:
-                self.horizontalScrollBar().setValue(
-                    self.horizontalScrollBar().value() - int(round(vx))
-                )
-                self.verticalScrollBar().setValue(
-                    self.verticalScrollBar().value() - int(round(vy))
-                )
-            except Exception:
-                self._v4_stop_inertia()
-                return
-            if math.hypot(vx, vy) < 0.35:
-                self._v4_stop_inertia()
-
-        def wheelEvent(self, event):
-            try:
-                delta = event.angleDelta().y()
-            except Exception:
-                try:
-                    delta = event.delta()
-                except Exception:
-                    delta = 0
-            if not delta:
-                return
-            current = abs(float(self.transform().m11()))
-            factor = math.pow(1.00105, float(delta))
-            target = current * factor
-            if target < 0.08:
-                factor = 0.08 / max(1.0e-9, current)
-            elif target > 14.0:
-                factor = 14.0 / max(1.0e-9, current)
-            try:
-                self.scale(factor, factor)
-                event.accept()
-            except Exception:
-                super(Dssr2DGraphicsViewV4, self).wheelEvent(event)
-
-        def keyPressEvent(self, event):
-            key = event.key()
-            if key == QtCore.Qt.Key_F:
-                try:
-                    self.editor.fit_scene()
-                    event.accept()
-                    return
-                except Exception:
-                    pass
-            if key == QtCore.Qt.Key_C:
-                try:
-                    self.editor.fit_selected()
-                    event.accept()
-                    return
-                except Exception:
-                    pass
-            mode_keys = {
-                QtCore.Qt.Key_1: "soft",
-                QtCore.Qt.Key_2: "base",
-                QtCore.Qt.Key_3: "pair",
-                QtCore.Qt.Key_4: "loop",
-                QtCore.Qt.Key_5: "stem",
-                QtCore.Qt.Key_6: "branch",
-            }
-            if key in mode_keys:
-                try:
-                    self.editor.set_drag_mode(mode_keys[key])
-                    event.accept()
-                    return
-                except Exception:
-                    pass
-            super(Dssr2DGraphicsViewV4, self).keyPressEvent(event)
-
-        def mouseDoubleClickEvent(self, event):
-            try:
-                item = self.itemAt(event.pos())
-            except Exception:
-                item = None
-            if self._v4_is_node_item(item):
-                current = item
-                while current is not None and not isinstance(current, Dssr2DNodeItemV4):
-                    try:
-                        current = current.parentItem()
-                    except Exception:
-                        current = None
-                if current is not None:
-                    try:
-                        self.editor.select_indices(
-                            self.editor._v4_stem_group(current.nt_index),
-                            replace=True,
-                        )
-                        self.editor.fit_selected()
-                        event.accept()
-                        return
-                    except Exception:
-                        pass
-            try:
-                self.editor.fit_scene()
-                event.accept()
-                return
-            except Exception:
-                pass
-            super(Dssr2DGraphicsViewV4, self).mouseDoubleClickEvent(event)
-
-
-    class Dssr2DNodeItemV4(_DSSR_PY2D_NODE_BEFORE_V4):
-        """Glossy nucleotide with spring feedback and structure-aware dragging."""
-
-        RADIUS = 14.0
-
-        def __init__(self, viewer, nt, x, y):
-            super(Dssr2DNodeItemV4, self).__init__(viewer, nt, x, y)
-            self._v4_hover = False
-            self._v4_pressed = False
-            self._v4_visual_scale = 1.0
-            self._v4_scale_target = 1.0
-            self._v4_scale_velocity = 0.0
-            self._v4_drag_weights = {}
-            self._v4_last_drag_delta = QtCore.QPointF(0.0, 0.0)
-            self._v4_last_move_pos = None
-            self._v4_last_move_time = None
-            self._v4_drag_speed = 0.0
-            try:
-                self.setAcceptHoverEvents(True)
-                self.setCursor(QtCore.Qt.OpenHandCursor)
-                self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-            except Exception:
-                pass
-
-        def boundingRect(self):
-            r = float(self.RADIUS)
-            return QtCore.QRectF(-r - 7.0, -r - 7.0, 2.0 * r + 14.0, 2.0 * r + 14.0)
-
-        def shape(self):
-            path = QtGui.QPainterPath()
-            r = float(self.RADIUS) + 3.5
-            path.addEllipse(QtCore.QRectF(-r, -r, 2.0 * r, 2.0 * r))
-            return path
-
-        @staticmethod
-        def _v4_alpha_color(color, alpha):
-            result = QtGui.QColor(color)
-            result.setAlpha(int(alpha))
-            return result
-
-        def paint(self, painter, option, widget=None):
-            r = float(self.RADIUS)
-            try:
-                painter.save()
-                painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-
-                selected = bool(self.isSelected())
-                hover = bool(self._v4_hover)
-                pressed = bool(self._v4_pressed)
-                base = QtGui.QColor(self._base_fill())
-
-                # Soft shadow, drawn manually to remain fast while nodes move.
-                shadow_alpha = 58 if (hover or selected) else 38
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(20, 32, 46, shadow_alpha)))
-                painter.drawEllipse(
-                    QtCore.QRectF(-r + 2.6, -r + 4.0, 2.0 * r, 2.0 * r)
-                )
-
-                # Selection/hover aura.
-                if selected or hover:
-                    aura = QtGui.QColor(61, 164, 245, 82 if selected else 42)
-                    painter.setPen(QtCore.Qt.NoPen)
-                    painter.setBrush(QtGui.QBrush(aura))
-                    aura_r = r + (4.6 if selected else 3.2)
-                    painter.drawEllipse(
-                        QtCore.QRectF(-aura_r, -aura_r, 2.0 * aura_r, 2.0 * aura_r)
-                    )
-
-                # Radial gel gradient: a bright upper-left core and deeper rim.
-                gradient = QtGui.QRadialGradient(
-                    QtCore.QPointF(-r * 0.38, -r * 0.46), r * 1.55
-                )
-                core = base.lighter(148)
-                mid = base.lighter(112)
-                rim = base.darker(112)
-                core.setAlpha(252)
-                mid.setAlpha(250)
-                rim.setAlpha(248)
-                gradient.setColorAt(0.00, QtGui.QColor(255, 255, 255, 248))
-                gradient.setColorAt(0.20, core)
-                gradient.setColorAt(0.66, mid)
-                gradient.setColorAt(1.00, rim)
-
-                border_color = QtGui.QColor(40, 55, 68, 205)
-                border_width = 1.35
-                if selected:
-                    border_color = QtGui.QColor(39, 133, 231, 245)
-                    border_width = 2.25
-                elif hover:
-                    border_color = QtGui.QColor(43, 151, 171, 235)
-                    border_width = 1.85
-                if pressed:
-                    border_color = QtGui.QColor(26, 112, 208, 245)
-
-                pen = QtGui.QPen(border_color)
-                pen.setWidthF(border_width)
-                pen.setCapStyle(QtCore.Qt.RoundCap)
-                painter.setPen(pen)
-                painter.setBrush(QtGui.QBrush(gradient))
-                painter.drawEllipse(QtCore.QRectF(-r, -r, 2.0 * r, 2.0 * r))
-
-                # Glassy highlight and a faint lower glow.
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 125)))
-                painter.drawEllipse(
-                    QtCore.QRectF(-r * 0.58, -r * 0.66, r * 0.92, r * 0.48)
-                )
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 40)))
-                painter.drawEllipse(
-                    QtCore.QRectF(-r * 0.52, r * 0.18, r * 1.04, r * 0.48)
-                )
-                painter.restore()
-            except Exception:
-                try:
-                    painter.restore()
-                except Exception:
-                    pass
-                try:
-                    QtWidgets.QGraphicsEllipseItem.paint(self, painter, option, widget)
-                except Exception:
-                    pass
-
-        def _v4_set_target_scale(self, target, kick=0.0):
-            self._v4_scale_target = float(target)
-            self._v4_scale_velocity += float(kick)
-            try:
-                self.viewer._v4_ensure_animation()
-            except Exception:
-                pass
-
-        def _v4_advance_visual(self):
-            enabled = True
-            try:
-                enabled = bool(self.viewer.jelly_cb.isChecked())
-            except Exception:
-                pass
-            target = self._v4_scale_target if enabled else 1.0
-            stiffness = 0.24 if enabled else 0.42
-            damping = 0.68 if enabled else 0.55
-            self._v4_scale_velocity = (
-                self._v4_scale_velocity
-                + (target - self._v4_visual_scale) * stiffness
-            ) * damping
-            self._v4_visual_scale += self._v4_scale_velocity
-            if (
-                abs(target - self._v4_visual_scale) < 0.0006
-                and abs(self._v4_scale_velocity) < 0.0006
-            ):
-                self._v4_visual_scale = target
-                self._v4_scale_velocity = 0.0
-            try:
-                self.setScale(max(0.82, min(1.24, self._v4_visual_scale)))
-                self.update()
-            except Exception:
-                pass
-            return not (
-                abs(target - self._v4_visual_scale) < 0.0007
-                and abs(self._v4_scale_velocity) < 0.0007
-            )
-
-        def hoverEnterEvent(self, event):
-            self._v4_hover = True
-            self.setZValue(16.0)
-            self._v4_set_target_scale(1.075, kick=0.018)
-            self.update()
-            try:
-                super(Dssr2DNodeItemV4, self).hoverEnterEvent(event)
-            except Exception:
-                pass
-
-        def hoverLeaveEvent(self, event):
-            self._v4_hover = False
-            self.setZValue(12.0 if self.isSelected() else 5.0)
-            self._v4_set_target_scale(1.045 if self.isSelected() else 1.0)
-            self.update()
-            try:
-                super(Dssr2DNodeItemV4, self).hoverLeaveEvent(event)
-            except Exception:
-                pass
-
-        def itemChange(self, change, value):
-            result = super(Dssr2DNodeItemV4, self).itemChange(change, value)
-            try:
-                if change == QtWidgets.QGraphicsItem.ItemSelectedHasChanged:
-                    selected = bool(value)
-                    self.setZValue(12.0 if selected else (16.0 if self._v4_hover else 5.0))
-                    self._v4_set_target_scale(
-                        1.045 if selected else (1.075 if self._v4_hover else 1.0),
-                        kick=0.010 if selected else 0.0,
-                    )
-                    self.update()
-            except Exception:
-                pass
-            return result
-
-        def mousePressEvent(self, event):
-            self._v4_pressed = True
-            self._v4_set_target_scale(0.935, kick=-0.035)
-            self._v4_last_move_pos = event.scenePos()
-            self._v4_last_move_time = _dssr2d_time.monotonic()
-            self._v4_drag_speed = 0.0
-            super(Dssr2DNodeItemV4, self).mousePressEvent(event)
-            try:
-                if event.button() == QtCore.Qt.LeftButton and self._v3_dragging:
-                    self.viewer._v4_prepare_node_drag(self, event.modifiers())
-            except Exception:
-                pass
-
-        def mouseMoveEvent(self, event):
-            if getattr(self, "_v3_pan_dragging", False):
-                super(Dssr2DNodeItemV4, self).mouseMoveEvent(event)
-                return
-            if not getattr(self, "_v3_dragging", False) or self._v3_drag_origin is None:
-                super(Dssr2DNodeItemV4, self).mouseMoveEvent(event)
-                return
-
-            delta = event.scenePos() - self._v3_drag_origin
-            self._v4_last_drag_delta = QtCore.QPointF(delta)
-            now = _dssr2d_time.monotonic()
-            if self._v4_last_move_pos is not None and self._v4_last_move_time is not None:
-                dt = max(0.001, now - self._v4_last_move_time)
-                step = event.scenePos() - self._v4_last_move_pos
-                instant = math.hypot(step.x(), step.y()) / dt
-                self._v4_drag_speed = 0.72 * self._v4_drag_speed + 0.28 * instant
-            self._v4_last_move_pos = event.scenePos()
-            self._v4_last_move_time = now
-
-            snap = False
-            grid = 1.0
-            try:
-                snap = bool(self.viewer.snap_cb.isChecked())
-                grid = max(1.0, float(self.viewer.grid_spin.value()))
-            except Exception:
-                pass
-
-            jelly = True
-            try:
-                jelly = bool(self.viewer.jelly_cb.isChecked())
-            except Exception:
-                pass
-
-            for index, start in self._v3_drag_starts.items():
-                if index < 0 or index >= len(self.viewer.nodes):
-                    continue
-                weight = float(self._v4_drag_weights.get(index, 1.0))
-                x = start.x() + delta.x() * weight
-                y = start.y() + delta.y() * weight
-                if snap:
-                    x = round(x / grid) * grid
-                    y = round(y / grid) * grid
-                node = self.viewer.nodes[index]
-                if jelly and weight < 0.999:
-                    follow = 0.44 + 0.34 * weight
-                    current = node.pos()
-                    x = current.x() + (x - current.x()) * follow
-                    y = current.y() + (y - current.y()) * follow
-                node.setPos(x, y)
-            event.accept()
-
-        def mouseReleaseEvent(self, event):
-            was_dragging = bool(getattr(self, "_v3_dragging", False))
-            if was_dragging:
-                # Finish followers at their intended weighted endpoint before the
-                # v3 history snapshot is recorded.
-                delta = QtCore.QPointF(self._v4_last_drag_delta)
-                snap = False
-                grid = 1.0
-                try:
-                    snap = bool(self.viewer.snap_cb.isChecked())
-                    grid = max(1.0, float(self.viewer.grid_spin.value()))
-                except Exception:
-                    pass
-                for index, start in self._v3_drag_starts.items():
-                    if index < 0 or index >= len(self.viewer.nodes):
-                        continue
-                    weight = float(self._v4_drag_weights.get(index, 1.0))
-                    x = start.x() + delta.x() * weight
-                    y = start.y() + delta.y() * weight
-                    if snap:
-                        x = round(x / grid) * grid
-                        y = round(y / grid) * grid
-                    self.viewer.nodes[index].setPos(x, y)
-
-            super(Dssr2DNodeItemV4, self).mouseReleaseEvent(event)
-            self._v4_pressed = False
-            target = 1.075 if self._v4_hover else (1.045 if self.isSelected() else 1.0)
-            kick = min(0.11, max(0.02, self._v4_drag_speed * 0.00012)) if was_dragging else 0.025
-            self._v4_set_target_scale(target, kick=kick)
-            self._v4_drag_weights = {}
-            self._v4_last_move_pos = None
-            self._v4_last_move_time = None
-            self.update()
-
-        def contextMenuEvent(self, event):
-            menu = QtWidgets.QMenu()
-            header = menu.addAction(
-                "%s  ·  nt %s"
-                % (
-                    str(self.nt.get("base", "N")),
-                    str(self.nt.get("resi") or self.nt_index + 1),
-                )
-            )
-            header.setEnabled(False)
-            menu.addSeparator()
-
-            actions = {}
-            for key, text in (
-                ("base", "Select base"),
-                ("pair", "Select base pair"),
-                ("loop", "Select loop / unpaired region"),
-                ("stem", "Select stem"),
-                ("branch", "Select whole branch"),
-            ):
-                actions[key] = menu.addAction(text)
-            menu.addSeparator()
-            center_action = menu.addAction("Center selection")
-            reset_action = menu.addAction("Reset selection to automatic layout")
-            undo_action = menu.addAction("Undo")
-
-            try:
-                chosen = menu.exec_(event.screenPos())
-            except Exception:
-                try:
-                    chosen = menu.exec(event.screenPos())
-                except Exception:
-                    chosen = None
-
-            if chosen == actions.get("base"):
-                self.viewer.select_indices([self.nt_index], replace=True)
-            elif chosen == actions.get("pair"):
-                self.viewer.select_indices(
-                    self.viewer._v4_pair_group(self.nt_index), replace=True
-                )
-            elif chosen == actions.get("loop"):
-                self.viewer.select_indices(
-                    self.viewer._v4_loop_group(self.nt_index), replace=True
-                )
-            elif chosen == actions.get("stem"):
-                self.viewer.select_indices(
-                    self.viewer._v4_stem_group(self.nt_index), replace=True
-                )
-            elif chosen == actions.get("branch"):
-                self.viewer.select_indices(
-                    self.viewer._v4_branch_group(self.nt_index), replace=True
-                )
-            elif chosen == center_action:
-                self.viewer.fit_selected()
-            elif chosen == reset_action:
-                self.viewer.reset_selected_bases()
-            elif chosen == undo_action:
-                self.viewer.undo_layout()
-            event.accept()
-
-
-    # Public lookups used by the inherited scene builder now create v4 items.
-    Dssr2DGraphicsView = Dssr2DGraphicsViewV4
-    Dssr2DNodeItem = Dssr2DNodeItemV4
-
-
-    class DssrPython2DDialogV4(_DSSR_PY2D_DIALOG_BEFORE_V4):
-        """Gel-themed RNA editor with structure-aware drag modes."""
-
-        def __init__(
-            self,
-            model,
-            pymol_selection="all",
-            algorithm="smart",
-            number_every=10,
-            show_tertiary=False,
-            parent=None,
-        ):
-            self._v4_animating = False
-            self._v4_adjacency = None
-            super(DssrPython2DDialogV4, self).__init__(
-                model=model,
-                pymol_selection=pymol_selection,
-                algorithm=algorithm,
-                number_every=number_every,
-                show_tertiary=show_tertiary,
-                parent=parent,
-            )
-            self._v4_install_gel_controls()
-            self._v4_apply_visual_theme()
-            self._v4_timer = QtCore.QTimer(self)
-            self._v4_timer.setInterval(16)
-            self._v4_timer.timeout.connect(self._v4_animation_tick)
-            self._v4_ensure_animation()
-            self._v3_update_editor_status("gel editor ready")
-
-        def _add_edge(self, i, j, kind, layer=0, lw="", linear=False):
-            edge = super(DssrPython2DDialogV4, self)._add_edge(
-                i, j, kind, layer=layer, lw=lw, linear=linear
-            )
-            if edge is not None:
-                try:
-                    edge.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-                    edge.setAcceptHoverEvents(False)
-                except Exception:
-                    pass
-            return edge
-
-        def _v4_apply_visual_theme(self):
-            try:
-                self.setStyleSheet(
-                    """
-                    QDialog { background: #f4f8fb; }
-                    QGroupBox {
-                        border: 1px solid #c9d7e2;
-                        border-radius: 10px;
-                        margin-top: 8px;
-                        padding-top: 8px;
-                        background: rgba(255,255,255,205);
-                        font-weight: 600;
-                    }
-                    QGroupBox::title {
-                        subcontrol-origin: margin;
-                        left: 10px;
-                        padding: 0 5px;
-                        color: #344b5d;
-                    }
-                    QPushButton {
-                        border: 1px solid #b9cbd8;
-                        border-radius: 7px;
-                        padding: 5px 10px;
-                        background: #ffffff;
-                        color: #243b4b;
-                    }
-                    QPushButton:hover { background: #e9f6ff; border-color: #78b8df; }
-                    QPushButton:pressed { background: #d7efff; }
-                    QPushButton:disabled { color: #9aa9b4; background: #eef2f5; }
-                    QComboBox, QSpinBox, QDoubleSpinBox {
-                        border: 1px solid #b9cbd8;
-                        border-radius: 6px;
-                        padding: 3px 6px;
-                        background: white;
-                    }
-                    QCheckBox { spacing: 6px; }
-                    """
-                )
-            except Exception:
-                pass
-            try:
-                gradient = QtGui.QLinearGradient(0.0, 0.0, 0.0, 900.0)
-                gradient.setColorAt(0.0, QtGui.QColor(255, 255, 255))
-                gradient.setColorAt(0.55, QtGui.QColor(248, 252, 255))
-                gradient.setColorAt(1.0, QtGui.QColor(235, 245, 251))
-                self.view.setBackgroundBrush(QtGui.QBrush(gradient))
-            except Exception:
-                pass
-
-        def _v4_install_gel_controls(self):
-            group = QtWidgets.QGroupBox("gel interaction")
-            row = QtWidgets.QHBoxLayout(group)
-
-            row.addWidget(QtWidgets.QLabel("drag"))
-            self.drag_mode_combo = QtWidgets.QComboBox()
-            self.drag_mode_combo.addItem("soft neighborhood", "soft")
-            self.drag_mode_combo.addItem("single base", "base")
-            self.drag_mode_combo.addItem("base pair", "pair")
-            self.drag_mode_combo.addItem("loop / unpaired", "loop")
-            self.drag_mode_combo.addItem("stem", "stem")
-            self.drag_mode_combo.addItem("whole branch", "branch")
-            self.drag_mode_combo.addItem("current selection", "selection")
-            self.drag_mode_combo.setCurrentIndex(0)
-            self.drag_mode_combo.setToolTip(
-                "1–6 switch modes. Alt-drag always moves only one base."
-            )
-            self.drag_mode_combo.currentIndexChanged.connect(
-                lambda *_: self._v3_update_editor_status("drag mode changed")
-            )
-            row.addWidget(self.drag_mode_combo)
-
-            self.jelly_cb = QtWidgets.QCheckBox("jelly motion")
-            self.jelly_cb.setChecked(True)
-            self.jelly_cb.setToolTip(
-                "Spring hover/press feedback and elastic neighborhood following."
-            )
-            self.jelly_cb.toggled.connect(lambda *_: self._v4_ensure_animation())
-            row.addWidget(self.jelly_cb)
-
-            row.addWidget(QtWidgets.QLabel("follow"))
-            self.follow_spin = QtWidgets.QDoubleSpinBox()
-            self.follow_spin.setRange(0.10, 0.90)
-            self.follow_spin.setSingleStep(0.05)
-            self.follow_spin.setDecimals(2)
-            self.follow_spin.setValue(0.55)
-            self.follow_spin.setToolTip(
-                "How much graph-neighboring nucleotides follow in soft mode."
-            )
-            row.addWidget(self.follow_spin)
-
-            self.fit_selected_btn = QtWidgets.QPushButton("fit selected")
-            self.fit_selected_btn.clicked.connect(self.fit_selected)
-            row.addWidget(self.fit_selected_btn)
-
-            row.addWidget(QtWidgets.QLabel("go to nt"))
-            self.goto_spin = QtWidgets.QSpinBox()
-            self.goto_spin.setRange(1, max(1, len(self.model.nts)))
-            self.goto_spin.setValue(1)
-            row.addWidget(self.goto_spin)
-            self.goto_btn = QtWidgets.QPushButton("go")
-            self.goto_btn.clicked.connect(self.goto_nucleotide)
-            row.addWidget(self.goto_btn)
-
-            hint = QtWidgets.QLabel(
-                "drag base=edit · drag empty canvas=pan · Shift/Ctrl+drag canvas=box select · "
-                "double-click base=stem · wheel=zoom · F=fit · C=fit selected"
-            )
-            hint.setWordWrap(True)
-            hint.setStyleSheet("color:#557080; padding-left:6px;")
-            row.addWidget(hint, 1)
-
-            root = self.layout()
-            if root is not None:
-                try:
-                    root.insertWidget(2, group)
-                except Exception:
-                    root.addWidget(group)
-            self.gel_group = group
-
-            # The old help label emphasizes middle-button panning. Replace its
-            # text if present; no old widget is deleted.
-            try:
-                for label in self.editor_group.findChildren(QtWidgets.QLabel):
-                    if "middle" in label.text().lower() or "space" in label.text().lower():
-                        label.setText(
-                            "drag bases directly · drag empty canvas to pan · "
-                            "Shift/Ctrl+drag canvas for box selection · arrows nudge"
-                        )
-            except Exception:
-                pass
-
-        def drag_mode(self):
-            try:
-                data = self.drag_mode_combo.currentData()
-                if data:
-                    return str(data)
-                return str(self.drag_mode_combo.currentText()).split()[0].lower()
-            except Exception:
-                return "soft"
-
-        def set_drag_mode(self, mode):
-            mode = str(mode or "soft").strip().lower()
-            try:
-                for index in range(self.drag_mode_combo.count()):
-                    if str(self.drag_mode_combo.itemData(index)) == mode:
-                        self.drag_mode_combo.setCurrentIndex(index)
-                        return
-            except Exception:
-                pass
-
-        def _v4_pair_table(self):
-            return Dssr2DLayout._planar_pair_table(self.model)
-
-        def _v4_pair_group(self, index):
-            partner = self._v3_pair_partner(index)
-            return [index] if partner < 0 else sorted({index, partner})
-
-        def _v4_stem_group(self, index):
-            return self._v3_stem_indices(index)
-
-        def _v4_loop_group(self, index):
-            n = len(self.model.nts)
-            if index < 0 or index >= n:
-                return []
-            table = self._v4_pair_table()
-            if table[index] >= 0:
-                return self._v4_pair_group(index)
-
-            left = index
-            right = index
-            while left > 0 and (left - 1) not in self.model.chain_breaks and table[left - 1] < 0:
-                left -= 1
-            while right + 1 < n and right not in self.model.chain_breaks and table[right + 1] < 0:
-                right += 1
-            result = set(range(left, right + 1))
-
-            # Include a common closing pair when this is a hairpin/internal loop.
-            if left > 0 and right + 1 < n:
-                a = left - 1
-                b = right + 1
-                if table[a] == b:
-                    result.add(a)
-                    result.add(b)
-            return sorted(result)
-
-        def _v4_chain_segment(self, index):
-            n = len(self.model.nts)
-            left = 0
-            right = n - 1
-            for break_after in sorted(self.model.chain_breaks):
-                if break_after < index:
-                    left = break_after + 1
-                elif break_after >= index:
-                    right = break_after
-                    break
-            return list(range(max(0, left), min(n - 1, right) + 1))
-
-        def _v4_branch_group(self, index):
-            table = self._v4_pair_table()
-            stems = Dssr2DLayout._stem_tree(table, self.model.chain_breaks)
-            candidates = []
-            for stem in stems:
-                outer_i = int(stem.get("outer_i", -1))
-                outer_j = int(stem.get("outer_j", -1))
-                if outer_i <= index <= outer_j:
-                    candidates.append(stem)
-            if not candidates:
-                return self._v4_chain_segment(index)
-            stem = min(
-                candidates,
-                key=lambda item: int(item.get("outer_j", 0)) - int(item.get("outer_i", 0)),
-            )
-            return list(range(int(stem["outer_i"]), int(stem["outer_j"]) + 1))
-
-        def _v4_build_adjacency(self):
-            n = len(self.model.nts)
-            adjacency = [set() for _ in range(n)]
-            for index in range(n - 1):
-                if index not in self.model.chain_breaks:
-                    adjacency[index].add(index + 1)
-                    adjacency[index + 1].add(index)
-            for pair in self.model.secondary_pairs:
-                i = int(pair.get("i", -1))
-                j = int(pair.get("j", -1))
-                if 0 <= i < n and 0 <= j < n and i != j:
-                    adjacency[i].add(j)
-                    adjacency[j].add(i)
-            self._v4_adjacency = adjacency
-            return adjacency
-
-        def _v4_soft_weights(self, anchors):
-            anchors = sorted({int(i) for i in anchors if 0 <= int(i) < len(self.model.nts)})
-            if not anchors:
-                return {}
-            adjacency = self._v4_adjacency or self._v4_build_adjacency()
-            strength = 0.55
-            try:
-                strength = float(self.follow_spin.value())
-            except Exception:
-                pass
-            max_depth = 3
-            distance = {index: 0 for index in anchors}
-            queue = _dssr2d_deque(anchors)
-            while queue:
-                current = queue.popleft()
-                depth = distance[current]
-                if depth >= max_depth:
-                    continue
-                for neighbor in adjacency[current]:
-                    if neighbor not in distance:
-                        distance[neighbor] = depth + 1
-                        queue.append(neighbor)
-            weights = {}
-            for index, depth in distance.items():
-                weights[index] = 1.0 if depth == 0 else max(0.08, strength ** depth)
-            return weights
-
-        def _v4_prepare_node_drag(self, node, modifiers):
-            index = int(node.nt_index)
-            selected = sorted(
-                item.nt_index for item in self.nodes if item.isSelected()
-            )
-            alt = bool(modifiers & QtCore.Qt.AltModifier)
-            additive = bool(
-                modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
-            )
-            mode = "base" if alt else self.drag_mode()
-
-            if additive:
-                group = selected or [index]
-                weights = {item: 1.0 for item in group}
-            elif mode == "pair":
-                group = self._v4_pair_group(index)
-                self.select_indices(group, replace=True)
-                weights = {item: 1.0 for item in group}
-            elif mode == "loop":
-                group = self._v4_loop_group(index)
-                self.select_indices(group, replace=True)
-                weights = {item: 1.0 for item in group}
-            elif mode == "stem":
-                group = self._v4_stem_group(index)
-                self.select_indices(group, replace=True)
-                weights = {item: 1.0 for item in group}
-            elif mode == "branch":
-                group = self._v4_branch_group(index)
-                self.select_indices(group, replace=True)
-                weights = {item: 1.0 for item in group}
-            elif mode == "selection":
-                group = selected or [index]
-                if not selected:
-                    self.select_indices(group, replace=True)
-                weights = {item: 1.0 for item in group}
-            elif mode == "soft":
-                anchors = selected if (index in selected and len(selected) > 1) else [index]
-                if anchors == [index]:
-                    self.select_indices([index], replace=True)
-                weights = self._v4_soft_weights(anchors)
-                group = sorted(weights)
-            else:  # base
-                if index in selected and len(selected) > 1:
-                    group = selected
-                else:
-                    group = [index]
-                    self.select_indices(group, replace=True)
-                weights = {item: 1.0 for item in group}
-
-            node._v3_drag_starts = {
-                item: QtCore.QPointF(self.nodes[item].pos())
-                for item in group
-                if 0 <= item < len(self.nodes)
-            }
-            node._v4_drag_weights = {
-                item: float(weights.get(item, 1.0)) for item in node._v3_drag_starts
-            }
-            self._v3_update_editor_status("dragging %s" % mode)
-
-        def fit_selected(self):
-            selected = [node for node in self.nodes if node.isSelected()]
-            if not selected:
-                self.fit_scene()
-                return
-            rect = None
-            for node in selected:
-                current = node.sceneBoundingRect()
-                rect = QtCore.QRectF(current) if rect is None else rect.united(current)
-            if rect is None:
-                return
-            rect = rect.adjusted(-80.0, -80.0, 80.0, 80.0)
-            try:
-                self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
-            except Exception:
-                pass
-
-        def goto_nucleotide(self):
-            index = int(self.goto_spin.value()) - 1
-            if index < 0 or index >= len(self.nodes):
-                return
-            self.select_indices([index], replace=True)
-            try:
-                self.view.centerOn(self.nodes[index])
-                current = abs(float(self.view.transform().m11()))
-                if current < 1.4:
-                    factor = 1.4 / max(1.0e-9, current)
-                    self.view.scale(factor, factor)
-            except Exception:
-                pass
-            self._v3_update_editor_status("centered nt %d" % (index + 1))
-
-        def _v4_ensure_animation(self):
-            self._v4_animating = True
-            try:
-                if hasattr(self, "_v4_timer") and not self._v4_timer.isActive():
-                    self._v4_timer.start()
-            except Exception:
-                pass
-
-        def _v4_animation_tick(self):
-            active = False
-            for node in list(getattr(self, "nodes", [])):
-                try:
-                    active = node._v4_advance_visual() or active
-                except Exception:
-                    pass
-            if not active:
-                self._v4_animating = False
-                try:
-                    self._v4_timer.stop()
-                except Exception:
-                    pass
-
-        def redraw(self, *_args):
-            super(DssrPython2DDialogV4, self).redraw(*_args)
-            try:
-                self._v4_adjacency = None
-                self._v4_apply_visual_theme()
-                self._v4_ensure_animation()
-            except Exception:
-                pass
-
-        def _v3_update_editor_status(self, action=""):
-            selected = sum(1 for node in getattr(self, "nodes", []) if node.isSelected())
-            variant = str(
-                getattr(self.model, "_dssr2d_layout_variant", self.algorithm)
-            )
-            text = (
-                self.model.summary()
-                + " | layout=%s (%s)" % (self.algorithm, variant)
-                + " | selected=%d" % selected
-                + " | drag=%s" % self.drag_mode()
-                + " | background drag=pan; Shift/Ctrl+background drag=box select; Alt=single base"
-            )
-            if action:
-                text += " | %s" % action
-            try:
-                self.status_label.setText(text)
-            except Exception:
-                pass
-
-
-    DssrPython2DDialog = DssrPython2DDialogV4
-    DssrPython2DDialog._gel_editor_v4_installed = True
-
-
-try:
-    print(
-        "Loaded DSSR RNA 2D gel editor %s: glossy bases, elastic drag, "
-        "easy canvas pan, structure-aware modes"
-        % __DSSR_PY2D_GEL_EDITOR_VERSION__
-    )
-except Exception:
-    pass
-
-# ============================================================================
-# DSSR pure-Python RNA 2D editor v5.0 — Standard scientific layout
-#
-# APPEND-ONLY PATCH: every byte above is retained.  This patch deliberately
-# removes the *runtime effect* of the v4 gel theme without deleting its source.
-# It provides one coherent publication-style visual language and a bundled
-# pure-Python NAView layout, while preserving free nucleotide movement,
-# multi-selection, undo/redo, save/load, PNG/SVG export, and PyMOL selection.
-#
-# The NAView implementation below is a Python adaptation of the Apache-2.0
-# implementation in ViennaRNA/fornac (commit
-# 36df3c5d73d2f651c3c3b5266e7d705e5bb1d3d1), itself based on the NAView
-# algorithm.  The full Apache License 2.0 text is embedded immediately below.
-# ============================================================================
-
-__DSSR_PY2D_STANDARD_EDITOR_VERSION__ = "v5.0.0-standard-naview-editor"
 __DSSR_FORNAC_NOTICE__ = (
     "Python adaptation of ViennaRNA/fornac src/naview/naview.js; "
     "fornac authors Peter Kerpedjiev, Stefan Hammer, and Ronny Lorenz; "
@@ -7950,6 +3049,7 @@ __DSSR_FORNAC_APACHE_LICENSE__ = r"""
 # Bundled NAView geometry engine (1-based internal indexing, planar scaffold)
 # ---------------------------------------------------------------------------
 
+
 class _DSSRNaviewRegion:
     __slots__ = ("start1", "end1", "start2", "end2")
 
@@ -7981,7 +3081,6 @@ class _DSSRNaviewConnection:
         "yrad",
         "angle",
         "extruded",
-        "broken",
     )
 
     def __init__(self):
@@ -7993,13 +3092,11 @@ class _DSSRNaviewConnection:
         self.yrad = 0.0
         self.angle = 0.0
         self.extruded = False
-        self.broken = False
 
 
 class _DSSRNaviewLoop:
     __slots__ = (
         "connections",
-        "number",
         "depth",
         "mark",
         "x",
@@ -8009,7 +3106,6 @@ class _DSSRNaviewLoop:
 
     def __init__(self):
         self.connections = []
-        self.number = 0
         self.depth = 0
         self.mark = False
         self.x = 0.0
@@ -8049,8 +3145,7 @@ class _DSSRNaview:
         self.nbase = int(pair_table[0])
         if len(pair_table) != self.nbase + 1:
             raise ValueError(
-                "NAView pair table length %d does not match n=%d"
-                % (len(pair_table), self.nbase)
+                "NAView pair table length %d does not match n=%d" % (len(pair_table), self.nbase)
             )
 
         self.bases = [_DSSRNaviewBase() for _ in range(self.nbase + 1)]
@@ -8128,7 +3223,6 @@ class _DSSRNaview:
         self.loop_count += 1
         result.connections = []
         result.depth = 0
-        result.number = self.loop_count
         result.radius = 0.0
 
         index = int(ibase)
@@ -8167,9 +3261,7 @@ class _DSSRNaview:
                             region.end2 + 1 if region.end2 < self.nbase else 0
                         )
                     else:
-                        raise RuntimeError(
-                            "NAView loop construction invariant failed"
-                        )
+                        raise RuntimeError("NAView loop construction invariant failed")
 
                     connection = _DSSRNaviewConnection()
                     connection.loop = child_loop
@@ -8241,22 +3333,15 @@ class _DSSRNaview:
 
     @staticmethod
     def _connected(connection, following):
-        return bool(connection.extruded) or (
-            int(connection.end) + 1 == int(following.start)
-        )
+        return bool(connection.extruded) or (int(connection.end) + 1 == int(following.start))
 
-    def _find_middle_connection(
-        self, start, end, anchor_connection, anchor_in_loop, loop
-    ):
+    def _find_middle_connection(self, start, end, anchor_connection, anchor_in_loop, loop):
         count = 0
         result = -1
         index = int(start)
         while True:
             count += 1
-            if (
-                anchor_connection is not None
-                and loop.connections[index] is anchor_in_loop
-            ):
+            if anchor_connection is not None and loop.connections[index] is anchor_in_loop:
                 result = index
             if index == end:
                 break
@@ -8301,19 +3386,11 @@ class _DSSRNaview:
                 numerator += delta_angle * (1.0 / count + 1.0)
                 denominator += delta_angle * delta_angle / count
                 increment = delta_angle / count
-                if (
-                    increment < minimum_increment
-                    and not connection.extruded
-                    and count > 1.0
-                ):
+                if increment < minimum_increment and not connection.extruded and count > 1.0:
                     minimum_increment = increment
                     minimum_index = index
 
-            radius = (
-                numerator / denominator
-                if denominator > 1.0e-14
-                else minimum_radius
-            )
+            radius = numerator / denominator if denominator > 1.0e-14 else minimum_radius
             radius = max(radius, minimum_radius)
             if minimum_increment * radius < length_cutoff:
                 loop.connections[minimum_index].extruded = True
@@ -8350,10 +3427,7 @@ class _DSSRNaview:
             connection.xrad = normal_x / length
             connection.yrad = normal_y / length
             connection.angle = math.atan2(normal_y, normal_x) % (2.0 * math.pi)
-            if (
-                anchor_connection is not None
-                and anchor_connection.region is connection.region
-            ):
+            if anchor_connection is not None and anchor_connection.region is connection.region:
                 anchor_in_loop = connection
                 root_connection_index = index
 
@@ -8372,19 +3446,15 @@ class _DSSRNaview:
                 center_y = 0.0
             else:
                 origin_x = (
-                    self.bases[anchor_in_loop.start].x
-                    + self.bases[anchor_in_loop.end].x
+                    self.bases[anchor_in_loop.start].x + self.bases[anchor_in_loop.end].x
                 ) / 2.0
                 origin_y = (
-                    self.bases[anchor_in_loop.start].y
-                    + self.bases[anchor_in_loop.end].y
+                    self.bases[anchor_in_loop.start].y + self.bases[anchor_in_loop.end].y
                 ) / 2.0
                 center_x = origin_x - radius * anchor_in_loop.xrad
                 center_y = origin_y - radius * anchor_in_loop.yrad
 
-            connection_start = (
-                0 if root_connection_index == -1 else root_connection_index
-            )
+            connection_start = 0 if root_connection_index == -1 else root_connection_index
             connection = loop.connections[connection_start]
             count = 0
             while True:
@@ -8400,15 +3470,12 @@ class _DSSRNaview:
                     largest_index = 0
                     for index, candidate in enumerate(loop.connections):
                         following = loop.connections[(index + 1) % loop.nconnection]
-                        separation = (
-                            following.angle - candidate.angle
-                        ) % (2.0 * math.pi)
+                        separation = (following.angle - candidate.angle) % (2.0 * math.pi)
                         if separation > largest_angle:
                             largest_angle = separation
                             largest_index = index
                     connection_end = largest_index
                     connection_start = (largest_index + 1) % loop.nconnection
-                    loop.connections[connection_end].broken = True
                     break
 
             first_start = connection_start
@@ -8452,105 +3519,76 @@ class _DSSRNaview:
 
                     if current_index >= 0:
                         connection = loop.connections[current_index]
-                        if (
-                            anchor_connection is None
-                            or anchor_in_loop is not connection
-                        ):
+                        if anchor_connection is None or anchor_in_loop is not connection:
                             if direction == 0:
-                                half_angle = math.asin(
-                                    min(1.0, 1.0 / (2.0 * radius))
-                                )
+                                half_angle = math.asin(min(1.0, 1.0 / (2.0 * radius)))
                                 start_angle = connection.angle - half_angle
                                 end_angle = connection.angle + half_angle
-                                self.bases[connection.start].x = (
-                                    center_x + radius * math.cos(start_angle)
+                                self.bases[connection.start].x = center_x + radius * math.cos(
+                                    start_angle
                                 )
-                                self.bases[connection.start].y = (
-                                    center_y + radius * math.sin(start_angle)
+                                self.bases[connection.start].y = center_y + radius * math.sin(
+                                    start_angle
                                 )
-                                self.bases[connection.end].x = (
-                                    center_x + radius * math.cos(end_angle)
+                                self.bases[connection.end].x = center_x + radius * math.cos(
+                                    end_angle
                                 )
-                                self.bases[connection.end].y = (
-                                    center_y + radius * math.sin(end_angle)
+                                self.bases[connection.end].y = center_y + radius * math.sin(
+                                    end_angle
                                 )
                             elif direction < 0:
-                                following_index = (
-                                    current_index + 1
-                                ) % loop.nconnection
+                                following_index = (current_index + 1) % loop.nconnection
                                 connection = loop.connections[current_index]
                                 following = loop.connections[following_index]
-                                angle = (
-                                    connection.angle + following.angle
-                                ) / 2.0
+                                angle = (connection.angle + following.angle) / 2.0
                                 if connection.angle > following.angle:
                                     angle -= math.pi
                                 line_x = math.sin(angle)
                                 line_y = -math.cos(angle)
-                                separation = (
-                                    following.angle - connection.angle
-                                ) % (2.0 * math.pi)
+                                separation = (following.angle - connection.angle) % (2.0 * math.pi)
                                 multiplier = (
                                     2.0
-                                    if connection.extruded
-                                    and separation <= math.pi / 2.0
-                                    else (
-                                        1.5 if connection.extruded else 1.0
-                                    )
+                                    if connection.extruded and separation <= math.pi / 2.0
+                                    else (1.5 if connection.extruded else 1.0)
                                 )
                                 self.bases[connection.end].x = (
-                                    self.bases[following.start].x
-                                    + multiplier * line_x
+                                    self.bases[following.start].x + multiplier * line_x
                                 )
                                 self.bases[connection.end].y = (
-                                    self.bases[following.start].y
-                                    + multiplier * line_y
+                                    self.bases[following.start].y + multiplier * line_y
                                 )
                                 self.bases[connection.start].x = (
-                                    self.bases[connection.end].x
-                                    + connection.yrad
+                                    self.bases[connection.end].x + connection.yrad
                                 )
                                 self.bases[connection.start].y = (
-                                    self.bases[connection.end].y
-                                    - connection.xrad
+                                    self.bases[connection.end].y - connection.xrad
                                 )
                             else:
-                                previous_index = (
-                                    current_index - 1
-                                ) % loop.nconnection
+                                previous_index = (current_index - 1) % loop.nconnection
                                 previous = loop.connections[previous_index]
                                 connection = loop.connections[current_index]
-                                angle = (
-                                    previous.angle + connection.angle
-                                ) / 2.0
+                                angle = (previous.angle + connection.angle) / 2.0
                                 if previous.angle > connection.angle:
                                     angle -= math.pi
                                 line_x = -math.sin(angle)
                                 line_y = math.cos(angle)
-                                separation = (
-                                    connection.angle - previous.angle
-                                ) % (2.0 * math.pi)
+                                separation = (connection.angle - previous.angle) % (2.0 * math.pi)
                                 multiplier = (
                                     2.0
-                                    if previous.extruded
-                                    and separation <= math.pi / 2.0
+                                    if previous.extruded and separation <= math.pi / 2.0
                                     else (1.5 if previous.extruded else 1.0)
                                 )
                                 self.bases[connection.start].x = (
-                                    self.bases[previous.end].x
-                                    + multiplier * line_x
+                                    self.bases[previous.end].x + multiplier * line_x
                                 )
                                 self.bases[connection.start].y = (
-                                    self.bases[previous.end].y
-                                    + multiplier * line_y
+                                    self.bases[previous.end].y + multiplier * line_y
                                 )
                                 self.bases[connection.end].x = (
-                                    self.bases[connection.start].x
-                                    - connection.yrad
+                                    self.bases[connection.start].x - connection.yrad
                                 )
                                 self.bases[connection.end].y = (
-                                    self.bases[connection.start].y
-                                    + connection.xrad
+                                    self.bases[connection.start].y + connection.xrad
                                 )
 
                     if direction < 0:
@@ -8575,12 +3613,10 @@ class _DSSRNaview:
                     first_connection = loop.connections[connection_start]
                     last_connection = loop.connections[connection_end]
                     delta_x = (
-                        self.bases[last_connection.end].x
-                        - self.bases[first_connection.start].x
+                        self.bases[last_connection.end].x - self.bases[first_connection.start].x
                     )
                     delta_y = (
-                        self.bases[last_connection.end].y
-                        - self.bases[first_connection.start].y
+                        self.bases[last_connection.end].y - self.bases[first_connection.start].y
                     )
                     middle_x = self.bases[first_connection.start].x + delta_x / 2.0
                     middle_y = self.bases[first_connection.start].y + delta_y / 2.0
@@ -8621,17 +3657,11 @@ class _DSSRNaview:
                                         candidate.start,
                                         candidate.end,
                                     ):
-                                        self.bases[base_index].x += (
-                                            new_middle_x - middle_x
-                                        )
-                                        self.bases[base_index].y += (
-                                            new_middle_y - middle_y
-                                        )
+                                        self.bases[base_index].x += new_middle_x - middle_x
+                                        self.bases[base_index].y += new_middle_y - middle_y
                                     if current_index == connection_end:
                                         break
-                                    current_index = (
-                                        current_index + 1
-                                    ) % loop.nconnection
+                                    current_index = (current_index + 1) % loop.nconnection
 
                 connection_start = next_start
                 all_connections_done = connection_start == first_start
@@ -8651,13 +3681,9 @@ class _DSSRNaview:
                     angle_following += 2.0 * math.pi
 
                 sweep = angle_following - angle_current
-                expected = (
-                    following.angle - connection.angle
-                ) % (2.0 * math.pi)
+                expected = (following.angle - connection.angle) % (2.0 * math.pi)
                 if abs(sweep - expected) > math.pi:
-                    if not connection.extruded and (
-                        following.start - connection.end
-                    ) != 1:
+                    if not connection.extruded and (following.start - connection.end) != 1:
                         connection.extruded = True
                         restart = True
                         break
@@ -8676,17 +3702,16 @@ class _DSSRNaview:
                                 base_index -= self.nbase + 1
                             angle = angle_current + offset * increment
                             if abs(sweep) > 1.0e-12:
-                                local_radius = radius_current + (
-                                    radius_following - radius_current
-                                ) * (angle - angle_current) / sweep
+                                local_radius = (
+                                    radius_current
+                                    + (radius_following - radius_current)
+                                    * (angle - angle_current)
+                                    / sweep
+                                )
                             else:
                                 local_radius = radius_current
-                            self.bases[base_index].x = (
-                                center_x + local_radius * math.cos(angle)
-                            )
-                            self.bases[base_index].y = (
-                                center_y + local_radius * math.sin(angle)
-                            )
+                            self.bases[base_index].x = center_x + local_radius * math.cos(angle)
+                            self.bases[base_index].y = center_y + local_radius * math.sin(angle)
 
             if restart:
                 continue
@@ -8702,14 +3727,8 @@ class _DSSRNaview:
         for index, connection in enumerate(loop.connections):
             following = loop.connections[(index + 1) % loop.nconnection]
             count += 2
-            sum_x += (
-                self.bases[connection.start].x
-                + self.bases[connection.end].x
-            )
-            sum_y += (
-                self.bases[connection.start].y
-                + self.bases[connection.end].y
-            )
+            sum_x += self.bases[connection.start].x + self.bases[connection.end].x
+            sum_y += self.bases[connection.start].y + self.bases[connection.end].y
             if not connection.extruded:
                 base_index = int(connection.end) + 1
                 while base_index != int(following.start):
@@ -8737,21 +3756,17 @@ class _DSSRNaview:
         for base_index in range(start + 1, end + 1):
             length += 1
             self.bases[base_index].x = (
-                self.bases[connection.start].x
-                + self.HELIX_FACTOR * length * connection.xrad
+                self.bases[connection.start].x + self.HELIX_FACTOR * length * connection.xrad
             )
             self.bases[base_index].y = (
-                self.bases[connection.start].y
-                + self.HELIX_FACTOR * length * connection.yrad
+                self.bases[connection.start].y + self.HELIX_FACTOR * length * connection.yrad
             )
             mate = int(self.bases[base_index].mate)
             self.bases[mate].x = (
-                self.bases[connection.end].x
-                + self.HELIX_FACTOR * length * connection.xrad
+                self.bases[connection.end].x + self.HELIX_FACTOR * length * connection.xrad
             )
             self.bases[mate].y = (
-                self.bases[connection.end].y
-                + self.HELIX_FACTOR * length * connection.yrad
+                self.bases[connection.end].y + self.HELIX_FACTOR * length * connection.yrad
             )
 
     def _construct_extruded_segment(self, connection, following):
@@ -8851,12 +3866,8 @@ class _DSSRNaview:
                 base_index = start + offset
                 if base_index > self.nbase:
                     base_index -= self.nbase + 1
-                self.bases[base_index].x = (
-                    self.bases[start].x + delta_x * offset / float(length)
-                )
-                self.bases[base_index].y = (
-                    self.bases[start].y + delta_y * offset / float(length)
-                )
+                self.bases[base_index].x = self.bases[start].x + delta_x * offset / float(length)
+                self.bases[base_index].y = self.bases[start].y + delta_y * offset / float(length)
             return
 
         self._find_center_for_arc(length - 1, distance)
@@ -8879,12 +3890,8 @@ class _DSSRNaview:
             base_index = start + offset
             if base_index > self.nbase:
                 base_index -= self.nbase + 1
-            self.bases[base_index].x = center_x + radius * math.cos(
-                angle + offset * self.angleinc
-            )
-            self.bases[base_index].y = center_y + radius * math.sin(
-                angle + offset * self.angleinc
-            )
+            self.bases[base_index].x = center_x + radius * math.cos(angle + offset * self.angleinc)
+            self.bases[base_index].y = center_y + radius * math.sin(angle + offset * self.angleinc)
 
     def _find_center_for_arc(self, count, chord):
         upper = (count + 1.0) / math.pi
@@ -8916,7 +3923,7 @@ class _DSSRNaview:
         self.angleinc = theta
 
 
-def _dssr2d_v5_pair_table(model, start=0, end=None):
+def _layout_pair_table(model, start=0, end=None):
     """Create a 1-based NAView pair table from the planar DSSR scaffold."""
     total = len(model.nts)
     if end is None:
@@ -8940,23 +3947,7 @@ def _dssr2d_v5_pair_table(model, start=0, end=None):
     return table
 
 
-def _dssr2d_v5_segments(model):
-    total = len(model.nts)
-    if total <= 0:
-        return []
-    result = []
-    start = 0
-    for break_after in sorted(model.chain_breaks):
-        break_after = int(break_after)
-        if start <= break_after < total:
-            result.append((start, break_after))
-            start = break_after + 1
-    if start < total:
-        result.append((start, total - 1))
-    return result or [(0, total - 1)]
-
-
-def _dssr2d_v5_center(points):
+def _layout_center(points):
     if not points:
         return []
     center_x = sum(point[0] for point in points) / float(len(points))
@@ -8964,7 +3955,7 @@ def _dssr2d_v5_center(points):
     return [(point[0] - center_x, point[1] - center_y) for point in points]
 
 
-def _dssr2d_v5_rotate(points, angle):
+def _layout_rotate(points, angle):
     cosine = math.cos(angle)
     sine = math.sin(angle)
     return [
@@ -8976,7 +3967,7 @@ def _dssr2d_v5_rotate(points, angle):
     ]
 
 
-def _dssr2d_v5_standardize_trna_orientation(model, points):
+def _layout_standardize_trna_orientation(model, points):
     """Orient tRNA like the DSSR/VARNA 1EHZ example.
 
     The acceptor stem points down, the anticodon arm points up, the D arm is
@@ -8985,7 +3976,7 @@ def _dssr2d_v5_standardize_trna_orientation(model, points):
     optional mirror are applied.
     """
     try:
-        topology = _dssr2d_v3_detect_trna_topology(model)
+        topology = _layout_detect_trna_topology(model)
     except Exception:
         topology = None
     if not topology or len(points) != len(model.nts):
@@ -9007,30 +3998,22 @@ def _dssr2d_v5_standardize_trna_orientation(model, points):
     vector_y = outer_center[1] - inner_center[1]
     if math.hypot(vector_x, vector_y) > 1.0e-8:
         current_angle = math.atan2(vector_y, vector_x)
-        points = _dssr2d_v5_rotate(points, math.pi / 2.0 - current_angle)
+        points = _layout_rotate(points, math.pi / 2.0 - current_angle)
 
     # Mirror only when the earlier (D) arm appears to the right of the later
     # (T) arm.  This makes the orientation reproducible across structures.
     if len(arms) >= 3:
-        d_indices = list(
-            range(int(arms[0]["outer_i"]), int(arms[0]["outer_j"]) + 1)
-        )
-        t_indices = list(
-            range(int(arms[2]["outer_i"]), int(arms[2]["outer_j"]) + 1)
-        )
-        d_x = sum(points[index][0] for index in d_indices) / float(
-            max(1, len(d_indices))
-        )
-        t_x = sum(points[index][0] for index in t_indices) / float(
-            max(1, len(t_indices))
-        )
+        d_indices = list(range(int(arms[0]["outer_i"]), int(arms[0]["outer_j"]) + 1))
+        t_indices = list(range(int(arms[2]["outer_i"]), int(arms[2]["outer_j"]) + 1))
+        d_x = sum(points[index][0] for index in d_indices) / float(max(1, len(d_indices)))
+        t_x = sum(points[index][0] for index in t_indices) / float(max(1, len(t_indices)))
         if d_x > t_x:
             points = [(-point[0], point[1]) for point in points]
 
-    return _dssr2d_v5_center(points), True
+    return _layout_center(points), True
 
 
-def _dssr2d_v5_naview_layout(model):
+def _layout_naview_layout(model):
     """Return one coherent NAView-style scientific layout."""
     total = len(model.nts)
     if total <= 0:
@@ -9039,16 +4022,16 @@ def _dssr2d_v5_naview_layout(model):
     scaffold_pair_count = len(model.planar_secondary_pairs())
     if scaffold_pair_count <= 0:
         model._dssr2d_layout_variant = "unpaired circular"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "circular")
+        return Dssr2DLayout.circular(model)
 
     # NAView uses a circular exterior loop.  For multi-chain or intermolecular
     # complexes the old component-aware layout is safer than inventing a false
     # backbone link between chains.
     if model.chain_count() != 1:
         model._dssr2d_layout_variant = "multi-chain radiate fallback"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "radiate")
+        return Dssr2DLayout.radiate(model)
 
-    table = _dssr2d_v5_pair_table(model)
+    table = _layout_pair_table(model)
     try:
         points = _DSSRNaview().coordinates(table)
     except Exception as error:
@@ -9057,109 +4040,101 @@ def _dssr2d_v5_naview_layout(model):
         except Exception:
             pass
         model._dssr2d_layout_variant = "radiate fallback"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "radiate")
+        return Dssr2DLayout.radiate(model)
 
     # At 1.65x, the smallest NAView junction separation for 1EHZ remains larger
     # than the classic node diameter while the overall drawing still fits well.
     scale = 1.65
     points = [(scale * point[0], scale * point[1]) for point in points]
-    points, is_trna = _dssr2d_v5_standardize_trna_orientation(model, points)
+    points, is_trna = _layout_standardize_trna_orientation(model, points)
     model._dssr2d_layout_variant = (
         "NAView standard tRNA cloverleaf" if is_trna else "NAView standard"
     )
-    return _dssr2d_v5_center(points)
+    return _layout_center(points)
 
 
-_DSSR_PY2D_COMPUTE_BEFORE_V5 = Dssr2DLayout.compute
+# Qt graphics and editor
+class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
+    def __init__(self, node_a, node_b, kind="backbone", layer=0, lw="", linear_layout=False):
+        super().__init__()
+        self.node_a, self.node_b = node_a, node_b
+        self.kind, self.layer = str(kind), int(layer)
+        self.lw, self.linear_layout = str(lw or ""), bool(linear_layout)
+        self.setZValue(-5.0 if self.kind == "backbone" else -3.0)
+        self._set_style()
+        self.update_geometry()
 
-
-def _dssr2d_v5_compute(model, algorithm):
-    name = str(algorithm or "standard").strip().lower()
-    if name in (
-        "standard",
-        "naview",
-        "varna",
-        "classic",
-        "publication",
-        "smart",
-        "auto",
-    ):
-        return _dssr2d_v5_naview_layout(model)
-    if name in ("legacy radiate", "legacy", "radiate", "radial"):
-        model._dssr2d_layout_variant = "legacy radiate"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "radiate")
-    if name in ("circular", "circle"):
-        model._dssr2d_layout_variant = "circular"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "circular")
-    if name in ("linear", "line"):
-        model._dssr2d_layout_variant = "linear"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "linear")
-    if name in ("force", "spring", "graph"):
-        model._dssr2d_layout_variant = "force"
-        return _DSSR_PY2D_COMPUTE_BEFORE_V5(model, "force")
-    return _dssr2d_v5_naview_layout(model)
-
-
-Dssr2DLayout.naview = staticmethod(_dssr2d_v5_naview_layout)
-Dssr2DLayout.standard = staticmethod(_dssr2d_v5_naview_layout)
-Dssr2DLayout.compute = staticmethod(_dssr2d_v5_compute)
-Dssr2DLayout._standard_editor_v5_installed = True
-
-
-# ---------------------------------------------------------------------------
-# One uniform VARNA-like visual language: no gel, no side-dependent styling
-# ---------------------------------------------------------------------------
-
-if QtWidgets is not None and QtCore is not None and QtGui is not None:
-    _DSSR_PY2D_VIEW_BEFORE_V5 = Dssr2DGraphicsView
-    _DSSR_PY2D_NODE_BEFORE_V5 = Dssr2DNodeItem
-    _DSSR_PY2D_DIALOG_BEFORE_V5 = DssrPython2DDialog
-
-    def _dssr2d_v5_edge_style(self):
-        kind = str(getattr(self, "kind", "backbone"))
-        layer = int(getattr(self, "layer", 0))
-        if kind == "backbone":
-            color = QtGui.QColor(105, 105, 105)
-            width = 1.05
-            style = QtCore.Qt.SolidLine
-        elif kind == "tertiary":
-            color = QtGui.QColor(145, 115, 165)
-            width = 0.95
-            style = QtCore.Qt.DashLine
+    def _set_style(self):
+        if self.kind == "backbone":
+            color, width = (105, 105, 105), 1.05
+        elif self.kind == "tertiary":
+            color, width = (145, 115, 165), 0.95
         else:
-            # Primary and pseudoknot base pairs deliberately share exactly the
-            # same blue scientific style, matching the simple VARNA convention.
-            color = QtGui.QColor(60, 85, 175)
-            width = 1.25 if layer == 0 else 1.15
-            style = QtCore.Qt.SolidLine
-        pen = QtGui.QPen(color)
-        pen.setWidthF(width)
-        pen.setStyle(style)
-        try:
-            pen.setCapStyle(QtCore.Qt.RoundCap)
-            pen.setJoinStyle(QtCore.Qt.RoundJoin)
-        except Exception:
-            pass
-        self.setPen(pen)
-        if getattr(self, "lw", ""):
+            # Flat primary and pseudoknot pairs use the same scientific blue.
+            color, width = (60, 85, 175), 1.25 if self.layer == 0 else 1.15
+        self.setPen(self._pen(QtGui.QColor(*color), width))
+        if self.lw:
             self.setToolTip("Base pair: %s" % self.lw)
 
-    def _dssr2d_v5_edge_paint(self, painter, option, widget=None):
+    def _pen(self, color, width):
+        style = QtCore.Qt.DashLine if self.kind == "tertiary" else QtCore.Qt.SolidLine
+        return QtGui.QPen(color, width, style, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+
+    def _draw_paths(self, painter, pens):
+        """Share painter setup across plain lines and the two gel passes."""
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        for pen in pens:
+            painter.setPen(pen)
+            painter.drawPath(self.path())
+
+    def paint(self, painter, option, widget=None):
+        """Paint gel edges, retaining the plain/base-item failure fallbacks."""
+        try:
+            gel = self.node_a.viewer.gel_style_enabled()
+        except Exception:
+            gel = False
+        if not gel:
+            return self._paint_flat(painter, option, widget)
+        if self.kind == "backbone":
+            rgba, width = (112, 154, 186, 225), 1.65
+        elif self.kind == "tertiary":
+            rgba, width = (235, 111, 255, 220), 1.55
+        elif self.layer > 0:
+            palette = ((183, 123, 255, 240), (255, 112, 176, 240), (255, 190, 82, 240))
+            rgba, width = palette[(self.layer - 1) % len(palette)], 2.05
+        else:
+            rgba, width = (78, 200, 255, 245), 2.15
+        color = QtGui.QColor(*rgba)
+        saved = False
         try:
             painter.save()
-            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            painter.setPen(self.pen())
-            painter.setBrush(QtCore.Qt.NoBrush)
-            painter.drawPath(self.path())
+            saved = True
+            glow = QtGui.QColor(color)
+            glow.setAlpha(48)
+            self._draw_paths(painter, (self._pen(glow, width + 4.2), self._pen(color, width)))
+            painter.restore()
+        except Exception:
+            if saved:
+                try:
+                    painter.restore()
+                except Exception:
+                    pass
+            return self._paint_flat(painter, option, widget)
+
+    def _paint_flat(self, painter, option, widget=None):
+        try:
+            painter.save()
+            self._draw_paths(painter, (self.pen(),))
             painter.restore()
         except Exception:
             try:
                 painter.restore()
             except Exception:
                 pass
-            QtWidgets.QGraphicsPathItem.paint(self, painter, option, widget)
+            super().paint(painter, option, widget)
 
-    def _dssr2d_v5_edge_geometry(self):
+    def update_geometry(self):
         first = self.node_a.pos()
         second = self.node_b.pos()
         path = QtGui.QPainterPath()
@@ -9171,9 +4146,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             if self.kind == "tertiary":
                 sign *= -1.0
             path.quadTo(
-                QtCore.QPointF(
-                    0.5 * (first.x() + second.x()), sign * height
-                ),
+                QtCore.QPointF(0.5 * (first.x() + second.x()), sign * height),
                 second,
             )
         elif self.kind == "tertiary":
@@ -9201,725 +4174,634 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             path.lineTo(second)
         self.setPath(path)
 
-    try:
-        Dssr2DEdgeItem._set_style = _dssr2d_v5_edge_style
-        Dssr2DEdgeItem.paint = _dssr2d_v5_edge_paint
-        Dssr2DEdgeItem.update_geometry = _dssr2d_v5_edge_geometry
-        Dssr2DEdgeItem._standard_editor_v5_installed = True
-    except Exception:
-        pass
 
+class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
+    """Empty-canvas rectangle selection, base editing, and keyboard-only pan."""
 
-    class Dssr2DGraphicsViewV5(_DSSR_PY2D_VIEW_BEFORE_V5):
-        """V4's easy pan/zoom, with simpler scientific-editor shortcuts."""
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self.editor = parent
+        self._rectangle_item = self._rectangle_origin = None
+        self._rectangle_base = set()
+        self._rectangle_mode = "replace"
+        self._brushing = self._brush_erase = False
+        self._brush_last = self._brush_path = self._brush_item = None
+        self.setRenderHints(QtGui.QPainter.Antialiasing | QtGui.QPainter.TextAntialiasing
+                            | QtGui.QPainter.SmoothPixmapTransform)
+        self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("white")))
+        self.setDragMode(QtWidgets.QGraphicsView.NoDrag)
+        self.setInteractive(True)
+        self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QtWidgets.QGraphicsView.AnchorViewCenter)
+        self.setViewportUpdateMode(QtWidgets.QGraphicsView.BoundingRectViewportUpdate)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setCursor(QtCore.Qt.ArrowCursor)
 
-        def keyPressEvent(self, event):
-            mode_keys = {
-                QtCore.Qt.Key_1: "base",
-                QtCore.Qt.Key_2: "selection",
-                QtCore.Qt.Key_3: "pair",
-                QtCore.Qt.Key_4: "loop",
-                QtCore.Qt.Key_5: "stem",
-                QtCore.Qt.Key_6: "branch",
-            }
-            if event.key() in mode_keys:
-                try:
-                    self.editor.set_drag_mode(mode_keys[event.key()])
-                    event.accept()
-                    return
-                except Exception:
-                    pass
-            _DSSR_PY2D_VIEW_BEFORE_V5.keyPressEvent(self, event)
+    def mousePressEvent(self, event):
+        self.setFocus(QtCore.Qt.MouseFocusReason)
+        if event.button() == QtCore.Qt.LeftButton:
+            if self._tool() == "brush":
+                self._begin_brush(event)
+            elif self._node_item(self.itemAt(event.pos())) is None:
+                self._begin_rectangle(event)
+            else:
+                super().mousePressEvent(event)
+        elif event.button() == QtCore.Qt.MiddleButton:
+            event.accept()
+        else:
+            # The normal scene route preserves a nucleotide's context menu.
+            super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event):
+        if self._rectangle_item is not None:
+            self._update_rectangle(self.mapToScene(event.pos()))
+            event.accept()
+        elif self._brushing and self._brush_last is not None:
+            point = self.mapToScene(event.pos())
+            first, self._brush_last = self._brush_last, QtCore.QPointF(point)
+            self._brush_path.lineTo(point)
+            self._brush_item.setPath(self._brush_path)
+            self._apply_brush_segment(first, point)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
 
-    class Dssr2DNodeItemV5(_DSSR_PY2D_NODE_BEFORE_V5):
-        """Uniform flat nucleotide glyph with direct, unrestricted dragging."""
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self._rectangle_item is not None:
+            self._update_rectangle(self.mapToScene(event.pos()))
+            self._finish_rectangle()
+            event.accept()
+        elif event.button() == QtCore.Qt.LeftButton and self._brushing:
+            self._finish_brush(event)
+        elif event.button() == QtCore.Qt.MiddleButton:
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
 
-        RADIUS = 9.5
-
-        def __init__(self, viewer, nt, x, y):
-            _DSSR_PY2D_NODE_BEFORE_V5.__init__(self, viewer, nt, x, y)
-            self._v4_hover = False
-            self._v4_pressed = False
-            try:
-                self.setScale(1.0)
-                self.setAcceptHoverEvents(True)
-                self.setCursor(QtCore.Qt.OpenHandCursor)
-                self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-            except Exception:
-                pass
-            try:
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(7)
-                font.setBold(False)
-                self.base_text_item.setFont(font)
-                rect = self.base_text_item.boundingRect()
-                self.base_text_item.setPos(
-                    -0.5 * rect.width(), -0.5 * rect.height()
-                )
-                self.base_text_item.setBrush(
-                    QtGui.QBrush(QtGui.QColor(25, 25, 25))
-                )
-            except Exception:
-                pass
-
-        def boundingRect(self):
-            radius = float(self.RADIUS)
-            return QtCore.QRectF(
-                -radius - 3.0,
-                -radius - 3.0,
-                2.0 * radius + 6.0,
-                2.0 * radius + 6.0,
-            )
-
-        def shape(self):
-            radius = float(self.RADIUS) + 2.0
-            path = QtGui.QPainterPath()
-            path.addEllipse(
-                QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
-            )
-            return path
-
-        def _base_fill(self):
-            if not bool(getattr(self.viewer, "base_colors", False)):
-                return QtGui.QColor(252, 252, 252)
-            base = str(self.nt.get("base", "N")).upper()[:1]
-            palette = {
-                "A": QtGui.QColor(233, 246, 229),
-                "C": QtGui.QColor(229, 239, 250),
-                "G": QtGui.QColor(250, 243, 216),
-                "U": QtGui.QColor(250, 230, 230),
-                "T": QtGui.QColor(250, 230, 230),
-                "I": QtGui.QColor(239, 233, 248),
-            }
-            return palette.get(base, QtGui.QColor(245, 245, 245))
-
-        def paint(self, painter, option, widget=None):
-            radius = float(self.RADIUS)
-            try:
-                painter.save()
-                painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-                selected = bool(self.isSelected())
-                hovered = bool(getattr(self, "_v4_hover", False))
-
-                if selected:
-                    fill = QtGui.QColor(225, 238, 253)
-                    border = QtGui.QColor(35, 105, 185)
-                    width = 2.0
-                elif hovered:
-                    fill = QtGui.QColor(self._base_fill()).lighter(102)
-                    border = QtGui.QColor(70, 105, 145)
-                    width = 1.35
-                else:
-                    fill = QtGui.QColor(self._base_fill())
-                    border = QtGui.QColor(48, 48, 48)
-                    width = 1.05
-
-                pen = QtGui.QPen(border)
-                pen.setWidthF(width)
-                painter.setPen(pen)
-                painter.setBrush(QtGui.QBrush(fill))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -radius, -radius, 2.0 * radius, 2.0 * radius
-                    )
-                )
-                painter.restore()
-            except Exception:
-                try:
-                    painter.restore()
-                except Exception:
-                    pass
-                QtWidgets.QGraphicsEllipseItem.paint(self, painter, option, widget)
-
-        # Disable all gel scaling while retaining V4's robust drag machinery.
-        def _v4_set_target_scale(self, target, kick=0.0):
-            try:
-                self.setScale(1.0)
-            except Exception:
-                pass
-
-        def _v4_advance_visual(self):
-            try:
-                self.setScale(1.0)
-            except Exception:
-                pass
-            return False
-
-        def hoverEnterEvent(self, event):
-            self._v4_hover = True
-            self.setZValue(12.0 if self.isSelected() else 8.0)
-            self.update()
-            try:
-                QtWidgets.QGraphicsEllipseItem.hoverEnterEvent(self, event)
-            except Exception:
-                pass
-
-        def hoverLeaveEvent(self, event):
-            self._v4_hover = False
-            self.setZValue(12.0 if self.isSelected() else 5.0)
-            self.update()
-            try:
-                QtWidgets.QGraphicsEllipseItem.hoverLeaveEvent(self, event)
-            except Exception:
-                pass
-
-        def itemChange(self, change, value):
-            result = _DSSR_PY2D_NODE_BEFORE_V5.itemChange(self, change, value)
-            try:
-                if change == QtWidgets.QGraphicsItem.ItemSelectedHasChanged:
-                    self.setScale(1.0)
-                    self.setZValue(12.0 if bool(value) else 5.0)
-                    self.update()
-            except Exception:
-                pass
-            return result
-
-
-    Dssr2DGraphicsView = Dssr2DGraphicsViewV5
-    Dssr2DNodeItem = Dssr2DNodeItemV5
-
-
-    class DssrPython2DDialogV5(_DSSR_PY2D_DIALOG_BEFORE_V5):
-        """Consistent publication-style viewer plus a straightforward editor."""
-
-        def __init__(
-            self,
-            model,
-            pymol_selection="all",
-            algorithm="standard",
-            number_every=10,
-            show_tertiary=False,
-            parent=None,
-        ):
-            _DSSR_PY2D_DIALOG_BEFORE_V5.__init__(
-                self,
-                model=model,
-                pymol_selection=pymol_selection,
-                algorithm=algorithm,
-                number_every=number_every,
-                show_tertiary=show_tertiary,
-                parent=parent,
-            )
-
-            self.setWindowTitle("RNA 2D editor — %s" % self.model.title)
-            try:
-                self.resize(1120, 820)
-            except Exception:
-                pass
-
-            # Replace every automatic-layout choice with a small, coherent set.
-            try:
-                self.layout_combo.blockSignals(True)
-                self.layout_combo.clear()
-                self.layout_combo.addItems(
-                    ["standard", "circular", "linear", "legacy radiate"]
-                )
-                selected = self.layout_combo.findText(
-                    str(algorithm or "standard").strip().lower()
-                )
-                self.layout_combo.setCurrentIndex(selected if selected >= 0 else 0)
-                self.layout_combo.blockSignals(False)
-            except Exception:
-                pass
-
-            try:
-                self.number_spin.blockSignals(True)
-                self.number_spin.setValue(max(0, int(number_every)))
-                self.number_spin.blockSignals(False)
-                self.tertiary_cb.blockSignals(True)
-                self.tertiary_cb.setChecked(bool(show_tertiary))
-                self.tertiary_cb.blockSignals(False)
-                self.base_colors_cb.blockSignals(True)
-                self.base_colors_cb.setChecked(False)
-                self.base_colors_cb.blockSignals(False)
-            except Exception:
-                pass
-
-            self._v3_force_relayout = True
-            self._v3_undo = []
-            self._v3_redo = []
-            self.redraw()
-            self._v3_update_history_buttons()
-            self._v3_update_editor_status("standard editor ready")
-            try:
-                QtCore.QTimer.singleShot(0, self.fit_scene)
-            except Exception:
-                pass
-
-        def _v4_apply_visual_theme(self):
-            try:
-                self.setStyleSheet(
-                    """
-                    QDialog { background: #f2f2f2; }
-                    QGroupBox {
-                        border: 1px solid #c8c8c8;
-                        border-radius: 3px;
-                        margin-top: 7px;
-                        padding-top: 7px;
-                        background: #f7f7f7;
-                    }
-                    QGroupBox::title {
-                        subcontrol-origin: margin;
-                        left: 8px;
-                        padding: 0 4px;
-                        color: #333333;
-                    }
-                    QPushButton, QComboBox, QSpinBox, QDoubleSpinBox {
-                        min-height: 22px;
-                    }
-                    """
-                )
-            except Exception:
-                pass
-            try:
-                self.view.setBackgroundBrush(
-                    QtGui.QBrush(QtGui.QColor(255, 255, 255))
-                )
-            except Exception:
-                pass
-
-        def _v4_install_gel_controls(self):
-            # Method name is retained because V4 calls it during construction;
-            # the resulting group is deliberately a plain editing group.
-            group = QtWidgets.QGroupBox("editing")
-            row = QtWidgets.QHBoxLayout(group)
-
-            row.addWidget(QtWidgets.QLabel("drag"))
-            self.drag_mode_combo = QtWidgets.QComboBox()
-            self.drag_mode_combo.addItem("single base", "base")
-            self.drag_mode_combo.addItem("current selection", "selection")
-            self.drag_mode_combo.addItem("base pair", "pair")
-            self.drag_mode_combo.addItem("loop / unpaired", "loop")
-            self.drag_mode_combo.addItem("stem", "stem")
-            self.drag_mode_combo.addItem("whole branch", "branch")
-            self.drag_mode_combo.setCurrentIndex(0)
-            self.drag_mode_combo.currentIndexChanged.connect(
-                lambda *_args: self._v3_update_editor_status("drag mode changed")
-            )
-            row.addWidget(self.drag_mode_combo)
-
-            self.fit_selected_btn = QtWidgets.QPushButton("fit selected")
-            self.fit_selected_btn.clicked.connect(self.fit_selected)
-            row.addWidget(self.fit_selected_btn)
-
-            row.addWidget(QtWidgets.QLabel("go to nt"))
-            self.goto_spin = QtWidgets.QSpinBox()
-            self.goto_spin.setRange(1, max(1, len(self.model.nts)))
-            self.goto_spin.setValue(1)
-            row.addWidget(self.goto_spin)
-            self.goto_btn = QtWidgets.QPushButton("go")
-            self.goto_btn.clicked.connect(self.goto_nucleotide)
-            row.addWidget(self.goto_btn)
-
-            hint = QtWidgets.QLabel(
-                "base drag=move · selected bases move together · empty drag=pan · "
-                "Shift/Ctrl+empty drag=box select · wheel=zoom · Ctrl+Z/Y=undo/redo"
-            )
-            hint.setWordWrap(True)
-            row.addWidget(hint, 1)
-
-            # Compatibility attributes expected by inherited V4 methods.  They
-            # are intentionally hidden and disabled.
-            self.jelly_cb = QtWidgets.QCheckBox()
-            self.jelly_cb.setChecked(False)
-            self.jelly_cb.setVisible(False)
-            self.follow_spin = QtWidgets.QDoubleSpinBox()
-            self.follow_spin.setValue(0.0)
-            self.follow_spin.setVisible(False)
-
-            root = self.layout()
-            if root is not None:
-                try:
-                    root.insertWidget(2, group)
-                except Exception:
-                    root.addWidget(group)
-            self.gel_group = group
-
-            try:
-                for label in self.editor_group.findChildren(QtWidgets.QLabel):
-                    if "middle" in label.text().lower() or "space" in label.text().lower():
-                        label.setText(
-                            "drag bases directly · Shift/Ctrl click for multi-select · "
-                            "arrows nudge · save/load preserves manual coordinates"
-                        )
-            except Exception:
-                pass
-
-        def _v4_ensure_animation(self):
+    def keyPressEvent(self, event):
+        key, modifiers = event.key(), event.modifiers()
+        control = bool(modifiers & QtCore.Qt.ControlModifier)
+        shift = bool(modifiers & QtCore.Qt.ShiftModifier)
+        modes = dict(zip((QtCore.Qt.Key_1, QtCore.Qt.Key_2, QtCore.Qt.Key_3,
+                         QtCore.Qt.Key_4, QtCore.Qt.Key_5, QtCore.Qt.Key_6),
+                        ("base", "selection", "pair", "loop", "stem", "branch")))
+        arrows = {QtCore.Qt.Key_Left: (-1, 0), QtCore.Qt.Key_Right: (1, 0),
+                  QtCore.Qt.Key_Up: (0, -1), QtCore.Qt.Key_Down: (0, 1)}
+        movement = dict(arrows)
+        movement.update({QtCore.Qt.Key_A: (-1, 0), QtCore.Qt.Key_D: (1, 0),
+                         QtCore.Qt.Key_W: (0, -1), QtCore.Qt.Key_S: (0, 1)})
+        if control and key == QtCore.Qt.Key_Z:
+            (self.editor.redo_layout if shift else self.editor.undo_layout)()
+        elif control and key == QtCore.Qt.Key_Y:
+            self.editor.redo_layout()
+        elif control and key == QtCore.Qt.Key_A:
+            self.editor.select_all_bases()
+        elif control and key in arrows:
+            dx, dy = arrows[key]
+            step = 10.0 if shift else 2.0
+            self.editor.nudge_selected(dx * step, dy * step)
+        elif key in movement and not control and not modifiers & QtCore.Qt.AltModifier:
+            dx, dy = movement[key]
+            step = 120 if shift else 40
+            self._pan_view(dx * step, dy * step)
+        elif key in (QtCore.Qt.Key_B, QtCore.Qt.Key_P):
+            self.cancel_selection_gesture()
+            self.editor.set_interaction_tool("brush" if key == QtCore.Qt.Key_B else "edit")
+        elif key in modes:
+            self.editor.set_drag_mode(modes[key])
+        elif key == QtCore.Qt.Key_F:
+            self.editor.fit_scene()
+        elif key == QtCore.Qt.Key_C:
+            self.editor.fit_selected()
+        elif key == QtCore.Qt.Key_Escape:
+            if self._rectangle_item is not None:
+                self._finish_rectangle(cancel=True)
+            else:
+                self.cancel_selection_gesture()
+                self.editor.clear_base_selection()
+        elif key != QtCore.Qt.Key_Space:
+            super().keyPressEvent(event)
             return
+        event.accept()
 
-        def _v4_animation_tick(self):
-            try:
-                if hasattr(self, "_v4_timer"):
-                    self._v4_timer.stop()
-            except Exception:
-                pass
+    def _pan_view(self, dx, dy):
+        """Move the drawing by screen pixels, including immediately after Fit."""
+        scale = max(0.08, abs(self.transform().m11()))
+        offset = QtCore.QPointF(dx / scale, dy / scale)
+        anchor = self.mapToScene(QtCore.QPoint(0, 0))
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        margin = 100.0 / scale
+        needed = visible.translated(-offset).adjusted(-margin, -margin, margin, margin)
+        self.setSceneRect(self.sceneRect().united(needed))
+        mapped = self.mapFromScene(anchor)
+        horizontal, vertical = self.horizontalScrollBar(), self.verticalScrollBar()
+        horizontal.setValue(horizontal.value() + mapped.x() - int(dx))
+        vertical.setValue(vertical.value() + mapped.y() - int(dy))
 
-        def drag_mode(self):
-            try:
-                data = self.drag_mode_combo.currentData()
-                return str(data or "base")
-            except Exception:
-                return "base"
+    def _begin_rectangle(self, event):
+        self.cancel_selection_gesture()
+        self._rectangle_origin = self.mapToScene(event.pos())
+        self._rectangle_base = {node.nt_index for node in self.editor.nodes if node.isSelected()}
+        modifiers = event.modifiers()
+        self._rectangle_mode = ("subtract" if modifiers & QtCore.Qt.AltModifier else
+                                "add" if modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
+                                else "replace")
+        item = QtWidgets.QGraphicsRectItem()
+        pen = QtGui.QPen(QtGui.QColor(45, 126, 225, 230), 1.25)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        item.setBrush(QtGui.QBrush(QtGui.QColor(66, 153, 225, 45)))
+        item.setZValue(1000.0)
+        item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.scene().addItem(item)
+        self._rectangle_item = item
+        self._update_rectangle(self._rectangle_origin)
+        event.accept()
 
-        def set_drag_mode(self, mode):
-            wanted = str(mode or "base").strip().lower()
-            try:
-                for index in range(self.drag_mode_combo.count()):
-                    if str(self.drag_mode_combo.itemData(index)) == wanted:
-                        self.drag_mode_combo.setCurrentIndex(index)
-                        return
-            except Exception:
-                pass
-
-        def redraw(self, *_args):
-            _DSSR_PY2D_DIALOG_BEFORE_V5.redraw(self, *_args)
-            try:
-                self._v4_apply_visual_theme()
-                for node in getattr(self, "nodes", []):
-                    node.setScale(1.0)
-            except Exception:
-                pass
-
-        def _add_number_labels(self):
-            """Add sparse residue numbers without covering bases or earlier labels."""
-            total = len(self.nodes)
-            if total <= 0:
-                return
-            period = int(self.number_every)
-            indices = {0, total - 1}
-            if period > 0:
-                indices.update(
-                    index
-                    for index in range(total)
-                    if (index + 1) % period == 0
-                )
-            for break_after in self.model.chain_breaks:
-                if 0 <= break_after < total:
-                    indices.add(break_after)
-                if 0 <= break_after + 1 < total:
-                    indices.add(break_after + 1)
-
-            center_x = sum(node.pos().x() for node in self.nodes) / float(total)
-            center_y = sum(node.pos().y() for node in self.nodes) / float(total)
-            node_radius = float(getattr(Dssr2DNodeItem, "RADIUS", 9.5)) + 2.5
-            node_rects = [
-                QtCore.QRectF(
-                    node.pos().x() - node_radius,
-                    node.pos().y() - node_radius,
-                    2.0 * node_radius,
-                    2.0 * node_radius,
-                )
-                for node in self.nodes
-            ]
-            used_label_rects = []
-
-            def _intersection_area(first, second):
-                try:
-                    overlap = first.intersected(second)
-                    if overlap.isEmpty():
-                        return 0.0
-                    return max(0.0, overlap.width()) * max(0.0, overlap.height())
-                except Exception:
-                    return 0.0
-
-            for index in sorted(indices):
-                node = self.nodes[index]
-                nt = self.model.nts[index]
-                value = str(nt.get("resi") or nt.get("number", index + 1))
-                label = QtWidgets.QGraphicsSimpleTextItem(value, node)
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(7)
-                label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(35, 35, 35)))
-
-                previous = None
-                following = None
-                if index > 0 and (index - 1) not in self.model.chain_breaks:
-                    previous = self.nodes[index - 1].pos()
-                if index + 1 < total and index not in self.model.chain_breaks:
-                    following = self.nodes[index + 1].pos()
-
-                if previous is not None and following is not None:
-                    tangent_x = following.x() - previous.x()
-                    tangent_y = following.y() - previous.y()
-                elif following is not None:
-                    tangent_x = following.x() - node.pos().x()
-                    tangent_y = following.y() - node.pos().y()
-                elif previous is not None:
-                    tangent_x = node.pos().x() - previous.x()
-                    tangent_y = node.pos().y() - previous.y()
-                else:
-                    tangent_x, tangent_y = 1.0, 0.0
-
-                tangent_length = math.hypot(tangent_x, tangent_y)
-                if tangent_length <= 1.0e-8:
-                    tangent_x, tangent_y, tangent_length = 1.0, 0.0, 1.0
-                tangent_x /= tangent_length
-                tangent_y /= tangent_length
-                normal_x, normal_y = -tangent_y, tangent_x
-
-                outward_x = node.pos().x() - center_x
-                outward_y = node.pos().y() - center_y
-                outward_length = math.hypot(outward_x, outward_y)
-                if outward_length <= 1.0e-8:
-                    outward_x, outward_y, outward_length = normal_x, normal_y, 1.0
-                outward_x /= outward_length
-                outward_y /= outward_length
-                if normal_x * outward_x + normal_y * outward_y < 0.0:
-                    normal_x = -normal_x
-                    normal_y = -normal_y
-
-                directions = [
-                    (normal_x, normal_y),
-                    (outward_x, outward_y),
-                    (-normal_x, -normal_y),
-                    (tangent_x, tangent_y),
-                    (-tangent_x, -tangent_y),
-                ]
-                distances = (17.0, 22.0, 28.0, 34.0)
-                rect = label.boundingRect()
-                best = None
-                for direction_rank, (dir_x, dir_y) in enumerate(directions):
-                    for distance_rank, distance in enumerate(distances):
-                        local_x = dir_x * distance - 0.5 * rect.width()
-                        local_y = dir_y * distance - 0.5 * rect.height()
-                        scene_rect = QtCore.QRectF(
-                            node.pos().x() + local_x,
-                            node.pos().y() + local_y,
-                            rect.width(),
-                            rect.height(),
-                        )
-                        overlap = 0.0
-                        for node_index, occupied in enumerate(node_rects):
-                            if node_index == index:
-                                continue
-                            overlap += 8.0 * _intersection_area(scene_rect, occupied)
-                        for occupied in used_label_rects:
-                            overlap += 12.0 * _intersection_area(scene_rect, occupied)
-                        # Prefer the outward local normal and a short leader-free offset
-                        # whenever collision scores are equal.
-                        score = overlap + 0.08 * distance_rank + 0.04 * direction_rank
-                        candidate = (score, local_x, local_y, scene_rect)
-                        if best is None or candidate[0] < best[0]:
-                            best = candidate
-                if best is None:
-                    best = (0.0, 16.0, -16.0, QtCore.QRectF())
-                label.setPos(best[1], best[2])
-                used_label_rects.append(best[3])
-                label.setZValue(8.0)
-                try:
-                    label.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-                except Exception:
-                    pass
-
-        def _v3_update_editor_status(self, action=""):
-            selected = sum(
-                1 for node in getattr(self, "nodes", []) if node.isSelected()
-            )
-            variant = str(
-                getattr(self.model, "_dssr2d_layout_variant", self.algorithm)
-            )
-            text = (
-                self.model.summary()
-                + " | %s" % variant
-                + " | selected=%d" % selected
-                + " | drag=%s" % self.drag_mode()
-                + " | left-drag base=move; left-drag empty=pan; Shift/Ctrl=multi-select"
-            )
-            if action:
-                text += " | %s" % action
-            try:
-                self.status_label.setText(text)
-            except Exception:
-                pass
-
-
-    DssrPython2DDialog = DssrPython2DDialogV5
-    DssrPython2DDialog._standard_editor_v5_installed = True
-
-
-# ---------------------------------------------------------------------------
-# Main DSSR GUI and command defaults
-# ---------------------------------------------------------------------------
-
-_DSSR_PY2D_INSTALL_CONTROLS_BEFORE_V5 = (
-    DssrPython2DIntegration.install_gui_controls
-)
-_DSSR_PY2D_OPEN_DIALOG_BEFORE_V5 = DssrPython2DIntegration._open_dialog
-
-
-def _dssr2d_v5_install_gui_controls(dialog):
-    _DSSR_PY2D_INSTALL_CONTROLS_BEFORE_V5(dialog)
-    try:
-        combo = dialog.py2d_layout_combo
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItems(["standard", "circular", "linear", "legacy radiate"])
-        combo.setCurrentIndex(0)
-        combo.blockSignals(False)
-        dialog.py2d_number_spin.setValue(10)
-        dialog.py2d_tertiary_cb.setChecked(False)
-        dialog.py2d_group.setTitle(
-            "RNA 2D (Python — standard scientific layout)"
-        )
-        dialog.py2d_open_btn.setToolTip(
-            "Open a consistent NAView/VARNA-style editor. Drag any nucleotide "
-            "directly; no Java, Jmol, ZIP, browser, or network is required."
-        )
-    except Exception:
-        pass
-
-
-def _dssr2d_v5_open_dialog(
-    dssr_data,
-    selection="all",
-    title="RNA secondary structure",
-    algorithm="standard",
-    number_every=10,
-    show_tertiary=0,
-    parent=None,
-):
-    return _DSSR_PY2D_OPEN_DIALOG_BEFORE_V5(
-        dssr_data=dssr_data,
-        selection=selection,
-        title=title,
-        algorithm=algorithm,
-        number_every=number_every,
-        show_tertiary=show_tertiary,
-        parent=parent,
-    )
-
-
-DssrPython2DIntegration.install_gui_controls = staticmethod(
-    _dssr2d_v5_install_gui_controls
-)
-DssrPython2DIntegration._open_dialog = staticmethod(_dssr2d_v5_open_dialog)
-DssrPython2DIntegration._standard_editor_v5_installed = True
-
-
-_DSSR_PY2D_COMMAND_BEFORE_V5 = dssr_2d
-
-
-def dssr_2d(
-    selection="all",
-    state=-1,
-    exe="x3dna-dssr",
-    layout="standard",
-    number_every=10,
-    show_tertiary=0,
-    title="",
-    quiet=1,
-):
-    """Open the standard pure-Python RNA 2D editor.
-
-    Layout choices are ``standard`` (bundled NAView), ``circular``, ``linear``,
-    and ``legacy radiate``.  The default visual style follows the simple
-    DSSR/VARNA convention: white circular residues, gray backbone, blue base
-    pairs, numbering every ten residues, and hidden optional tertiary contacts.
-    """
-    return _DSSR_PY2D_COMMAND_BEFORE_V5(
-        selection=selection,
-        state=state,
-        exe=exe,
-        layout=layout,
-        number_every=number_every,
-        show_tertiary=show_tertiary,
-        title=title,
-        quiet=quiet,
-    )
-
-
-DssrFunctions.dssr_2d = staticmethod(dssr_2d)
-cmd.extend("dssr_2d", dssr_2d)
-
-try:
-    print(
-        "Loaded DSSR RNA 2D standard editor %s: bundled NAView, uniform "
-        "VARNA-like styling, direct base dragging"
-        % __DSSR_PY2D_STANDARD_EDITOR_VERSION__
-    )
-except Exception:
-    pass
-
-# ============================================================================
-# DSSR pure-Python RNA 2D editor v6.0 — Premium gel + free brush selection
-#
-# APPEND-ONLY PATCH: retain the v5 scientific editor and add a reversible,
-# coloured gel presentation plus a paint-like selection tool.  The selected
-# 2D nucleotides continue to drive PyMOL's ``sele`` selection and are also
-# rendered as a separate, non-destructive 3D highlight object.
-# ============================================================================
-
-__DSSR_PY2D_PREMIUM_EDITOR_VERSION__ = "v6.1.2-white-canvas"
-
-
-if QtWidgets is not None and QtCore is not None and QtGui is not None:
-    _DSSR_PY2D_VIEW_BEFORE_V6 = Dssr2DGraphicsView
-    _DSSR_PY2D_NODE_BEFORE_V6 = Dssr2DNodeItem
-    _DSSR_PY2D_DIALOG_BEFORE_V6 = DssrPython2DDialog
-    _DSSR_PY2D_EDGE_PAINT_BEFORE_V6 = Dssr2DEdgeItem.paint
-
-    def _dssr2d_v6_edge_paint(self, painter, option, widget=None):
-        """Paint luminous gel edges, or delegate to v5 in scientific mode."""
-        gel = False
+    def _set_rectangle_selection(self, wanted):
+        changed = False
+        was_rebuilding = self.editor._rebuilding
+        self.editor._rebuilding = True
         try:
-            gel = bool(self.node_a.viewer.gel_style_enabled())
+            for node in self.editor.nodes:
+                selected = node.nt_index in wanted
+                if node.isSelected() != selected:
+                    node.setSelected(selected)
+                    changed = True
+        finally:
+            self.editor._rebuilding = was_rebuilding
+        # Throttle instead of restarting the debounce on every mouse move:
+        # continuous rectangle motion still produces live 3D updates.
+        if changed and not self.editor._sync_timer.isActive():
+            self.editor._schedule_live_sync()
+
+    def _update_rectangle(self, point):
+        rect = QtCore.QRectF(self._rectangle_origin, point).normalized()
+        self._rectangle_item.setRect(rect)
+        inside = {node.nt_index for node in self.editor.nodes if rect.contains(node.scenePos())}
+        if self._rectangle_mode == "add":
+            wanted = self._rectangle_base | inside
+        elif self._rectangle_mode == "subtract":
+            wanted = self._rectangle_base - inside
+        else:
+            wanted = inside
+        self._set_rectangle_selection(wanted)
+        self.editor._update_editor_status("rectangle: %d bases" % len(wanted))
+
+    def _finish_rectangle(self, cancel=False):
+        if cancel:
+            self._set_rectangle_selection(self._rectangle_base)
+        self.cancel_selection_gesture()
+        self.editor._flush_live_sync(final=True)
+        self.editor._update_editor_status("rectangle canceled" if cancel else "rectangle selection mapped to 3D")
+
+    def cancel_selection_gesture(self):
+        """Drop temporary overlays/state without scheduling hidden-view work."""
+        self.editor._sync_timer.stop()
+        self.editor._sync_pending = False
+        for item in (self._rectangle_item, self._brush_item):
+            if item is not None:
+                try:
+                    if item.scene() is self.scene():
+                        self.scene().removeItem(item)
+                except RuntimeError:
+                    pass  # The scene may already have disposed its old items.
+        self._rectangle_item = self._rectangle_origin = None
+        self._rectangle_base = set()
+        self._rectangle_mode = "replace"
+        self._brushing = self._brush_erase = False
+        self._brush_last = self._brush_path = self._brush_item = None
+        self.setCursor(QtCore.Qt.CrossCursor if self._tool() == "brush" else QtCore.Qt.ArrowCursor)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta:
+            current = abs(float(self.transform().m11()))
+            target = max(0.08, min(14.0, current * math.pow(1.00105, delta)))
+            factor = target / max(1.0e-9, current)
+            self.scale(factor, factor)
+            event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        node = self._node_item(self.itemAt(event.pos()))
+        if node is not None:
+            self.editor.select_indices(self.editor._stem_indices(node.nt_index), replace=True)
+            self.editor.fit_selected()
+        else:
+            self.editor.fit_scene()
+        event.accept()
+
+    @staticmethod
+    def _node_item(item):
+        for _ in range(6):
+            if item is None or isinstance(item, Dssr2DNodeItem):
+                return item
+            item = item.parentItem()
+        return None
+
+    def _tool(self):
+        return self.editor.interaction_tool()
+
+    def _scene_radius(self):
+        return self.editor.brush_radius_spin.value() / max(0.08, abs(self.transform().m11()))
+
+    @staticmethod
+    def _distance_to_segment(point, first, second):
+        dx, dy = second.x() - first.x(), second.y() - first.y()
+        length_sq = dx * dx + dy * dy
+        if length_sq <= 1.0e-12:
+            return math.hypot(point.x() - first.x(), point.y() - first.y())
+        ratio = ((point.x() - first.x()) * dx + (point.y() - first.y()) * dy) / length_sq
+        ratio = max(0.0, min(1.0, ratio))
+        return math.hypot(point.x() - (first.x() + ratio * dx), point.y() - (first.y() + ratio * dy))
+
+    def _begin_brush(self, event):
+        self.cancel_selection_gesture()
+        self._brushing = True
+        self._brush_erase = bool(event.modifiers() & QtCore.Qt.AltModifier)
+        additive = bool(event.modifiers() & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier))
+        point = self.mapToScene(event.pos())
+        self._brush_last = QtCore.QPointF(point)
+        if not additive and not self._brush_erase:
+            self.editor._rebuilding = True
+            try:
+                self.scene().clearSelection()
+            finally:
+                self.editor._rebuilding = False
+        self._brush_path = QtGui.QPainterPath(point)
+        item = QtWidgets.QGraphicsPathItem(self._brush_path)
+        color = QtGui.QColor(255, 100, 176, 70) if self._brush_erase else QtGui.QColor(58, 214, 255, 68)
+        pen = QtGui.QPen(color)
+        pen.setWidthF(2.0 * self._scene_radius())
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        pen.setJoinStyle(QtCore.Qt.RoundJoin)
+        item.setPen(pen)
+        item.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        item.setZValue(3.0)
+        item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.scene().addItem(item)
+        self._brush_item = item
+        self._apply_brush_segment(point, point)
+        self.setCursor(QtCore.Qt.CrossCursor)
+        event.accept()
+
+    def _apply_brush_segment(self, first, second):
+        radius, changed = self._scene_radius(), False
+        self.editor._rebuilding = True
+        try:
+            for node in self.editor.nodes:
+                if self._distance_to_segment(node.scenePos(), first, second) <= radius + node.RADIUS * 0.65:
+                    wanted = not self._brush_erase
+                    if node.isSelected() != wanted:
+                        node.setSelected(wanted)
+                        changed = True
+        finally:
+            self.editor._rebuilding = False
+        if changed:
+            self.editor._after_brush_selection(final=False)
+
+    def _finish_brush(self, event=None):
+        if not self._brushing:
+            return
+        self._brushing, self._brush_last = False, None
+        if self._brush_item is not None:
+            self.scene().removeItem(self._brush_item)
+        self._brush_item = self._brush_path = None
+        self.editor._after_brush_selection(final=True)
+        self.editor._update_view_cursor()
+        if event is not None:
+            event.accept()
+
+
+BASE_TEXT_COLORS = {
+    "A": "#237a3b", "C": "#245cc7", "G": "#a65e00",
+    "U": "#b52b47", "T": "#8a3fb0", "I": "#526679",
+}
+def _base_text_color(base, enabled=True):
+    return QtGui.QColor(BASE_TEXT_COLORS.get(str(base).upper(), "#334155")
+                       if enabled else "#334155")
+class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
+    RADIUS = 12.5
+
+    def __init__(self, viewer, nt, x, y):
+        radius = self.RADIUS
+        super().__init__(-radius, -radius, 2.0 * radius, 2.0 * radius)
+        self.viewer, self.nt = viewer, nt
+        self.nt_index = int(nt.get("index", 0))
+        self.edge_items = []
+        self._dragging = False
+        self._drag_origin = None
+        self._drag_starts = {}
+        self._drag_before = None
+        self._hover = False
+        self._pressed = False
+        self._visual_scale = 1.0
+        self._scale_target = 1.0
+        self._scale_velocity = 0.0
+        self._drag_weights = {}
+        self._last_drag_delta = QtCore.QPointF(0.0, 0.0)
+        self._last_move_pos = None
+        self._last_move_time = None
+        self._drag_speed = 0.0
+        self.setFlags(
+            QtWidgets.QGraphicsItem.ItemIsSelectable
+            | QtWidgets.QGraphicsItem.ItemIsFocusable
+            | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setCursor(QtCore.Qt.ArrowCursor)
+        self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        self.setPos(float(x), float(y))
+        self.setZValue(5.0)
+        self._apply_style(False)
+        self._add_text()
+        _layout_no_mouse(self.base_text_item)
+        self.setToolTip(self._tooltip())
+
+    def _base_fill(self):
+        rgb = (184, 207, 222) if self.viewer.gel_style_enabled() else (250, 252, 254)
+        return QtGui.QColor(*rgb)
+
+    def _apply_style(self, selected):
+        color = QtGui.QColor(230, 55, 35) if selected else QtGui.QColor(45, 45, 45)
+        self.setPen(QtGui.QPen(color, 2.8 if selected else 1.2))
+        self.setBrush(QtGui.QBrush(self._base_fill()))
+
+    def _add_text(self):
+        text = QtWidgets.QGraphicsSimpleTextItem(str(self.nt.get("base", "N")), self)
+        font = QtGui.QFont("Sans Serif")
+        font.setPointSize(8)
+        font.setBold(True)
+        text.setFont(font)
+        rect = text.boundingRect()
+        text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
+        text.setBrush(QtGui.QBrush(_base_text_color(self.nt.get("base", ""), self.viewer.base_colors)))
+        self.base_text_item = text
+
+    def _tooltip(self):
+        pieces = ["nt %d" % int(self.nt.get("number", self.nt_index + 1))]
+        if self.nt.get("nt_id"):
+            pieces.append(str(self.nt.get("nt_id")))
+        else:
+            if self.nt.get("chain"):
+                pieces.append("chain %s" % self.nt.get("chain"))
+            if self.nt.get("resi"):
+                pieces.append("resi %s" % self.nt.get("resi"))
+        return "\n".join(pieces)
+
+    def itemChange(self, change, value):
+        if change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
+            for edge in self.edge_items:
+                edge.update_geometry()
+        result = super().itemChange(change, value)
+        try:
+            if change == QtWidgets.QGraphicsItem.ItemSelectedHasChanged:
+                selected = bool(value)
+                self._apply_style(selected)
+                self.setZValue(12.0 if selected else (16.0 if self._hover else 5.0))
+                self._set_target_scale(
+                    1.045 if selected else (1.075 if self._hover else 1.0),
+                    kick=0.010 if selected else 0.0,
+                )
+                self.update()
+            elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
+                self.viewer._schedule_scene_rect()
         except Exception:
             pass
-        if not gel:
-            return _DSSR_PY2D_EDGE_PAINT_BEFORE_V6(
-                self, painter, option, widget
-            )
+        return result
 
-        kind = str(getattr(self, "kind", "backbone"))
-        layer = int(getattr(self, "layer", 0))
-        if kind == "backbone":
-            color = QtGui.QColor(112, 154, 186, 225)
-            width = 1.65
-            style = QtCore.Qt.SolidLine
-        elif kind == "tertiary":
-            color = QtGui.QColor(235, 111, 255, 220)
-            width = 1.55
-            style = QtCore.Qt.DashLine
-        elif layer > 0:
-            palette = (
-                QtGui.QColor(183, 123, 255, 240),
-                QtGui.QColor(255, 112, 176, 240),
-                QtGui.QColor(255, 190, 82, 240),
-            )
-            color = palette[(layer - 1) % len(palette)]
-            width = 2.05
-            style = QtCore.Qt.SolidLine
+    def mousePressEvent(self, event):
+        self._pressed = True
+        self._set_target_scale(0.935, kick=-0.035)
+        self._last_move_pos = event.scenePos()
+        self._last_move_time = time.monotonic()
+        self._drag_speed = 0.0
+        button = event.button()
+        if button != QtCore.Qt.LeftButton:
+            self.viewer.select_nucleotide(self.nt_index)
+            super().mousePressEvent(event)
+            return
+
+        modifiers = event.modifiers()
+        if modifiers & QtCore.Qt.ControlModifier:
+            self.setSelected(not self.isSelected())
+            if not self.isSelected():
+                self.viewer._sync_pymol_selection()
+                event.accept()
+                return
+        elif modifiers & QtCore.Qt.ShiftModifier:
+            self.setSelected(True)
+        elif not self.isSelected():
+            try:
+                self.scene().clearSelection()
+            except Exception:
+                pass
+            self.setSelected(True)
+        selected = [node for node in self.viewer.nodes if node.isSelected()]
+        if self not in selected:
+            selected.append(self)
+            self.setSelected(True)
+        self._dragging = True
+        self._drag_origin = event.scenePos()
+        self._drag_before = self.viewer._capture_positions()
+        self._drag_starts = {node.nt_index: QtCore.QPointF(node.pos()) for node in selected}
+        try:
+            self.setCursor(QtCore.Qt.ArrowCursor)
+            self.viewer.view.setFocus()
+        except Exception:
+            pass
+        self.viewer._sync_pymol_selection()
+        event.accept()
+        try:
+            self.viewer._prepare_node_drag(self, modifiers)
+        except Exception:
+            pass
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging or self._drag_origin is None:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.scenePos() - self._drag_origin
+        self._last_drag_delta = QtCore.QPointF(delta)
+        now = time.monotonic()
+        if self._last_move_pos is not None and self._last_move_time is not None:
+            dt = max(0.001, now - self._last_move_time)
+            step = event.scenePos() - self._last_move_pos
+            instant = math.hypot(step.x(), step.y()) / dt
+            self._drag_speed = 0.72 * self._drag_speed + 0.28 * instant
+        self._last_move_pos, self._last_move_time = event.scenePos(), now
+        self._apply_drag_delta(delta, smooth=self.viewer.gel_style_enabled())
+        event.accept()
+
+    def _apply_drag_delta(self, delta, smooth=False):
+        """Use the same weighted endpoint during movement and history capture."""
+        for index, start in self._drag_starts.items():
+            if not 0 <= index < len(self.viewer.nodes):
+                continue
+            weight = float(self._drag_weights.get(index, 1.0))
+            x = start.x() + delta.x() * weight
+            y = start.y() + delta.y() * weight
+            node = self.viewer.nodes[index]
+            if smooth and weight < 0.999:
+                follow = 0.44 + 0.34 * weight
+                current = node.pos()
+                x = current.x() + (x - current.x()) * follow
+                y = current.y() + (y - current.y()) * follow
+            node.setPos(x, y)
+
+    def mouseReleaseEvent(self, event):
+        was_dragging = self._dragging
+        if was_dragging:
+            # Followers reach the weighted endpoint before the undo snapshot.
+            self._apply_drag_delta(QtCore.QPointF(self._last_drag_delta))
+        if self._dragging:
+            self._dragging = False
+            self.viewer._push_history(self._drag_before, self.viewer._capture_positions(),
+                                      "move base%s" % ("s" if len(self._drag_starts) != 1 else ""))
+            self._drag_origin = self._drag_before = None
+            self._drag_starts = {}
+            try:
+                self.setCursor(QtCore.Qt.ArrowCursor)
+            except Exception:
+                pass
+            self.viewer._update_editor_status("manual move")
+            event.accept()
         else:
-            color = QtGui.QColor(78, 200, 255, 245)
-            width = 2.15
-            style = QtCore.Qt.SolidLine
+            super().mouseReleaseEvent(event)
+        self._pressed = False
+        target = 1.075 if self._hover else (1.045 if self.isSelected() else 1.0)
+        kick = min(0.11, max(0.02, self._drag_speed * 0.00012)) if was_dragging else 0.025
+        self._set_target_scale(target, kick=kick)
+        self._drag_weights = {}
+        self._last_move_pos = self._last_move_time = None
+        self.update()
 
+    def contextMenuEvent(self, event):
+        menu = QtWidgets.QMenu()
+        header = menu.addAction("%s  ·  nt %s" % (
+            self.nt.get("base", "N"), self.nt.get("resi") or self.nt_index + 1))
+        header.setEnabled(False)
+        menu.addSeparator()
+        groups = {}
+        for text, group in (
+            ("Select base", lambda i: [i]),
+            ("Select base pair", self.viewer._pair_group),
+            ("Select loop / unpaired region", self.viewer._loop_group),
+            ("Select stem", self.viewer._stem_indices),
+            ("Select whole branch", self.viewer._branch_group),
+        ):
+            groups[menu.addAction(text)] = group
+        menu.addSeparator()
+        actions = {menu.addAction(text): callback for text, callback in (
+            ("Center selection", self.viewer.fit_selected),
+            ("Reset selection to automatic layout", self.viewer.reset_selected_bases),
+            ("Undo", self.viewer.undo_layout),
+        )}
+        try:
+            chosen = menu.exec_(event.screenPos())
+        except Exception:
+            try:
+                chosen = menu.exec(event.screenPos())
+            except Exception:
+                chosen = None
+        if chosen in groups:
+            self.viewer.select_indices(groups[chosen](self.nt_index), replace=True)
+        elif chosen in actions:
+            actions[chosen]()
+        event.accept()
+
+    def boundingRect(self):
+        radius = float(self.RADIUS)
+        return QtCore.QRectF(
+            -radius - 7.0,
+            -radius - 7.0,
+            2.0 * radius + 14.0,
+            2.0 * radius + 14.0,
+        )
+
+    def shape(self):
+        radius = float(self.RADIUS) + 3.0
+        path = QtGui.QPainterPath()
+        path.addEllipse(QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius))
+        return path
+
+    def paint(self, painter, option, widget=None):
+        radius = float(self.RADIUS)
+        gel = self.viewer.gel_style_enabled()
         saved = False
         try:
             painter.save()
             saved = True
             painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            glow_color = QtGui.QColor(color)
-            glow_color.setAlpha(48)
-            glow = QtGui.QPen(glow_color)
-            glow.setWidthF(width + 4.2)
-            glow.setStyle(style)
-            glow.setCapStyle(QtCore.Qt.RoundCap)
-            glow.setJoinStyle(QtCore.Qt.RoundJoin)
-            painter.setPen(glow)
-            painter.setBrush(QtCore.Qt.NoBrush)
-            painter.drawPath(self.path())
+            selected = bool(self.isSelected())
+            hovered = bool(getattr(self, "_hover", False))
+            pressed = bool(getattr(self, "_pressed", False))
+            base = QtGui.QColor(self._base_fill())
 
-            main = QtGui.QPen(color)
-            main.setWidthF(width)
-            main.setStyle(style)
-            main.setCapStyle(QtCore.Qt.RoundCap)
-            main.setJoinStyle(QtCore.Qt.RoundJoin)
-            painter.setPen(main)
-            painter.drawPath(self.path())
+            shadow = QtGui.QColor(2, 8, 23, 105 if gel else 38)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(shadow))
+            painter.drawEllipse(
+                QtCore.QRectF(
+                    -radius + 2.2,
+                    -radius + 3.4,
+                    2.0 * radius,
+                    2.0 * radius,
+                )
+            )
+
+            if selected or hovered:
+                aura = QtGui.QColor(55, 220, 255, 120 if selected else 55)
+                aura_radius = radius + (5.2 if selected else 3.4)
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(aura))
+                painter.drawEllipse(
+                    QtCore.QRectF(
+                        -aura_radius,
+                        -aura_radius,
+                        2.0 * aura_radius,
+                        2.0 * aura_radius,
+                    )
+                )
+
+            if gel:
+                gradient = QtGui.QRadialGradient(
+                    QtCore.QPointF(-radius * 0.38, -radius * 0.48),
+                    radius * 1.58,
+                )
+                gradient.setColorAt(0.00, QtGui.QColor(255, 255, 255, 252))
+                gradient.setColorAt(0.18, base.lighter(148))
+                gradient.setColorAt(0.62, base.lighter(106))
+                gradient.setColorAt(1.00, base.darker(132))
+                fill = QtGui.QBrush(gradient)
+                border = QtGui.QColor(188, 235, 255, 225)
+            else:
+                fill = QtGui.QBrush(base)
+                border = QtGui.QColor(55, 72, 96, 210)
+
+            if selected:
+                border = QtGui.QColor(44, 215, 255, 255)
+            elif hovered:
+                border = QtGui.QColor(105, 225, 255, 245)
+            if pressed:
+                border = QtGui.QColor(255, 255, 255, 250)
+            pen = QtGui.QPen(border)
+            pen.setWidthF(2.35 if selected else (1.75 if hovered else 1.2))
+            painter.setPen(pen)
+            painter.setBrush(fill)
+            painter.drawEllipse(QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius))
+
+            if gel:
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 145)))
+                painter.drawEllipse(
+                    QtCore.QRectF(
+                        -radius * 0.58,
+                        -radius * 0.68,
+                        radius * 0.92,
+                        radius * 0.45,
+                    )
+                )
             painter.restore()
         except Exception:
             if saved:
@@ -9927,964 +4809,1391 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                     painter.restore()
                 except Exception:
                     pass
-            return _DSSR_PY2D_EDGE_PAINT_BEFORE_V6(
-                self, painter, option, widget
-            )
+            QtWidgets.QGraphicsEllipseItem.paint(self, painter, option, widget)
 
-    Dssr2DEdgeItem.paint = _dssr2d_v6_edge_paint
-    Dssr2DEdgeItem._premium_editor_v6_installed = True
+    def _set_target_scale(self, target, kick=0.0):
+        self._scale_target = float(target)
+        self._scale_velocity += float(kick)
+        try:
+            self.viewer._ensure_animation()
+        except Exception:
+            pass
+
+    def _advance_visual(self):
+        enabled = self.viewer.gel_style_enabled()
+        target = self._scale_target if enabled else 1.0
+        stiffness = 0.24 if enabled else 0.42
+        damping = 0.68 if enabled else 0.55
+        self._scale_velocity = (
+            self._scale_velocity + (target - self._visual_scale) * stiffness
+        ) * damping
+        self._visual_scale += self._scale_velocity
+        if abs(target - self._visual_scale) < 0.0006 and abs(self._scale_velocity) < 0.0006:
+            self._visual_scale = target
+            self._scale_velocity = 0.0
+        try:
+            self.setScale(max(0.82, min(1.24, self._visual_scale)))
+            self.update()
+        except Exception:
+            pass
+        return not (
+            abs(target - self._visual_scale) < 0.0007 and abs(self._scale_velocity) < 0.0007
+        )
+
+    def hoverEnterEvent(self, event):
+        self._hover = True
+        self.setZValue(16.0)
+        self._set_target_scale(1.075, kick=0.018)
+        self.update()
+        try:
+            super().hoverEnterEvent(event)
+        except Exception:
+            pass
+
+    def hoverLeaveEvent(self, event):
+        self._hover = False
+        self.setZValue(12.0 if self.isSelected() else 5.0)
+        self._set_target_scale(1.045 if self.isSelected() else 1.0)
+        self.update()
+        try:
+            super().hoverLeaveEvent(event)
+        except Exception:
+            pass
 
 
-    class Dssr2DGraphicsViewV6(_DSSR_PY2D_VIEW_BEFORE_V6):
-        """Canvas navigation plus a freehand, radius-based nucleotide brush."""
+class DssrSequenceView(QtWidgets.QTextEdit):
+    """One text document for the sequence, real residue ruler, and linked selection."""
 
-        def __init__(self, scene, parent=None):
-            _DSSR_PY2D_VIEW_BEFORE_V6.__init__(self, scene, parent)
-            self.editor = parent
-            self._v6_brushing = False
-            self._v6_brush_erase = False
-            self._v6_brush_last = None
-            self._v6_brush_path = None
-            self._v6_brush_item = None
-            self._v6_brush_changed = False
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self._selected = frozenset()
+        self._anchor = self._drag_anchor = None
+        self._gesture_base = set()
+        self._gesture_toggle = False
+        self._letter_colors = None
+        self.setReadOnly(True)
+        self.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.setMouseTracking(True)
+        self.viewport().setCursor(QtCore.Qt.ArrowCursor)
+        font = QtGui.QFont("Monospace", 10)
+        font.setStyleHint(QtGui.QFont.TypeWriter)
+        self.setFont(font)
+        self.document().setDocumentMargin(8)
+        self.setFixedHeight(self.fontMetrics().height() * 2 + 24
+                            + self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent))
+        self.setStyleSheet("QTextEdit { background: white; color: #64748b; border: 1px solid #dce5ea; border-radius: 5px; }")
+        self.setToolTip("Sequence: click or drag a range · Shift: extend · Ctrl: toggle\nNumbers are PyMOL residue IDs; hover for the original DSSR identifier.")
+        self._build_document()
+        self.set_letter_colors(editor.base_colors)
 
-        def _v6_tool(self):
-            try:
-                return self.editor.interaction_tool()
-            except Exception:
-                return "edit"
+    @staticmethod
+    def _text_length(text):
+        return len(text.encode("utf-16-le")) // 2
 
-        def _v6_scene_radius(self):
-            radius_px = 34.0
-            try:
-                radius_px = float(self.editor.brush_radius_spin.value())
-            except Exception:
-                pass
-            try:
-                scale = abs(float(self.transform().m11()))
-            except Exception:
-                scale = 1.0
-            return radius_px / max(0.08, scale)
+    def _build_document(self):
+        parts, spans, rulers = [], [], []
+        character_offset = document_offset = 0
+        nts, breaks = self.editor.model.nts, self.editor.model.chain_breaks
+        for index, nt in enumerate(nts):
+            chain_start = index == 0 or index - 1 in breaks
+            prefix = (("  |  " if index else "") + (str(nt.get("chain", "")) or "–") + ": ") if chain_start else " "
+            parts.append(prefix)
+            character_offset += len(prefix)
+            document_offset += self._text_length(prefix)
+            base = str(nt.get("base", ""))
+            start = document_offset
+            parts.append(base)
+            document_offset += self._text_length(base)
+            spans.append((start, document_offset))
+            if chain_start or (index + 1) % 10 == 0 or index == len(nts) - 1:
+                residue = str(nt.get("resi", "")).strip()
+                if residue:
+                    rulers.append((character_offset, residue))
+            character_offset += len(base)
+        sequence = "".join(parts)
+        ruler = [" "] * len(sequence)
+        occupied = -1
+        for start, label in rulers:
+            if start <= occupied:
+                continue
+            end = start + len(label)
+            if end > len(ruler):
+                ruler.extend(" " * (end - len(ruler)))
+            ruler[start:end] = label
+            occupied = end
+        ruler = "".join(ruler)
+        self.setPlainText(ruler + "\n" + sequence)
+        offset = self._text_length(ruler) + 1
+        self._spans = [(start + offset, end + offset) for start, end in spans]
+        self._starts = [start for start, _end in self._spans]
 
-        @staticmethod
-        def _v6_distance_to_segment(point, first, second):
-            px = float(point.x())
-            py = float(point.y())
-            ax = float(first.x())
-            ay = float(first.y())
-            bx = float(second.x())
-            by = float(second.y())
-            dx = bx - ax
-            dy = by - ay
-            length_sq = dx * dx + dy * dy
-            if length_sq <= 1.0e-12:
-                return math.hypot(px - ax, py - ay)
-            ratio = ((px - ax) * dx + (py - ay) * dy) / length_sq
-            ratio = max(0.0, min(1.0, ratio))
-            return math.hypot(px - (ax + ratio * dx), py - (ay + ratio * dy))
+    def set_letter_colors(self, enabled):
+        enabled = bool(enabled)
+        if enabled == self._letter_colors:
+            return
+        self._letter_colors = enabled
+        cursor = QtGui.QTextCursor(self.document())
+        cursor.beginEditBlock()
+        for nt, (start, end) in zip(self.editor.model.nts, self._spans):
+            cursor.setPosition(start)
+            cursor.setPosition(end, QtGui.QTextCursor.KeepAnchor)
+            style = QtGui.QTextCharFormat()
+            style.setForeground(_base_text_color(nt.get("base", ""), enabled))
+            style.setFontWeight(QtGui.QFont.Bold)
+            cursor.setCharFormat(style)
+        cursor.endEditBlock()
 
-        def _v6_begin_brush(self, event):
-            self._v4_stop_inertia()
-            self._v6_brushing = True
-            self._v6_brush_erase = bool(event.modifiers() & QtCore.Qt.AltModifier)
-            additive = bool(
-                event.modifiers()
-                & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
-            )
-            point = self.mapToScene(event.pos())
-            self._v6_brush_last = QtCore.QPointF(point)
-            self._v6_brush_changed = False
+    def set_selected_indices(self, indices):
+        wanted = frozenset(index for index in indices if 0 <= index < len(self._spans))
+        if wanted == self._selected:
+            return
+        self._selected = wanted
+        groups = []
+        for index in sorted(wanted):
+            if groups and index == groups[-1][1] + 1:
+                groups[-1][1] = index
+            else:
+                groups.append([index, index])
+        selections = []
+        for first, last in groups:
+            selection = QtWidgets.QTextEdit.ExtraSelection()
+            selection.cursor = QtGui.QTextCursor(self.document())
+            selection.cursor.setPosition(self._spans[first][0])
+            selection.cursor.setPosition(self._spans[last][1], QtGui.QTextCursor.KeepAnchor)
+            selection.format.setBackground(QtGui.QColor("#dfebf8"))
+            selections.append(selection)
+        self.setExtraSelections(selections)
 
-            if not additive and not self._v6_brush_erase:
-                try:
-                    self.editor._v3_rebuilding = True
-                    self.scene().clearSelection()
-                finally:
-                    self.editor._v3_rebuilding = False
+    def _index_at(self, position):
+        offset = self.cursorForPosition(position).position()
+        index = bisect.bisect_right(self._starts, offset) - 1
+        return index if index >= 0 and offset <= self._spans[index][1] else None
 
-            path = QtGui.QPainterPath(point)
-            self._v6_brush_path = path
-            try:
-                item = QtWidgets.QGraphicsPathItem()
-                item.setPath(path)
-                color = QtGui.QColor(255, 100, 176, 70)
-                if not self._v6_brush_erase:
-                    color = QtGui.QColor(58, 214, 255, 68)
-                pen = QtGui.QPen(color)
-                pen.setWidthF(2.0 * self._v6_scene_radius())
-                pen.setCapStyle(QtCore.Qt.RoundCap)
-                pen.setJoinStyle(QtCore.Qt.RoundJoin)
-                item.setPen(pen)
-                item.setBrush(QtCore.Qt.NoBrush)
-                item.setZValue(3.0)
-                item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-                self.scene().addItem(item)
-                self._v6_brush_item = item
-            except Exception:
-                self._v6_brush_item = None
+    def _apply_range(self, index):
+        indices = set(range(min(self._drag_anchor, index), max(self._drag_anchor, index) + 1))
+        wanted = self._gesture_base.symmetric_difference(indices) if self._gesture_toggle else indices
+        if wanted != self._selected:
+            self.editor.select_indices(wanted, replace=True)
 
-            self._v6_apply_brush_segment(point, point)
-            try:
-                self.setCursor(QtCore.Qt.CrossCursor)
-            except Exception:
-                pass
+    def mousePressEvent(self, event):
+        index = self._index_at(event.pos())
+        if event.button() != QtCore.Qt.LeftButton or index is None:
+            super().mousePressEvent(event)
+            return
+        self.editor.view.setFocus(QtCore.Qt.MouseFocusReason)
+        shift = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+        self._drag_anchor = self._anchor if shift and self._anchor is not None else index
+        if not shift or self._anchor is None:
+            self._anchor = index
+        self._gesture_base = set(self._selected)
+        self._gesture_toggle = bool(event.modifiers() & QtCore.Qt.ControlModifier)
+        self._apply_range(index)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        index = self._index_at(event.pos())
+        if index is not None:
+            nt = self.editor.model.nts[index]
+            self.viewport().setToolTip("%s · %s\n%s" % (
+                nt.get("base", ""), nt.get("name", ""),
+                nt.get("nt_id") or "Sequence position %d; no DSSR residue identifier" % (index + 1)))
+        if self._drag_anchor is not None:
+            if index is not None:
+                self._apply_range(index)
             event.accept()
+        else:
+            super().mouseMoveEvent(event)
 
-        def _v6_apply_brush_segment(self, first, second):
-            radius = self._v6_scene_radius()
-            changed = False
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self._drag_anchor is not None:
+            index = self._index_at(event.pos())
+            if index is not None:
+                self._apply_range(index)
+            self._drag_anchor = None
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().x() or event.angleDelta().y()
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.value() - delta)
+        event.accept()
+class Dssr2DEditor(QtWidgets.QWidget):
+    HISTORY_LIMIT = 100
+
+    HIGHLIGHT_OBJECT = "_dssr_2d_brush_highlight"
+
+    def __init__(
+        self,
+        model,
+        pymol_selection="all",
+        algorithm="standard",
+        number_every=10,
+        show_tertiary=False,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.model = model
+        self.pymol_selection = str(pymol_selection or "all")
+        requested = str(algorithm or "standard").strip().lower()
+        self.algorithm = requested if requested in LAYOUT_CHOICES else "standard"
+        self.number_every = max(0, int(number_every))
+        self.show_tertiary = bool(show_tertiary)
+        self.base_colors = True
+        self.nodes, self.edges = [], []
+        self._rebuilding = False
+        self._auto_positions = []
+        self._undo, self._redo = [], []
+        self._scene_rect_pending = False
+        # Topology belongs to this model; coordinate edits do not change it.
+        self._pair_table = Dssr2DLayout._planar_pair_table(model)
+        self._stems = Dssr2DLayout._stem_tree(self._pair_table, model.chain_breaks)
+        self._adjacency = None
+        self._sync_pending = False
+        self._sync_from_pymol = False
+        self._last_pymol_signature = None
+        self._last_highlight_signature = None
+        self._closed = False
+        self._view_active = True
+        self._shown_once = False
+
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._animation_tick)
+        self._sync_timer = QtCore.QTimer(self)
+        self._sync_timer.setSingleShot(True)
+        self._sync_timer.setInterval(55)
+        self._sync_timer.timeout.connect(self._flush_live_sync)
+        self._reverse_timer = QtCore.QTimer(self)
+        self._reverse_timer.setInterval(450)
+        self._reverse_timer.timeout.connect(self._pull_pymol_selection)
+
+        self._build_widgets()
+        self.setStyleSheet(WHITE_THEME)
+        self.view.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("white")))
+        self.scene.selectionChanged.connect(self._selection_changed)
+        self.layout_combo.currentTextChanged.connect(self.redraw)
+        self.number_spin.valueChanged.connect(self.redraw)
+        self.tertiary_cb.toggled.connect(self.redraw)
+        self.base_colors_cb.toggled.connect(self.redraw)
+        self.redraw()
+        self._update_history_buttons()
+        self._update_view_cursor()
+        self._update_editor_status("ready")
+        self._reverse_timer.start()
+        QtCore.QTimer.singleShot(0, self.fit_scene)
+
+    def _add_edge(self, i, j, kind, layer=0, lw="", linear=False):
+        if i < 0 or j < 0 or i >= len(self.nodes) or j >= len(self.nodes):
+            return None
+        edge = Dssr2DEdgeItem(
+            self.nodes[i],
+            self.nodes[j],
+            kind=kind,
+            layer=layer,
+            lw=lw,
+            linear_layout=linear,
+        )
+        self.scene.addItem(edge)
+        self.nodes[i].edge_items.append(edge)
+        self.nodes[j].edge_items.append(edge)
+        self.edges.append(edge)
+        edge.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        edge.setAcceptHoverEvents(False)
+        return edge
+
+    def redraw(self, *_args):
+        if self._closed or self._rebuilding:
+            return
+        self.view.cancel_selection_gesture()
+        self._rebuilding = True
+        try:
+            self.algorithm = self.layout_combo.currentText().strip().lower() or "smart"
+            self.number_every = self.number_spin.value()
+            self.show_tertiary = self.tertiary_cb.isChecked()
+            self.base_colors = self.base_colors_cb.isChecked()
+            positions = self._capture_positions()
+            selected = [node.nt_index for node in self.nodes if node.isSelected()]
+            preserve = bool(positions) and self.sender() not in (self.layout_combo, self.redraw_btn)
+            if preserve:
+                transform = QtGui.QTransform(self.view.transform())
+                center = self.view.mapToScene(self.view.viewport().rect().center())
+            else:
+                positions = Dssr2DLayout.compute(self.model, self.algorithm)
+                self._auto_positions = [(float(x), float(y)) for x, y in positions]
+            self.scene.blockSignals(True)
+            self.scene.clear()
+            self.nodes, self.edges = [], []
+            for nt, (x, y) in zip(self.model.nts, positions):
+                node = Dssr2DNodeItem(self, nt, x, y)
+                self.scene.addItem(node)
+                self.nodes.append(node)
+            linear = self.algorithm == "linear"
+            for index in range(len(self.nodes) - 1):
+                if index not in self.model.chain_breaks:
+                    self._add_edge(index, index + 1, "backbone", linear=linear)
+            groups = [("secondary", self.model.secondary_pairs)]
+            if self.show_tertiary:
+                groups.append(("tertiary", self.model.tertiary_pairs))
+            for kind, pairs in groups:
+                for pair in pairs:
+                    layer = -1 if kind == "tertiary" else int(pair.get("layer", 0))
+                    self._add_edge(int(pair["i"]), int(pair["j"]), kind,
+                                   layer=layer, lw=pair.get("lw", ""), linear=linear)
+            self._add_number_labels()
+            self._add_chain_labels()
+            self._update_scene_rect()
+            for index in selected:
+                if index < len(self.nodes):
+                    self.nodes[index].setSelected(True)
+            self.scene.blockSignals(False)
+            if preserve:
+                self.view.setTransform(transform)
+                self.view.centerOn(center)
+            else:
+                self.fit_scene()
+            self._update_editor_status("redrawn" if preserve else "automatic layout")
+        finally:
+            self.scene.blockSignals(False)
+            self._rebuilding = False
+        for node in self.nodes:
+            node.setScale(1.0)
+        self._refresh_scene_style()
+        self._ensure_animation()
+
+    def _add_number_labels(self):
+        """Add sparse residue numbers without covering bases or earlier labels."""
+        total = len(self.nodes)
+        if total <= 0:
+            return
+        period = int(self.number_every)
+        indices = {0, total - 1}
+        if period > 0:
+            indices.update(index for index in range(total) if (index + 1) % period == 0)
+        for break_after in self.model.chain_breaks:
+            if 0 <= break_after < total:
+                indices.add(break_after)
+            if 0 <= break_after + 1 < total:
+                indices.add(break_after + 1)
+
+        center_x = sum(node.pos().x() for node in self.nodes) / float(total)
+        center_y = sum(node.pos().y() for node in self.nodes) / float(total)
+        node_radius = float(getattr(Dssr2DNodeItem, "RADIUS", 9.5)) + 2.5
+        node_rects = [
+            QtCore.QRectF(
+                node.pos().x() - node_radius,
+                node.pos().y() - node_radius,
+                2.0 * node_radius,
+                2.0 * node_radius,
+            )
+            for node in self.nodes
+        ]
+        used_label_rects = []
+
+        def _intersection_area(first, second):
             try:
-                self.editor._v3_rebuilding = True
-                for node in list(getattr(self.editor, "nodes", [])):
-                    node_radius = float(getattr(node, "RADIUS", 10.0)) * 0.65
-                    distance = self._v6_distance_to_segment(
-                        node.scenePos(), first, second
+                overlap = first.intersected(second)
+                if overlap.isEmpty():
+                    return 0.0
+                return max(0.0, overlap.width()) * max(0.0, overlap.height())
+            except Exception:
+                return 0.0
+
+        for index in sorted(indices):
+            node = self.nodes[index]
+            nt = self.model.nts[index]
+            value = str(nt.get("resi") or nt.get("number", index + 1))
+            label = QtWidgets.QGraphicsSimpleTextItem(value, node)
+            font = QtGui.QFont("Sans Serif")
+            font.setPointSize(7)
+            label.setFont(font)
+            label.setBrush(QtGui.QBrush(QtGui.QColor(35, 35, 35)))
+
+            previous = None
+            following = None
+            if index > 0 and (index - 1) not in self.model.chain_breaks:
+                previous = self.nodes[index - 1].pos()
+            if index + 1 < total and index not in self.model.chain_breaks:
+                following = self.nodes[index + 1].pos()
+
+            if previous is not None and following is not None:
+                tangent_x = following.x() - previous.x()
+                tangent_y = following.y() - previous.y()
+            elif following is not None:
+                tangent_x = following.x() - node.pos().x()
+                tangent_y = following.y() - node.pos().y()
+            elif previous is not None:
+                tangent_x = node.pos().x() - previous.x()
+                tangent_y = node.pos().y() - previous.y()
+            else:
+                tangent_x, tangent_y = 1.0, 0.0
+
+            tangent_length = math.hypot(tangent_x, tangent_y)
+            if tangent_length <= 1.0e-8:
+                tangent_x, tangent_y, tangent_length = 1.0, 0.0, 1.0
+            tangent_x /= tangent_length
+            tangent_y /= tangent_length
+            normal_x, normal_y = -tangent_y, tangent_x
+
+            outward_x = node.pos().x() - center_x
+            outward_y = node.pos().y() - center_y
+            outward_length = math.hypot(outward_x, outward_y)
+            if outward_length <= 1.0e-8:
+                outward_x, outward_y, outward_length = normal_x, normal_y, 1.0
+            outward_x /= outward_length
+            outward_y /= outward_length
+            if normal_x * outward_x + normal_y * outward_y < 0.0:
+                normal_x = -normal_x
+                normal_y = -normal_y
+
+            directions = [
+                (normal_x, normal_y),
+                (outward_x, outward_y),
+                (-normal_x, -normal_y),
+                (tangent_x, tangent_y),
+                (-tangent_x, -tangent_y),
+            ]
+            distances = (17.0, 22.0, 28.0, 34.0)
+            rect = label.boundingRect()
+            best = None
+            for direction_rank, (dir_x, dir_y) in enumerate(directions):
+                for distance_rank, distance in enumerate(distances):
+                    local_x = dir_x * distance - 0.5 * rect.width()
+                    local_y = dir_y * distance - 0.5 * rect.height()
+                    scene_rect = QtCore.QRectF(
+                        node.pos().x() + local_x,
+                        node.pos().y() + local_y,
+                        rect.width(),
+                        rect.height(),
                     )
-                    if distance <= radius + node_radius:
-                        wanted = not self._v6_brush_erase
-                        if bool(node.isSelected()) != wanted:
-                            node.setSelected(wanted)
-                            changed = True
-            finally:
-                self.editor._v3_rebuilding = False
-            self._v6_brush_changed = self._v6_brush_changed or changed
-            if changed:
-                self.editor._v6_after_brush_selection(final=False)
-
-        def _v6_finish_brush(self, event=None):
-            if not self._v6_brushing:
-                return
-            self._v6_brushing = False
-            self._v6_brush_last = None
-            if self._v6_brush_item is not None:
-                try:
-                    self.scene().removeItem(self._v6_brush_item)
-                except Exception:
-                    pass
-            self._v6_brush_item = None
-            self._v6_brush_path = None
-            self.editor._v6_after_brush_selection(final=True)
+                    overlap = 0.0
+                    for node_index, occupied in enumerate(node_rects):
+                        if node_index == index:
+                            continue
+                        overlap += 8.0 * _intersection_area(scene_rect, occupied)
+                    for occupied in used_label_rects:
+                        overlap += 12.0 * _intersection_area(scene_rect, occupied)
+                    # Prefer the outward local normal and a short leader-free offset
+                    # whenever collision scores are equal.
+                    score = overlap + 0.08 * distance_rank + 0.04 * direction_rank
+                    candidate = (score, local_x, local_y, scene_rect)
+                    if best is None or candidate[0] < best[0]:
+                        best = candidate
+            if best is None:
+                best = (0.0, 16.0, -16.0, QtCore.QRectF())
+            label.setPos(best[1], best[2])
+            used_label_rects.append(best[3])
+            label.setZValue(8.0)
             try:
-                self.editor._v6_update_view_cursor()
+                label.setAcceptedMouseButtons(QtCore.Qt.NoButton)
             except Exception:
                 pass
-            if event is not None:
-                event.accept()
 
-        def mousePressEvent(self, event):
-            if (
-                event.button() == QtCore.Qt.LeftButton
-                and self._v6_tool() == "brush"
+    def _add_chain_labels(self):
+        total = len(self.nodes)
+        if total <= 0:
+            return
+        segments = []
+        start = 0
+        for break_after in sorted(self.model.chain_breaks):
+            if break_after >= start:
+                segments.append((start, min(total - 1, break_after)))
+                start = break_after + 1
+        if start < total:
+            segments.append((start, total - 1))
+        if not segments:
+            segments = [(0, total - 1)]
+
+        for segment_number, (first, last) in enumerate(segments, 1):
+            for index, text_value, offset in (
+                (first, "5′", (-35.0, -22.0)),
+                (last, "3′", (20.0, -22.0)),
             ):
-                self._v6_begin_brush(event)
-                return
-            _DSSR_PY2D_VIEW_BEFORE_V6.mousePressEvent(self, event)
+                label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[index])
+                font = QtGui.QFont("Sans Serif")
+                font.setPointSize(10)
+                font.setBold(True)
+                label.setFont(font)
+                label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
+                label.setPos(offset[0], offset[1])
+                label.setZValue(8.0)
+                _layout_no_mouse(label)
 
-        def mouseMoveEvent(self, event):
-            if self._v6_brushing and self._v6_brush_last is not None:
-                point = self.mapToScene(event.pos())
-                first = QtCore.QPointF(self._v6_brush_last)
-                self._v6_brush_last = QtCore.QPointF(point)
-                if self._v6_brush_path is not None:
-                    self._v6_brush_path.lineTo(point)
-                    if self._v6_brush_item is not None:
-                        self._v6_brush_item.setPath(self._v6_brush_path)
-                self._v6_apply_brush_segment(first, point)
-                event.accept()
-                return
-            _DSSR_PY2D_VIEW_BEFORE_V6.mouseMoveEvent(self, event)
-
-        def mouseReleaseEvent(self, event):
-            if self._v6_brushing and event.button() == QtCore.Qt.LeftButton:
-                self._v6_finish_brush(event)
-                return
-            _DSSR_PY2D_VIEW_BEFORE_V6.mouseReleaseEvent(self, event)
-
-        def keyPressEvent(self, event):
-            if event.key() == QtCore.Qt.Key_B:
-                self.editor.set_interaction_tool("brush")
-                event.accept()
-                return
-            if event.key() == QtCore.Qt.Key_P:
-                self.editor.set_interaction_tool("edit")
-                event.accept()
-                return
-            _DSSR_PY2D_VIEW_BEFORE_V6.keyPressEvent(self, event)
-
-
-    class Dssr2DNodeItemV6(_DSSR_PY2D_NODE_BEFORE_V6):
-        """A coloured nucleotide that switches between gel and flat rendering."""
-
-        RADIUS = 12.5
-
-        def __init__(self, viewer, nt, x, y):
-            _DSSR_PY2D_NODE_BEFORE_V6.__init__(self, viewer, nt, x, y)
-            try:
+            if len(segments) > 1:
+                chain = str(self.model.nts[first].get("chain", "")).strip()
+                text_value = "chain %s" % (chain or segment_number)
+                label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[first])
                 font = QtGui.QFont("Sans Serif")
                 font.setPointSize(8)
                 font.setBold(True)
-                self.base_text_item.setFont(font)
-                rect = self.base_text_item.boundingRect()
-                self.base_text_item.setPos(-0.5 * rect.width(), -0.5 * rect.height())
-            except Exception:
-                pass
+                label.setFont(font)
+                label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
+                label.setPos(-42.0, -46.0)
+                label.setZValue(8.0)
+                _layout_no_mouse(label)
 
-        def boundingRect(self):
-            radius = float(self.RADIUS)
-            return QtCore.QRectF(
-                -radius - 7.0, -radius - 7.0,
-                2.0 * radius + 14.0, 2.0 * radius + 14.0,
-            )
-
-        def shape(self):
-            radius = float(self.RADIUS) + 3.0
-            path = QtGui.QPainterPath()
-            path.addEllipse(
-                QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
-            )
-            return path
-
-        def _base_fill(self):
-            use_colors = bool(getattr(self.viewer, "base_colors", True))
-            if not use_colors:
-                if self.viewer.gel_style_enabled():
-                    return QtGui.QColor(184, 207, 222)
-                return QtGui.QColor(250, 252, 254)
-            base = str(self.nt.get("base", "N")).upper()[:1]
-            if self.viewer.gel_style_enabled():
-                palette = {
-                    "A": QtGui.QColor(255, 91, 134),
-                    "C": QtGui.QColor(57, 169, 255),
-                    "G": QtGui.QColor(255, 191, 66),
-                    "U": QtGui.QColor(48, 211, 171),
-                    "T": QtGui.QColor(164, 118, 255),
-                    "I": QtGui.QColor(191, 116, 255),
-                }
-                return palette.get(base, QtGui.QColor(132, 151, 176))
-            palette = {
-                "A": QtGui.QColor(255, 214, 225),
-                "C": QtGui.QColor(205, 232, 255),
-                "G": QtGui.QColor(255, 235, 184),
-                "U": QtGui.QColor(196, 243, 229),
-                "T": QtGui.QColor(225, 211, 255),
-                "I": QtGui.QColor(235, 211, 255),
-            }
-            return palette.get(base, QtGui.QColor(229, 235, 242))
-
-        def paint(self, painter, option, widget=None):
-            radius = float(self.RADIUS)
-            gel = self.viewer.gel_style_enabled()
-            saved = False
-            try:
-                painter.save()
-                saved = True
-                painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-                selected = bool(self.isSelected())
-                hovered = bool(getattr(self, "_v4_hover", False))
-                pressed = bool(getattr(self, "_v4_pressed", False))
-                base = QtGui.QColor(self._base_fill())
-
-                shadow = QtGui.QColor(2, 8, 23, 105 if gel else 38)
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(shadow))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -radius + 2.2, -radius + 3.4,
-                        2.0 * radius, 2.0 * radius,
-                    )
-                )
-
-                if selected or hovered:
-                    aura = QtGui.QColor(
-                        55, 220, 255, 120 if selected else 55
-                    )
-                    aura_radius = radius + (5.2 if selected else 3.4)
-                    painter.setPen(QtCore.Qt.NoPen)
-                    painter.setBrush(QtGui.QBrush(aura))
-                    painter.drawEllipse(
-                        QtCore.QRectF(
-                            -aura_radius, -aura_radius,
-                            2.0 * aura_radius, 2.0 * aura_radius,
-                        )
-                    )
-
-                if gel:
-                    gradient = QtGui.QRadialGradient(
-                        QtCore.QPointF(-radius * 0.38, -radius * 0.48),
-                        radius * 1.58,
-                    )
-                    gradient.setColorAt(0.00, QtGui.QColor(255, 255, 255, 252))
-                    gradient.setColorAt(0.18, base.lighter(148))
-                    gradient.setColorAt(0.62, base.lighter(106))
-                    gradient.setColorAt(1.00, base.darker(132))
-                    fill = QtGui.QBrush(gradient)
-                    border = QtGui.QColor(188, 235, 255, 225)
-                else:
-                    fill = QtGui.QBrush(base)
-                    border = QtGui.QColor(55, 72, 96, 210)
-
-                if selected:
-                    border = QtGui.QColor(44, 215, 255, 255)
-                elif hovered:
-                    border = QtGui.QColor(105, 225, 255, 245)
-                if pressed:
-                    border = QtGui.QColor(255, 255, 255, 250)
-                pen = QtGui.QPen(border)
-                pen.setWidthF(2.35 if selected else (1.75 if hovered else 1.2))
-                painter.setPen(pen)
-                painter.setBrush(fill)
-                painter.drawEllipse(
-                    QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
-                )
-
-                if gel:
-                    painter.setPen(QtCore.Qt.NoPen)
-                    painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 145)))
-                    painter.drawEllipse(
-                        QtCore.QRectF(
-                            -radius * 0.58, -radius * 0.68,
-                            radius * 0.92, radius * 0.45,
-                        )
-                    )
-                painter.restore()
-            except Exception:
-                if saved:
-                    try:
-                        painter.restore()
-                    except Exception:
-                        pass
-                QtWidgets.QGraphicsEllipseItem.paint(self, painter, option, widget)
-
-        # Restore V4's spring machinery; it already checks jelly_cb at runtime.
-        def _v4_set_target_scale(self, target, kick=0.0):
-            return _DSSR_PY2D_NODE_BEFORE_V5._v4_set_target_scale(
-                self, target, kick
-            )
-
-        def _v4_advance_visual(self):
-            return _DSSR_PY2D_NODE_BEFORE_V5._v4_advance_visual(self)
-
-        def hoverEnterEvent(self, event):
-            return _DSSR_PY2D_NODE_BEFORE_V5.hoverEnterEvent(self, event)
-
-        def hoverLeaveEvent(self, event):
-            return _DSSR_PY2D_NODE_BEFORE_V5.hoverLeaveEvent(self, event)
-
-        def itemChange(self, change, value):
-            return _DSSR_PY2D_NODE_BEFORE_V5.itemChange(self, change, value)
+    def fit_scene(self):
+        if not self._closed:
+            rect = self.scene.itemsBoundingRect().adjusted(-35, -35, 35, 35)
+            self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
 
 
-    Dssr2DGraphicsView = Dssr2DGraphicsViewV6
-    Dssr2DNodeItem = Dssr2DNodeItemV6
+    def select_nucleotide(self, index):
+        self.select_indices([index], replace=True)
 
+    def copy_dbn(self):
+        text = ">%s\n%s\n%s" % (
+            self.model.title,
+            self.model.raw_sequence or self.model.sequence,
+            self.model.raw_structure or self.model.structure,
+        )
+        try:
+            QtWidgets.QApplication.clipboard().setText(text)
+            self.status_label.setText("DBN copied to clipboard")
+        except Exception as e:
+            self.status_label.setText("Clipboard error: %s" % str(e))
 
-    class DssrPython2DDialogV6(_DSSR_PY2D_DIALOG_BEFORE_V6):
-        """Premium RNA editor with switchable gel visuals and 2D/3D brushing."""
-
-        HIGHLIGHT_OBJECT = "_dssr_2d_brush_highlight"
-
-        def __init__(
-            self,
-            model,
-            pymol_selection="all",
-            algorithm="standard",
-            number_every=10,
-            show_tertiary=False,
-            parent=None,
-        ):
-            self._v6_sync_timer = None
-            self._v6_reverse_timer = None
-            self._v6_sync_pending = False
-            self._v6_sync_from_pymol = False
-            self._v6_last_pymol_signature = None
-            self._v6_last_highlight_signature = None
-            self._v6_closed = False
-            _DSSR_PY2D_DIALOG_BEFORE_V6.__init__(
+    def export_image(self):
+        filters = "PNG image (*.png)"
+        if QtSvg is not None:
+            filters += ";;SVG image (*.svg)"
+        try:
+            result = QtWidgets.QFileDialog.getSaveFileName(
                 self,
-                model=model,
-                pymol_selection=pymol_selection,
-                algorithm=algorithm,
-                number_every=number_every,
-                show_tertiary=show_tertiary,
-                parent=parent,
+                "Export RNA 2D image",
+                "rna_2d.png",
+                filters,
             )
-            self._v6_sync_timer = QtCore.QTimer(self)
-            self._v6_sync_timer.setSingleShot(True)
-            self._v6_sync_timer.setInterval(55)
-            self._v6_sync_timer.timeout.connect(self._v6_flush_live_sync)
-            self._v6_reverse_timer = QtCore.QTimer(self)
-            self._v6_reverse_timer.setInterval(450)
-            self._v6_reverse_timer.timeout.connect(self._v6_pull_pymol_selection)
-            self._v6_reverse_timer.start()
-            try:
-                self.base_colors_cb.blockSignals(True)
-                self.base_colors_cb.setChecked(False)
-                self.base_colors_cb.blockSignals(False)
-                self.base_colors = False
-            except Exception:
-                pass
-            self.setWindowTitle("RNA 2D studio — %s" % self.model.title)
-            self._v6_apply_appearance()
-            self._v6_update_view_cursor()
-            self._v4_ensure_animation()
-            self._v3_update_editor_status("premium gel + 3D brush ready")
-
-        def _v4_install_gel_controls(self):
-            group = QtWidgets.QGroupBox("2D studio · appearance and interaction")
-            outer = QtWidgets.QVBoxLayout(group)
-            outer.setContentsMargins(10, 11, 10, 9)
-            outer.setSpacing(7)
-
-            top = QtWidgets.QHBoxLayout()
-            top.addWidget(QtWidgets.QLabel("tool"))
-            self.interaction_combo = QtWidgets.QComboBox()
-            self.interaction_combo.addItem("edit / pan  [P]", "edit")
-            self.interaction_combo.addItem("brush select  [B]", "brush")
-            self.interaction_combo.setCurrentIndex(0)
-            self.interaction_combo.setToolTip(
-                "Brush: sweep across nucleotides. Edit/pan: drag bases or the canvas."
-            )
-            self.interaction_combo.currentIndexChanged.connect(
-                lambda *_args: self._v6_interaction_changed()
-            )
-            top.addWidget(self.interaction_combo)
-
-            top.addWidget(QtWidgets.QLabel("brush"))
-            self.brush_radius_spin = QtWidgets.QSpinBox()
-            self.brush_radius_spin.setRange(8, 100)
-            self.brush_radius_spin.setValue(32)
-            self.brush_radius_spin.setSuffix(" px")
-            self.brush_radius_spin.setToolTip("Freehand brush radius on screen")
-            top.addWidget(self.brush_radius_spin)
-
-            self.gel_style_cb = QtWidgets.QCheckBox("gel mode")
-            self.gel_style_cb.setChecked(True)
-            self.gel_style_cb.setToolTip(
-                "Toggle both the glass-like rendering and elastic motion"
-            )
-            self.gel_style_cb.toggled.connect(
-                lambda checked: self._v6_gel_mode_toggled(checked)
-            )
-            top.addWidget(self.gel_style_cb)
-
-            # Compatibility control consumed by V4's spring engine.  V6 uses
-            # the single visible gel-mode switch above as the master control.
-            self.jelly_cb = QtWidgets.QCheckBox()
-            self.jelly_cb.setChecked(True)
-            self.jelly_cb.setVisible(False)
-
-            self.live_3d_cb = QtWidgets.QCheckBox("live 3D glow")
-            self.live_3d_cb.setChecked(True)
-            self.live_3d_cb.setToolTip(
-                "Show selected 2D bases as a separate cyan object in PyMOL"
-            )
-            self.live_3d_cb.toggled.connect(
-                lambda *_args: self._v3_sync_pymol_selection()
-            )
-            top.addWidget(self.live_3d_cb)
-
-            self.reverse_3d_cb = QtWidgets.QCheckBox("3D → 2D sync")
-            self.reverse_3d_cb.setChecked(True)
-            self.reverse_3d_cb.setToolTip(
-                "Mirror PyMOL's current 'sele' residues back into this 2D view"
-            )
-            self.reverse_3d_cb.toggled.connect(
-                lambda checked: self._v6_reverse_sync_toggled(checked)
-            )
-            top.addWidget(self.reverse_3d_cb)
-
-            self.zoom_3d_cb = QtWidgets.QCheckBox("zoom after brush")
-            self.zoom_3d_cb.setChecked(False)
-            top.addWidget(self.zoom_3d_cb)
-
-            self.reload_2d_btn = QtWidgets.QPushButton("reload DSSR / state")
-            self.reload_2d_btn.setToolTip(
-                "Re-run DSSR for the object/state selected in the main GUI and reopen 2D"
-            )
-            self.reload_2d_btn.clicked.connect(self._v6_reload_from_pymol)
-            top.addWidget(self.reload_2d_btn)
-            top.addStretch(1)
-            outer.addLayout(top)
-
-            bottom = QtWidgets.QHBoxLayout()
-            bottom.addWidget(QtWidgets.QLabel("drag mode"))
-            self.drag_mode_combo = QtWidgets.QComboBox()
-            for text, value in (
-                ("soft neighborhood", "soft"),
-                ("single base", "base"),
-                ("current selection", "selection"),
-                ("base pair", "pair"),
-                ("loop / unpaired", "loop"),
-                ("stem", "stem"),
-                ("whole branch", "branch"),
-            ):
-                self.drag_mode_combo.addItem(text, value)
-            self.drag_mode_combo.setCurrentIndex(0)
-            self.drag_mode_combo.currentIndexChanged.connect(
-                lambda *_args: self._v3_update_editor_status("drag mode changed")
-            )
-            bottom.addWidget(self.drag_mode_combo)
-
-            self.follow_spin = QtWidgets.QDoubleSpinBox()
-            self.follow_spin.setRange(0.10, 0.90)
-            self.follow_spin.setSingleStep(0.05)
-            self.follow_spin.setValue(0.62)
-            self.follow_spin.setToolTip(
-                "How strongly neighboring bases follow a dragged base in gel mode"
-            )
-            bottom.addWidget(QtWidgets.QLabel("elasticity"))
-            bottom.addWidget(self.follow_spin)
-
-            self.fit_selected_btn = QtWidgets.QPushButton("fit selected")
-            self.fit_selected_btn.clicked.connect(self.fit_selected)
-            bottom.addWidget(self.fit_selected_btn)
-            bottom.addWidget(QtWidgets.QLabel("go to nt"))
-            self.goto_spin = QtWidgets.QSpinBox()
-            self.goto_spin.setRange(1, max(1, len(self.model.nts)))
-            self.goto_spin.setValue(1)
-            bottom.addWidget(self.goto_spin)
-            self.goto_btn = QtWidgets.QPushButton("go")
-            self.goto_btn.clicked.connect(self.goto_nucleotide)
-            bottom.addWidget(self.goto_btn)
-
-            hint = QtWidgets.QLabel(
-                "Edit: drag bases normally · B=brush · Shift+brush=add · "
-                "Alt+brush=erase · P=return to edit · right/middle drag=pan"
-            )
-            hint.setWordWrap(True)
-            hint.setObjectName("studioHint")
-            bottom.addWidget(hint, 1)
-            outer.addLayout(bottom)
-
-            root = self.layout()
-            if root is not None:
-                try:
-                    root.insertWidget(2, group)
-                except Exception:
-                    root.addWidget(group)
-            self.gel_group = group
-
-        def interaction_tool(self):
-            try:
-                return str(self.interaction_combo.currentData() or "edit")
-            except Exception:
-                return "edit"
-
-        def set_interaction_tool(self, tool):
-            wanted = str(tool or "edit").lower()
-            try:
-                for index in range(self.interaction_combo.count()):
-                    if str(self.interaction_combo.itemData(index)) == wanted:
-                        self.interaction_combo.setCurrentIndex(index)
-                        return
-            except Exception:
-                pass
-
-        def _v6_interaction_changed(self):
-            self._v6_update_view_cursor()
-            self._v3_update_editor_status("tool=%s" % self.interaction_tool())
-
-        def _v6_update_view_cursor(self):
-            try:
-                if self.interaction_tool() == "brush":
-                    self.view.setCursor(QtCore.Qt.CrossCursor)
-                else:
-                    self.view.setCursor(QtCore.Qt.OpenHandCursor)
-            except Exception:
-                pass
-
-        def gel_style_enabled(self):
-            try:
-                return bool(self.gel_style_cb.isChecked())
-            except Exception:
-                return True
-
-        def _v6_gel_mode_toggled(self, checked):
-            try:
-                self.jelly_cb.setChecked(bool(checked))
-            except Exception:
-                pass
-            self._v6_apply_appearance()
-            self._v4_ensure_animation()
-            self._v3_update_editor_status(
-                "gel mode on" if checked else "gel mode off"
-            )
-
-        def _v4_apply_visual_theme(self):
-            self._v6_apply_appearance()
-
-        def _v6_apply_appearance(self):
-            style = """
-                QDialog { background: #ffffff; color: #263746; }
-                QLabel, QCheckBox { color: #263746; }
-                QGroupBox {
-                    color: #263746; border: 1px solid #d4dde5;
-                    border-radius: 10px; margin-top: 8px; padding-top: 9px;
-                    background: #ffffff; font-weight: 600;
-                }
-                QGroupBox::title { subcontrol-origin: margin; left: 10px;
-                    padding: 0 6px; color: #24657d; }
-                QPushButton, QComboBox, QSpinBox, QDoubleSpinBox {
-                    color: #263746; background: #ffffff;
-                    border: 1px solid #bdcbd6; border-radius: 7px;
-                    padding: 4px 8px; min-height: 22px;
-                }
-                QPushButton:hover, QComboBox:hover {
-                    background: #eef9fd; border-color: #52b9da;
-                }
-                QPushButton:pressed { background: #dceff6; }
-                QComboBox QAbstractItemView {
-                    color: #263746; background: #ffffff;
-                    selection-color: #123d50;
-                    selection-background-color: #d6f0fa;
-                }
-                QCheckBox::indicator { width: 15px; height: 15px; }
-                QLabel#studioHint { color: #607682; font-weight: 400; }
-                QToolTip { color: #263746; background: #ffffff;
-                    border: 1px solid #52b9da; }
-            """
-            canvas_color = QtGui.QColor(255, 255, 255)
-            try:
-                self.setStyleSheet(style)
-                self.view.setBackgroundBrush(QtGui.QBrush(canvas_color))
-            except Exception:
-                pass
-            self._v6_refresh_scene_style()
-
-        def _v6_refresh_scene_style(self):
-            gel = self.gel_style_enabled()
-            for node in list(getattr(self, "nodes", [])):
-                try:
-                    node.base_text_item.setBrush(
-                        QtGui.QBrush(
-                            QtGui.QColor(16, 42, 59)
-                            if gel else QtGui.QColor(31, 50, 68)
-                        )
-                    )
-                    for child in node.childItems():
-                        if child is node.base_text_item:
-                            continue
-                        if isinstance(child, QtWidgets.QGraphicsSimpleTextItem):
-                            child.setBrush(
-                                QtGui.QBrush(
-                                    QtGui.QColor(72, 94, 112)
-                                )
-                            )
-                    node.update()
-                except Exception:
-                    pass
-            try:
-                self.scene.update()
-            except Exception:
-                pass
-
-        def _v4_ensure_animation(self):
-            return _DSSR_PY2D_DIALOG_BEFORE_V5._v4_ensure_animation(self)
-
-        def _v4_animation_tick(self):
-            return _DSSR_PY2D_DIALOG_BEFORE_V5._v4_animation_tick(self)
-
-        def redraw(self, *_args):
-            _DSSR_PY2D_DIALOG_BEFORE_V6.redraw(self, *_args)
-            self._v6_apply_appearance()
-            self._v4_ensure_animation()
-
-        def _v3_selection_changed(self):
-            if getattr(self, "_v3_rebuilding", False):
-                return
-            self._v6_schedule_live_sync()
-            self._v3_update_editor_status("selection changed")
-
-        def _v6_after_brush_selection(self, final=False):
-            selected = sorted(
-                node.nt_index for node in self.nodes if node.isSelected()
-            )
-            self._v3_active_index = selected[0] if selected else None
-            if final:
-                self._v6_flush_live_sync(final=True)
-                self._v3_update_editor_status("brush selection mapped to 3D")
+            path = result[0] if isinstance(result, (tuple, list)) else result
+        except Exception:
+            path = ""
+        if not path:
+            return
+        path = str(path)
+        try:
+            if path.lower().endswith(".svg") and QtSvg is not None:
+                self._export_svg(path)
             else:
-                self._v6_schedule_live_sync()
-                self._v3_update_editor_status("brushing")
-
-        def _v6_schedule_live_sync(self):
-            if getattr(self, "_v6_closed", False):
-                return
-            self._v6_sync_pending = True
-            timer = getattr(self, "_v6_sync_timer", None)
-            if timer is None:
-                self._v6_flush_live_sync()
-                return
+                if not path.lower().endswith(".png"):
+                    path += ".png"
+                self._export_png(path)
+            self.status_label.setText("Exported: %s" % path)
+        except Exception as e:
+            msg = "Export failed: %s" % str(e)
+            self.status_label.setText(msg)
             try:
-                timer.start()
-            except Exception:
-                self._v6_flush_live_sync()
-
-        def _v6_flush_live_sync(self, final=False):
-            if getattr(self, "_v6_closed", False):
-                return
-            self._v6_sync_pending = False
-            self._v3_sync_pymol_selection()
-            if final:
-                try:
-                    if self.zoom_3d_cb.isChecked() and cmd.count_atoms(
-                        self.HIGHLIGHT_OBJECT
-                    ):
-                        cmd.zoom(self.HIGHLIGHT_OBJECT, buffer=4.0)
-                except Exception:
-                    pass
-
-        def _v6_node_residue_signature(self):
-            residues = set()
-            for node in getattr(self, "nodes", []):
-                if not node.isSelected():
-                    continue
-                nt = self.model.nts[node.nt_index]
-                chain = str(nt.get("chain", "")).strip()
-                resi = str(nt.get("resi", "")).strip()
-                if resi:
-                    residues.add((chain, resi))
-            return tuple(sorted(residues))
-
-        def _v6_reverse_sync_toggled(self, checked):
-            self._v6_last_pymol_signature = None
-            if checked:
-                self._v6_pull_pymol_selection()
-                self._v3_update_editor_status("bidirectional sync on")
-            else:
-                self._v3_update_editor_status("3D-to-2D sync off")
-
-        def _v6_pull_pymol_selection(self):
-            if (
-                getattr(self, "_v6_closed", False)
-                or getattr(self, "_v6_sync_pending", False)
-                or getattr(self, "_v6_sync_from_pymol", False)
-            ):
-                return
-            try:
-                if not self.isVisible():
-                    return
+                QtWidgets.QMessageBox.critical(self, "RNA 2D export", msg)
             except Exception:
                 pass
-            try:
-                if not self.reverse_3d_cb.isChecked():
-                    return
-            except Exception:
-                return
 
-            residues = set()
-            try:
-                scoped = "((%s) and sele)" % self.pymol_selection
-                if int(cmd.count_atoms(scoped)) > 0:
-                    cmd.iterate(
-                        scoped,
-                        "_dssr_residues.add((chain, resi))",
-                        space={"_dssr_residues": residues},
-                    )
-            except Exception:
-                residues = set()
+    def _export_png(self, path):
+        rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
+        scale = 2.0
+        width = max(1, int(math.ceil(rect.width() * scale)))
+        height = max(1, int(math.ceil(rect.height() * scale)))
+        max_dim = 12000
+        if width > max_dim or height > max_dim:
+            factor = min(float(max_dim) / width, float(max_dim) / height)
+            width = max(1, int(width * factor))
+            height = max(1, int(height * factor))
+        image = QtGui.QImage(width, height, QtGui.QImage.Format_ARGB32)
+        image.fill(QtGui.QColor("white"))
+        painter = QtGui.QPainter(image)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        self.scene.render(
+            painter,
+            QtCore.QRectF(0, 0, width, height),
+            rect,
+            QtCore.Qt.KeepAspectRatio,
+        )
+        painter.end()
+        if not image.save(path):
+            raise CmdException("Qt could not save PNG file")
 
-            signature = tuple(sorted(residues))
-            if signature == self._v6_last_pymol_signature:
-                return
-            self._v6_last_pymol_signature = signature
+    def _export_svg(self, path):
+        rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
+        generator = QtSvg.QSvgGenerator()
+        generator.setFileName(path)
+        generator.setSize(QtCore.QSize(max(1, int(rect.width())), max(1, int(rect.height()))))
+        generator.setViewBox(rect)
+        generator.setTitle(self.model.title)
+        generator.setDescription("RNA secondary structure derived by DSSR")
+        painter = QtGui.QPainter(generator)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        self.scene.render(painter, rect, rect, QtCore.Qt.KeepAspectRatio)
+        painter.end()
 
-            wanted = set()
-            for index, nt in enumerate(getattr(self.model, "nts", [])):
-                key = (
-                    str(nt.get("chain", "")).strip(),
-                    str(nt.get("resi", "")).strip(),
-                )
-                if key[1] and key in residues:
-                    wanted.add(index)
+    def _capture_positions(self):
+        return [(float(node.pos().x()), float(node.pos().y())) for node in self.nodes]
 
-            current = {
-                node.nt_index
-                for node in getattr(self, "nodes", [])
-                if node.isSelected()
+    def _apply_positions(self, positions):
+        if len(positions) != len(self.nodes):
+            raise CmdException(
+                "Layout has %d coordinates but this RNA has %d nucleotides"
+                % (len(positions), len(self.nodes))
+            )
+        for node, point in zip(self.nodes, positions):
+            node.setPos(float(point[0]), float(point[1]))
+        self._update_scene_rect()
+
+    def _positions_changed(self, first, second):
+        if not first or not second or len(first) != len(second):
+            return False
+        return any(
+            abs(a[0] - b[0]) > 1.0e-5 or abs(a[1] - b[1]) > 1.0e-5 for a, b in zip(first, second)
+        )
+
+    def _push_history(self, before, after, label="edit"):
+        if not self._positions_changed(before, after):
+            return
+        self._undo.append(
+            {
+                "before": [(float(x), float(y)) for x, y in before],
+                "after": [(float(x), float(y)) for x, y in after],
+                "label": str(label),
             }
-            if wanted == current:
-                return
+        )
+        if len(self._undo) > self.HISTORY_LIMIT:
+            self._undo = self._undo[-self.HISTORY_LIMIT :]
+        self._redo = []
+        self._update_history_buttons()
 
-            self._v6_sync_from_pymol = True
-            self._v3_rebuilding = True
-            try:
-                for node in getattr(self, "nodes", []):
-                    node.setSelected(node.nt_index in wanted)
-                self._v3_active_index = min(wanted) if wanted else None
-            finally:
-                self._v3_rebuilding = False
-                self._v6_sync_from_pymol = False
-            self._v6_update_pymol_highlight()
-            self._v3_update_editor_status("3D selection mirrored to 2D")
+    def undo_layout(self):
+        if not self._undo:
+            return
+        entry = self._undo.pop()
+        self._apply_positions(entry["before"])
+        self._redo.append(entry)
+        self._update_history_buttons()
+        self._update_editor_status("undo: %s" % entry["label"])
 
-        def _v6_reload_from_pymol(self):
-            parent = self.parent()
-            if parent is None or not hasattr(parent, "_get_dssr_context"):
-                self._v3_update_editor_status(
-                    "reload is available when opened from dssr_gui"
-                )
-                return
-            try:
-                parent._invalidate_dssr_cache()
-                replacement = DssrPython2DIntegration.gui_open(parent)
-                if replacement is not None:
-                    self._v3_update_editor_status("reloaded DSSR context")
-                    QtCore.QTimer.singleShot(0, self.close)
-            except Exception as error:
-                self._v3_update_editor_status("reload error: %s" % str(error))
+    def redo_layout(self):
+        if not self._redo:
+            return
+        entry = self._redo.pop()
+        self._apply_positions(entry["after"])
+        self._undo.append(entry)
+        self._update_history_buttons()
+        self._update_editor_status("redo: %s" % entry["label"])
 
-        def _v3_sync_pymol_selection(self):
-            _DSSR_PY2D_DIALOG_BEFORE_V5._v3_sync_pymol_selection(self)
-            self._v6_last_pymol_signature = self._v6_node_residue_signature()
-            self._v6_update_pymol_highlight()
+    def reset_layout(self):
+        before = self._capture_positions()
+        algorithm = self.layout_combo.currentText().strip().lower() or "smart"
+        after = Dssr2DLayout.compute(self.model, algorithm)
+        self._auto_positions = [(float(x), float(y)) for x, y in after]
+        self._apply_positions(after)
+        self._push_history(before, self._capture_positions(), "reset layout")
+        self.fit_scene()
+        self._update_editor_status("automatic layout reset")
 
-        def _v6_update_pymol_highlight(self):
-            name = self.HIGHLIGHT_OBJECT
-            try:
-                enabled = bool(self.live_3d_cb.isChecked())
-            except Exception:
-                enabled = False
-            signature = self._v6_node_residue_signature()
-            should_show = (
-                not getattr(self, "_v6_closed", False)
-                and enabled
-                and bool(signature)
+    def reset_selected_bases(self):
+        if len(self._auto_positions) != len(self.nodes):
+            self._auto_positions = Dssr2DLayout.compute(
+                self.model,
+                self.layout_combo.currentText().strip().lower() or "smart",
             )
-            if should_show:
-                try:
-                    object_exists = name in cmd.get_names("all")
-                except Exception:
-                    object_exists = False
-                if (
-                    signature == self._v6_last_highlight_signature
-                    and object_exists
-                ):
-                    return
-            else:
+        selected = [node for node in self.nodes if node.isSelected()]
+        if not selected:
+            return
+        before = self._capture_positions()
+        for node in selected:
+            x, y = self._auto_positions[node.nt_index]
+            node.setPos(float(x), float(y))
+        after = self._capture_positions()
+        self._push_history(before, after, "reset selected")
+        self._update_scene_rect()
+        self._update_editor_status("selected bases reset")
+
+    def nudge_selected(self, dx, dy):
+        selected = [node for node in self.nodes if node.isSelected()]
+        if not selected:
+            return
+        before = self._capture_positions()
+        for node in selected:
+            node.moveBy(float(dx), float(dy))
+        after = self._capture_positions()
+        self._push_history(before, after, "nudge")
+        self._update_editor_status("nudged %d base(s)" % len(selected))
+
+    def select_indices(self, indices, replace=True):
+        wanted = set(int(index) for index in indices)
+        blocked = self.scene.blockSignals(True)
+        try:
+            for node in self.nodes:
+                node.setSelected(node.nt_index in wanted or (not replace and node.isSelected()))
+        finally:
+            self.scene.blockSignals(blocked)
+        self._update_editor_status("selection changed")
+        self._sync_pymol_selection()
+
+    def select_all_bases(self):
+        self.select_indices(range(len(self.nodes)), replace=True)
+
+    def clear_base_selection(self):
+        self.select_indices(())
+
+    def _pair_partner(self, index):
+        table = self._pair_table
+        if 0 <= index < len(table):
+            return int(table[index])
+        return -1
+
+    def _stem_indices(self, index):
+        for stem in self._stems:
+            indices = {int(i) for pair in stem.get("pairs", []) for i in pair}
+            if index in indices:
+                return sorted(indices)
+        return self._pair_group(index)
+
+    def _selection_changed(self):
+        if self._closed or self._rebuilding:
+            return
+        self._schedule_live_sync()
+        self._update_editor_status("selection changed")
+
+    def _sync_pymol_selection(self):
+        if self._closed:
+            return
+        self._sync_timer.stop()
+        self._sync_pending = False
+        signature = self._node_residue_signature()
+        self._select_residues_in_pymol(signature)
+        self._last_pymol_signature = signature
+        self._update_pymol_highlight(signature)
+
+    def save_layout(self):
+        default_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.model.title)
+        default_name = (default_name.strip("_") or "rna_2d") + ".dssr2d.json"
+        path, _chosen = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save RNA 2D layout",
+            default_name,
+            "DSSR RNA 2D layout (*.dssr2d.json *.json);;All files (*)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".dssr2d.json"
+        payload = {
+            "format": "DSSR-PyMOL-RNA2D",
+            "version": 1,
+            "title": self.model.title,
+            "sequence": self.model.sequence,
+            "structure": self.model.structure,
+            "layout": self.layout_combo.currentText().strip().lower(),
+            "positions": [[round(x, 6), round(y, 6)] for x, y in self._capture_positions()],
+        }
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+        self._update_editor_status("layout saved: %s" % path)
+
+    def load_layout(self):
+        path, _chosen = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load RNA 2D layout",
+            "",
+            "DSSR RNA 2D layout (*.dssr2d.json *.json);;All files (*)",
+        )
+        if not path:
+            return
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        positions = payload.get("positions", [])
+        if len(positions) != len(self.nodes):
+            raise CmdException(
+                "Saved layout contains %d bases; current RNA contains %d"
+                % (len(positions), len(self.nodes))
+            )
+        saved_sequence = str(payload.get("sequence", ""))
+        if saved_sequence and saved_sequence != self.model.sequence:
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Sequence mismatch",
+                "This layout was saved for a different sequence. Load its " "coordinates anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+        before = self._capture_positions()
+        self._apply_positions(positions)
+        self._push_history(before, self._capture_positions(), "load layout")
+        self.fit_scene()
+        self._update_editor_status("layout loaded: %s" % path)
+
+
+    def _update_history_buttons(self):
+        for button, history, action in ((self.undo_btn, self._undo, "Undo"),
+                                        (self.redo_btn, self._redo, "Redo")):
+            button.setEnabled(bool(history))
+            if history:
+                button.setToolTip("%s: %s" % (action, history[-1].get("label", "edit")))
+
+    def _update_editor_status(self, action=""):
+        selected = self._sync_sequence_selection()
+        variant = str(getattr(self.model, "_dssr2d_layout_variant", self.algorithm))
+        text = "Selected %d · %s · %s" % (len(selected), self.interaction_tool(), variant)
+        self.status_label.setText(text + (" · " + action if action else ""))
+
+    def _schedule_scene_rect(self):
+        if self._closed or self._scene_rect_pending:
+            return
+        self._scene_rect_pending = True
+
+        def update():
+            self._scene_rect_pending = False
+            self._update_scene_rect()
+
+        QtCore.QTimer.singleShot(0, update)
+
+    def _update_scene_rect(self):
+        if not self._closed:
+            self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-120, -120, 120, 120))
+
+
+    def drag_mode(self):
+        return str(self.drag_mode_combo.currentData() or "base")
+
+    def set_drag_mode(self, mode):
+        index = self.drag_mode_combo.findData(str(mode or "base").strip().lower())
+        if index >= 0:
+            self.drag_mode_combo.setCurrentIndex(index)
+
+    def _pair_group(self, index):
+        partner = self._pair_partner(index)
+        return [index] if partner < 0 else sorted({index, partner})
+
+    def _loop_group(self, index):
+        n = len(self.model.nts)
+        if index < 0 or index >= n:
+            return []
+        table = self._pair_table
+        if table[index] >= 0:
+            return self._pair_group(index)
+
+        left = index
+        right = index
+        while left > 0 and (left - 1) not in self.model.chain_breaks and table[left - 1] < 0:
+            left -= 1
+        while right + 1 < n and right not in self.model.chain_breaks and table[right + 1] < 0:
+            right += 1
+        result = set(range(left, right + 1))
+
+        # Include a common closing pair when this is a hairpin/internal loop.
+        if left > 0 and right + 1 < n:
+            a = left - 1
+            b = right + 1
+            if table[a] == b:
+                result.add(a)
+                result.add(b)
+        return sorted(result)
+
+    def _chain_segment(self, index):
+        n = len(self.model.nts)
+        left = 0
+        right = n - 1
+        for break_after in sorted(self.model.chain_breaks):
+            if break_after < index:
+                left = break_after + 1
+            elif break_after >= index:
+                right = break_after
+                break
+        return list(range(max(0, left), min(n - 1, right) + 1))
+
+    def _branch_group(self, index):
+        candidates = [stem for stem in self._stems
+                      if int(stem.get("outer_i", -1)) <= index <= int(stem.get("outer_j", -1))]
+        if not candidates:
+            return self._chain_segment(index)
+        stem = min(
+            candidates,
+            key=lambda item: int(item.get("outer_j", 0)) - int(item.get("outer_i", 0)),
+        )
+        return list(range(int(stem["outer_i"]), int(stem["outer_j"]) + 1))
+
+    def _build_adjacency(self):
+        n = len(self.model.nts)
+        adjacency = [set() for _ in range(n)]
+        for index in range(n - 1):
+            if index not in self.model.chain_breaks:
+                adjacency[index].add(index + 1)
+                adjacency[index + 1].add(index)
+        for pair in self.model.secondary_pairs:
+            i = int(pair.get("i", -1))
+            j = int(pair.get("j", -1))
+            if 0 <= i < n and 0 <= j < n and i != j:
+                adjacency[i].add(j)
+                adjacency[j].add(i)
+        self._adjacency = adjacency
+        return adjacency
+
+    def _soft_weights(self, anchors):
+        anchors = sorted({int(i) for i in anchors if 0 <= int(i) < len(self.model.nts)})
+        if not anchors:
+            return {}
+        adjacency = self._adjacency or self._build_adjacency()
+        strength = float(self.follow_spin.value())
+        max_depth = 3
+        distance = {index: 0 for index in anchors}
+        queue = deque(anchors)
+        while queue:
+            current = queue.popleft()
+            depth = distance[current]
+            if depth >= max_depth:
+                continue
+            for neighbor in adjacency[current]:
+                if neighbor not in distance:
+                    distance[neighbor] = depth + 1
+                    queue.append(neighbor)
+        return {index: 1.0 if depth == 0 else max(0.08, strength**depth)
+                for index, depth in distance.items()}
+
+    def _prepare_node_drag(self, node, modifiers):
+        index = node.nt_index
+        selected = sorted(item.nt_index for item in self.nodes if item.isSelected())
+        mode = "base" if modifiers & QtCore.Qt.AltModifier else self.drag_mode()
+        additive = bool(modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier))
+        grouped = {"pair": self._pair_group, "loop": self._loop_group,
+                   "stem": self._stem_indices, "branch": self._branch_group}
+        weights = None
+        if additive:
+            group = selected or [index]
+        elif mode in grouped:
+            group = grouped[mode](index)
+            self.select_indices(group, replace=True)
+        elif mode == "selection":
+            group = selected or [index]
+            if not selected:
+                self.select_indices(group, replace=True)
+        else:
+            group = selected if index in selected and len(selected) > 1 else [index]
+            if group == [index]:
+                self.select_indices(group, replace=True)
+            if mode == "soft":
+                weights = self._soft_weights(group)
+                group = sorted(weights)
+        if weights is None:
+            weights = dict.fromkeys(group, 1.0)
+        node._drag_starts = {item: QtCore.QPointF(self.nodes[item].pos())
+                             for item in group if 0 <= item < len(self.nodes)}
+        node._drag_weights = {item: float(weights.get(item, 1.0)) for item in node._drag_starts}
+        self._update_editor_status("dragging %s" % mode)
+
+    def fit_selected(self):
+        selected = [node for node in self.nodes if node.isSelected()]
+        if not selected:
+            self.fit_scene()
+            return
+        rect = QtCore.QRectF(selected[0].sceneBoundingRect())
+        for node in selected[1:]:
+            rect = rect.united(node.sceneBoundingRect())
+        self.view.fitInView(rect.adjusted(-80, -80, 80, 80), QtCore.Qt.KeepAspectRatio)
+
+
+    def _ensure_animation(self):
+        if not self._closed and self._view_active and not self._timer.isActive():
+            self._timer.start()
+
+    def _animation_tick(self):
+        # Evaluate every node, even when an earlier one is still animating.
+        active = [node._advance_visual() for node in self.nodes]
+        if not any(active):
+            self._timer.stop()
+
+    def interaction_tool(self):
+        return str(self.interaction_combo.currentData() or "edit")
+
+    def set_interaction_tool(self, tool):
+        index = self.interaction_combo.findData(str(tool or "edit").lower())
+        if index >= 0:
+            self.interaction_combo.setCurrentIndex(index)
+
+    def _interaction_changed(self, *_args):
+        self.view.cancel_selection_gesture()
+        self._update_view_cursor()
+        self._update_editor_status("tool=%s" % self.interaction_tool())
+
+    def _update_view_cursor(self):
+        cursor = QtCore.Qt.CrossCursor if self.interaction_tool() == "brush" else QtCore.Qt.ArrowCursor
+        self.view.setCursor(cursor)
+
+    def gel_style_enabled(self):
+        return self.gel_style_cb.isChecked()
+
+    def _gel_mode_toggled(self, checked):
+        self._refresh_scene_style()
+        self._ensure_animation()
+        self._update_editor_status("gel mode on" if checked else "gel mode off")
+
+    def _refresh_scene_style(self):
+        for node in self.nodes:
+            node.base_text_item.setBrush(QtGui.QBrush(_base_text_color(node.nt.get("base", ""), self.base_colors)))
+            for child in node.childItems():
+                if child is not node.base_text_item and isinstance(child, QtWidgets.QGraphicsSimpleTextItem):
+                    child.setBrush(QtGui.QBrush(QtGui.QColor(72, 94, 112)))
+            node.update()
+        self.sequence_view.set_letter_colors(self.base_colors)
+        self.scene.update()
+
+    def _after_brush_selection(self, final=False):
+        if final:
+            self._flush_live_sync(final=True)
+            self._update_editor_status("brush selection mapped to 3D")
+        else:
+            self._schedule_live_sync()
+            self._update_editor_status("brushing")
+
+    def _schedule_live_sync(self):
+        if not self._closed and self._view_active:
+            self._sync_pending = True
+            self._sync_timer.start()
+
+    def _flush_live_sync(self, final=False):
+        if getattr(self, "_closed", False):
+            return
+        self._sync_pending = False
+        self._sync_pymol_selection()
+        if final:
+            try:
+                if self.zoom_3d_cb.isChecked() and cmd.count_atoms(self.HIGHLIGHT_OBJECT):
+                    cmd.zoom(self.HIGHLIGHT_OBJECT, buffer=4.0)
+            except Exception:
+                pass
+
+    def _node_residue_signature(self):
+        return tuple(sorted({(str(node.nt.get("chain", "")).strip(),
+                              str(node.nt.get("resi", "")).strip())
+                             for node in self.nodes if node.isSelected()
+                             and str(node.nt.get("resi", "")).strip()}))
+
+    def _reverse_sync_toggled(self, checked):
+        self._last_pymol_signature = None
+        if checked:
+            self._pull_pymol_selection()
+            self._update_editor_status("bidirectional sync on")
+        else:
+            self._update_editor_status("3D-to-2D sync off")
+
+    def _pull_pymol_selection(self):
+        if (self._closed or self._sync_pending or self._sync_from_pymol
+                or not self.isVisible() or not self.reverse_3d_cb.isChecked()):
+            return
+        residues = set()
+        try:
+            scoped = "((%s) and sele)" % self.pymol_selection
+            if cmd.count_atoms(scoped) > 0:
+                cmd.iterate(scoped, "_dssr_residues.add((chain, resi))", space={"_dssr_residues": residues})
+        except Exception:
+            residues = set()
+        signature = tuple(sorted(residues))
+        if signature == self._last_pymol_signature:
+            return
+        self._last_pymol_signature = signature
+        wanted = {index for index, nt in enumerate(self.model.nts)
+                  if str(nt.get("resi", "")).strip()
+                  and (str(nt.get("chain", "")).strip(), str(nt.get("resi", "")).strip()) in residues}
+        if wanted == {node.nt_index for node in self.nodes if node.isSelected()}:
+            return
+        self._sync_from_pymol = self._rebuilding = True
+        try:
+            for node in self.nodes:
+                node.setSelected(node.nt_index in wanted)
+        finally:
+            self._rebuilding = self._sync_from_pymol = False
+        self._update_pymol_highlight()
+        self._update_editor_status("3D selection mirrored to 2D")
+
+
+    def _update_pymol_highlight(self, signature=None):
+        name = self.HIGHLIGHT_OBJECT
+        if signature is None:
+            signature = self._node_residue_signature()
+        should_show = not self._closed and self._view_active and self.live_3d_cb.isChecked() and bool(signature)
+        if should_show:
+            try:
+                object_exists = name in cmd.get_names("all")
+            except Exception:
                 object_exists = False
+            if signature == self._last_highlight_signature and object_exists:
+                return
+        else:
+            object_exists = False
 
-            try:
-                cmd.delete(name)
-                _DSSR_BLOCK_OBJECTS.discard(name)
-            except Exception:
-                pass
-            self._v6_last_highlight_signature = None
-            if not should_show:
+        try:
+            cmd.delete(name)
+            _DSSR_BLOCK_OBJECTS.discard(name)
+        except Exception:
+            pass
+        self._last_highlight_signature = None
+        if not should_show:
+            return
+        try:
+            if int(cmd.count_atoms("sele")) <= 0:
                 return
             try:
-                if int(cmd.count_atoms("sele")) <= 0:
-                    return
-                try:
-                    source_state = max(1, int(cmd.get_state()))
-                except Exception:
-                    source_state = 1
-                cmd.create(
-                    name,
-                    "byres (sele)",
-                    source_state=source_state,
-                    target_state=1,
-                    zoom=0,
-                    quiet=1,
-                )
-                _DSSR_BLOCK_OBJECTS.add(name)
-                self._v6_last_highlight_signature = signature
-                cmd.hide("everything", name)
-                cmd.show("sticks", name)
-                cmd.show("spheres", "(%s) and name P" % name)
-                cmd.set_color("dssr_2d_glow", [0.08, 0.86, 1.00])
-                cmd.color("dssr_2d_glow", name)
-                cmd.set("stick_radius", 0.23, name)
-                cmd.set("stick_transparency", 0.08, name)
-                cmd.set("sphere_scale", 0.34, name)
-                cmd.enable(name)
-                cmd.refresh()
+                source_state = max(1, int(getattr(self, "pymol_state", cmd.get_state())))
+            except Exception:
+                source_state = 1
+            cmd.create(
+                name,
+                "byres ((%s) and sele)" % self.pymol_selection,
+                source_state=source_state,
+                target_state=1,
+                zoom=0,
+                quiet=1,
+            )
+            _DSSR_BLOCK_OBJECTS.add(name)
+            self._last_highlight_signature = signature
+            cmd.hide("everything", name)
+            cmd.show("sticks", name)
+            cmd.show("spheres", "(%s) and name P" % name)
+            cmd.set_color("dssr_2d_glow", [0.08, 0.86, 1.00])
+            cmd.color("dssr_2d_glow", name)
+            cmd.set("stick_radius", 0.23, name)
+            cmd.set("stick_transparency", 0.08, name)
+            cmd.set("sphere_scale", 0.34, name)
+            cmd.enable(name)
+            cmd.refresh()
+        except Exception as error:
+            try:
+                self.status_label.setText("3D highlight error: %s" % str(error))
+            except Exception:
+                pass
+
+
+    def _select_residues_in_pymol(self, signature=None):
+        if signature is None:
+            signature = self._node_residue_signature()
+        if not signature and not any(node.isSelected() for node in self.nodes):
+            try:
+                cmd.select("sele", "none")
+            except Exception:
+                pass
+            return
+
+        core = ParsingAlgos._compact_sel_from_residues({(chain, resi) for chain, resi in signature if chain})
+        pieces = ["(%s)" % core] if core else []
+        pieces.extend("(resi %s)" % resi for chain, resi in signature if not chain)
+        if pieces:
+            expression = "((%s) and (%s))" % (
+                self.pymol_selection,
+                " or ".join(pieces),
+            )
+            try:
+                cmd.select("sele", "byres (%s)" % expression)
             except Exception as error:
-                try:
-                    self.status_label.setText(
-                        "3D highlight error: %s" % str(error)
-                    )
-                except Exception:
-                    pass
+                self.status_label.setText("PyMOL selection error: %s" % str(error))
 
-        def _v3_update_editor_status(self, action=""):
-            selected = sum(
-                1 for node in getattr(self, "nodes", []) if node.isSelected()
-            )
-            variant = str(
-                getattr(self.model, "_dssr2d_layout_variant", self.algorithm)
-            )
-            text = (
-                self.model.summary()
-                + " | %s" % variant
-                + " | selected=%d" % selected
-                + " | tool=%s" % self.interaction_tool()
-                + " | B=brush, P=edit/pan, Shift=add, Alt=erase"
-            )
-            if action:
-                text += " | %s" % action
-            try:
-                self.status_label.setText(text)
-            except Exception:
-                pass
+    def _build_widgets(self):
+        """Two compact toolbars; occasional operations live in menus/options."""
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        top = QtWidgets.QHBoxLayout()
+        root.addLayout(top)
+        self.layout_combo = _combo(LAYOUT_CHOICES)
+        self.layout_combo.setCurrentText(self.algorithm)
+        top.addWidget(self.layout_combo)
+        self.fit_btn = _button("Fit", self.fit_scene, "Fit drawing [F]")
+        self.undo_btn = _button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
+        self.redo_btn = _button("Redo", self.redo_layout, "Redo [Ctrl+Y]")
+        for button in (self.fit_btn, self.undo_btn, self.redo_btn):
+            top.addWidget(button)
+        self.redraw_btn = _button("Reset layout", self.reset_layout)
+        top.addWidget(self.redraw_btn)
+        top.addStretch(1)
+        self.file_menu_btn = _menu_button("File", (
+            ("Export image…", self.export_image),
+            ("Save layout…", self.save_layout),
+            ("Load layout…", self.load_layout),
+            ("Copy sequence / DBN", self.copy_dbn),
+        ), self)
+        top.addWidget(self.file_menu_btn)
+        self.selection_menu_btn = _menu_button("Selection", (
+            ("Select all [Ctrl+A]", self.select_all_bases),
+            ("Clear selection [Esc]", self.clear_base_selection),
+            ("Fit selected [C]", self.fit_selected),
+            ("Reset selected coordinates", self.reset_selected_bases),
+        ), self)
+        top.addWidget(self.selection_menu_btn)
+        self.options_btn = QtWidgets.QPushButton("Options")
+        self.options_btn.setCheckable(True)
+        top.addWidget(self.options_btn)
 
-        def closeEvent(self, event):
-            self._v6_closed = True
-            self._v6_sync_pending = False
-            try:
-                if self._v6_sync_timer is not None:
-                    self._v6_sync_timer.stop()
-                if self._v6_reverse_timer is not None:
-                    self._v6_reverse_timer.stop()
-                if hasattr(self, "_v4_timer"):
-                    self._v4_timer.stop()
-            except Exception:
-                pass
-            try:
-                cmd.delete(self.HIGHLIGHT_OBJECT)
-                _DSSR_BLOCK_OBJECTS.discard(self.HIGHLIGHT_OBJECT)
-            except Exception:
-                pass
-            try:
-                QtWidgets.QDialog.closeEvent(self, event)
-            except Exception:
-                event.accept()
+        tools = QtWidgets.QHBoxLayout()
+        root.addLayout(tools)
+        self.interaction_combo = QtWidgets.QComboBox()
+        self.interaction_combo.addItem("Select / edit [P]", "edit")
+        self.interaction_combo.addItem("Brush select [B]", "brush")
+        self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
+        tools.addWidget(self.interaction_combo)
+        self.brush_radius_spin = _spinbox(8, 100, 32, suffix=" px", tip="Brush radius")
+        tools.addWidget(self.brush_radius_spin)
+        self.drag_mode_combo = QtWidgets.QComboBox()
+        for text, value in (
+            ("Soft drag", "soft"), ("Single base", "base"),
+            ("Selected bases", "selection"), ("Base pair", "pair"),
+            ("Loop", "loop"), ("Stem", "stem"), ("Branch", "branch"),
+        ):
+            self.drag_mode_combo.addItem(text, value)
+        self.drag_mode_combo.currentIndexChanged.connect(
+            lambda: self._update_editor_status("drag mode changed"))
+        tools.addWidget(self.drag_mode_combo)
+        self.gel_style_cb = _checkbox("Gel", True, self._gel_mode_toggled,
+                                       "Glass-like rendering and elastic motion")
+        tools.addWidget(self.gel_style_cb)
+        tools.addStretch(1)
+
+        self.options_panel = QtWidgets.QGroupBox("Display and 3D")
+        options = QtWidgets.QGridLayout(self.options_panel)
+        self.number_spin = _spinbox(0, 10000, self.number_every)
+        self.tertiary_cb = _checkbox("Extra DSSR pairs", self.show_tertiary)
+        self.base_colors_cb = _checkbox("Letter colors", True)
+        self.follow_spin = _spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
+        self.live_3d_cb = _checkbox("3D highlight", True, self._sync_pymol_selection)
+        self.reverse_3d_cb = _checkbox("3D → 2D sync", True, self._reverse_sync_toggled)
+        self.zoom_3d_cb = _checkbox("Zoom after brush", False)
+        options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
+        options.addWidget(self.number_spin, 0, 1)
+        options.addWidget(self.tertiary_cb, 0, 2)
+        options.addWidget(self.base_colors_cb, 0, 3)
+        options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
+        options.addWidget(self.follow_spin, 1, 1)
+        options.addWidget(self.live_3d_cb, 1, 2)
+        options.addWidget(self.reverse_3d_cb, 1, 3)
+        options.addWidget(self.zoom_3d_cb, 2, 2, 1, 2)
+        root.addWidget(self.options_panel)
+        self.options_panel.hide()
+        self.options_btn.toggled.connect(self.options_panel.setVisible)
+
+        self.sequence_view = DssrSequenceView(self)
+        root.addWidget(self.sequence_view)
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = Dssr2DGraphicsView(self.scene, self)
+        root.addWidget(self.view, 1)
+        hint = QtWidgets.QLabel("Drag blank space: box select · Drag bases: edit · Arrows / WASD: pan · Wheel: zoom · B: brush")
+        hint.setObjectName("studioHint")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+        self.status_label = QtWidgets.QLabel(self.model.summary())
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+    def set_view_active(self, active):
+        """Pause a hidden pane, keeping the scene, camera and undo history."""
+        active = bool(active) and not self._closed
+        if active == self._view_active:
+            return
+        self._view_active = active
+        if active:
+            self._last_pymol_signature = None
+            self._pull_pymol_selection()
+            self._reverse_timer.start()
+            self._ensure_animation()
+        else:
+            self.view.cancel_selection_gesture()
+            self.sequence_view._drag_anchor = None
+            self._sync_pending = False
+            for timer in (self._timer, self._sync_timer, self._reverse_timer):
+                timer.stop()
+            cmd.delete(self.HIGHLIGHT_OBJECT)
+            _DSSR_BLOCK_OBJECTS.discard(self.HIGHLIGHT_OBJECT)
+            self._last_highlight_signature = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._shown_once:
+            self._shown_once = True
+            QtCore.QTimer.singleShot(0, self.fit_scene)
+
+    def shutdown(self):
+        """Release PyMOL overlays and all timers before replacement or close."""
+        if not self._closed:
+            self.set_view_active(False)
+            self._closed = True
+            self.setEnabled(False)
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
+
+    def _sync_sequence_selection(self):
+        selected = [node.nt_index for node in self.nodes if node.isSelected()]
+        self.sequence_view.set_selected_indices(selected)
+        return selected
 
 
-    DssrPython2DDialog = DssrPython2DDialogV6
-    DssrPython2DDialog._premium_editor_v6_installed = True
 
 
-# Refresh the labels in the main dssr_gui window without changing its flow.
-_DSSR_PY2D_INSTALL_CONTROLS_BEFORE_V6 = (
-    DssrPython2DIntegration.install_gui_controls
-)
+def dssr_2d(
+    selection="all", state=-1, exe="x3dna-dssr", layout="standard",
+    number_every=10, show_tertiary=0, title="", quiet=1,
+):
+    """Open the shared DSSR workspace and return its embedded 2D editor.
 
-
-def _dssr2d_v6_install_gui_controls(dialog):
-    _DSSR_PY2D_INSTALL_CONTROLS_BEFORE_V6(dialog)
+    Usage: dssr_2d [selection [, state [, exe [, layout [, number_every
+        [, show_tertiary [, title [, quiet ]]]]]]]]
+    Layout: standard, circular, linear, or legacy radiate. Number_every=0
+    disables periodic labels. show_tertiary=1 displays additional DSSR pairs.
+    The existing dssr_gui window is reused; no second viewer is created.
+    """
+    global _DSSR_GUI_DIALOG
+    selection = HelperFunctions.unquote(selection)
+    exe = HelperFunctions.unquote(exe)
+    layout = HelperFunctions.unquote(layout)
+    title = HelperFunctions.unquote(title)
+    state, number_every = int(state), int(number_every)
+    if state <= 0:
+        state = int(cmd.get_state())
+    if _DSSR_GUI_DIALOG is None:
+        _DSSR_GUI_DIALOG = DssrGuiDialog()
+    host = _DSSR_GUI_DIALOG
+    if host._analysis_context != (selection, state, exe):
+        # Retire the old highlight before exporting an 'all' selection to DSSR.
+        host._clear_analysis("Analyzing the requested structure...")
     try:
-        dialog.py2d_group.setTitle(
-            "RNA 2D studio (gel + free brush + bidirectional 3D sync)"
+        data = host._get_dssr_data(selection, state, exe, 0)
+        editor = host.show_analysis(
+            data, selection, state, exe, algorithm=layout,
+            number_every=number_every, show_tertiary=int(show_tertiary), title=title,
         )
-        dialog.py2d_open_btn.setToolTip(
-            "Open the pure-Python RNA 2D studio. Toggle gel styling, sweep "
-            "across bases with the brush, and synchronize selections both ways."
-        )
-    except Exception:
-        pass
+    except Exception as error:
+        host._clear_analysis("Analysis error: %s" % error)
+        raise
+    host.show()
+    host.raise_()
+    host.activateWindow()
+    host.show_2d_btn.setChecked(True)
+    editor.view.setFocus(QtCore.Qt.OtherFocusReason)
+    if not int(quiet):
+        print("dssr_2d: shared workspace — %s" % editor.model.summary())
+    return editor
 
 
-DssrPython2DIntegration.install_gui_controls = staticmethod(
-    _dssr2d_v6_install_gui_controls
-)
-DssrPython2DIntegration._premium_editor_v6_installed = True
+# Public PyMOL commands are registered once, after all implementations exist.
+dssr_select = DssrFunctions.dssr_select
+dssr_gui = DssrGuiDialog.dssr_gui
+dssr_block = DssrFunctions.dssr_block
+dssr_seq = DssrFunctions.dssr_seq
+DssrFunctions.dssr_2d = staticmethod(dssr_2d)
+
+for _command in (dssr_select, dssr_gui, dssr_block, dssr_seq, dssr_2d):
+    cmd.extend(_command.__name__, _command)
 
 try:
-    print(
-        "Loaded DSSR RNA 2D premium editor %s: switchable gel, free brush, "
-        "bidirectional 2D/3D selection"
-        % __DSSR_PY2D_PREMIUM_EDITOR_VERSION__
-    )
-except Exception:
+    for _name in ("dssr_block", "dssr_2d"):
+        cmd.auto_arg[0][_name] = cmd.auto_arg[0]["zoom"]
+    cmd.auto_arg[2]["dssr_block"] = [cmd.Shortcut(BLOCK_FEATURES), "block_file", ""]
+except (AttributeError, KeyError):
     pass
+
+
+def __init_plugin__(app=None):
+    addmenuitemqt("DSSR", dssr_gui)
+
+
+print("Loaded DSSR-PyMOL %s (RNA 2D studio, Python/Qt)" % __DSSR_PLUGIN_VERSION__)
