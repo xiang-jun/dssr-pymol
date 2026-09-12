@@ -191,37 +191,23 @@ class HelperFunctions:
     def _run_dssr(args, operation="DSSR"):
         """Run either annotation or block generation with the same error handling."""
         try:
-            result = subprocess.run(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                encoding="utf-8",
-                errors="replace",
-            )
+            result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    encoding="utf-8", errors="replace")
         except OSError:
             raise CmdException('Cannot execute exe="%s"' % args[0])
         if result.returncode:
-            raise CmdException(
-                "%s failed (rc=%s). stderr tail: %s"
-                % (
-                    operation,
-                    result.returncode,
-                    HelperFunctions._safe_tail(result.stderr),
-                )
-            )
+            raise CmdException("%s failed (rc=%s). stderr tail: %s" % (
+                operation, result.returncode, HelperFunctions._safe_tail(result.stderr)))
         return result.stdout, result.stderr
 
     @staticmethod
     def run_dssr_json(pdb_path, exe):
         # Jmol/EBI unit IDs and U-turn annotations match upstream DSSR output.
         out, err = HelperFunctions._run_dssr(
-            [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path]
-        )
+            [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path])
         tail = HelperFunctions._safe_tail(err)
         if not out.strip():
-            raise CmdException(
-                "DSSR returned empty stdout (expected JSON). stderr tail: %s" % tail
-            )
+            raise CmdException("DSSR returned empty stdout (expected JSON). stderr tail: %s" % tail)
         try:
             return json.loads(out)
         except ValueError:
@@ -230,15 +216,13 @@ class HelperFunctions:
             if start < 0 or end <= start:
                 raise CmdException(
                     "Failed to parse DSSR JSON (no JSON object found). stdout head: %s | stderr tail: %s"
-                    % (head, tail)
-                )
+                    % (head, tail))
             try:
-                return json.loads(out[start : end + 1])
+                return json.loads(out[start:end + 1])
             except ValueError as error:
                 raise CmdException(
                     "Failed to parse DSSR JSON. stdout head: %s | stderr tail: %s | err: %s"
-                    % (head, tail, error)
-                )
+                    % (head, tail, error))
 
     @staticmethod
     def _selection_json(selection, state, exe, precolor=False):
@@ -271,8 +255,7 @@ class HelperFunctions:
 
         if not re.fullmatch(r"[0-9a-fA-F]{6}", s):
             raise CmdException(
-                'Invalid hex color "%s". Use FF00AA or 0xFF00AA (or "#FF00AA" quoted).'
-                % h
+                'Invalid hex color "%s". Use FF00AA or 0xFF00AA (or "#FF00AA" quoted).' % h
             )
 
         r = int(s[0:2], 16) / 255.0
@@ -366,11 +349,7 @@ class ParsingAlgos:
     def parse_dotbracket_pseudoknots(dotbracket):
         """Return noncanonical bracket/letter layers; separators consume no index."""
         openers = "([{<"
-        closer_to_open = dict(
-            zip(
-                ")]}>abcdefghijklmnopqrstuvwxyz", openers + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            )
-        )
+        closer_to_open = dict(zip(")]}>abcdefghijklmnopqrstuvwxyz", openers + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
         layer_for = dict(zip(openers, range(4)))
         stacks, layers = {}, {}
         nt_index = 0
@@ -425,12 +404,8 @@ class ParsingAlgos:
 
     @staticmethod
     def _pair_residues(pairs):
-        return {
-            ParsingAlgos.parse_nt_id(pair[key])
-            for pair in pairs
-            for key in ("nt1", "nt2")
-            if pair.get(key)
-        }
+        return {ParsingAlgos.parse_nt_id(pair[key])
+                for pair in pairs for key in ("nt1", "nt2") if pair.get(key)}
 
     @staticmethod
     def build_selection_from_stem(stem_entry):
@@ -459,9 +434,7 @@ class ParsingAlgos:
             except (TypeError, ValueError, OverflowError):
                 continue
             if 1 <= index <= len(stems_list):
-                residues.update(
-                    ParsingAlgos._pair_residues(stems_list[index - 1].get("pairs", []))
-                )
+                residues.update(ParsingAlgos._pair_residues(stems_list[index - 1].get("pairs", [])))
         if not residues:
             raise CmdException("Could not build selection for coaxStacks entry")
         return ParsingAlgos._residue_selection(residues)
@@ -480,9 +453,7 @@ class ParsingAlgos:
         if atom:
             c_a, r_a, atom_name = ParsingAlgos.parse_a2b_atom(atom)
             atom_name = str(atom_name).replace('"', '\\"')
-            clauses.append(
-                '(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name)
-            )
+            clauses.append('(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name))
 
         if not clauses:
             raise CmdException("atom2bases entry missing atom and nt")
@@ -527,11 +498,7 @@ class ParsingAlgos:
             return "%d: %s - %s%s" % (i, nt1, nt2, (" (%s)" % lw) if lw else "")
 
         if feature in ("stems", "helices"):
-            n = (
-                len(entry.get("pairs", []))
-                if isinstance(entry.get("pairs", []), list)
-                else 0
-            )
+            n = len(entry.get("pairs", [])) if isinstance(entry.get("pairs", []), list) else 0
             nm = entry.get("name", entry.get("index", ""))
             return "%d: %s (pairs=%d)" % (i, str(nm), n)
 
@@ -583,10 +550,7 @@ class ParsingAlgos:
         dbn_data = dssr_data["dbn"]
 
         if isinstance(dbn_data, dict):
-            if (
-                isinstance(dbn_data.get("all_chains"), dict)
-                and "sstr" in dbn_data["all_chains"]
-            ):
+            if isinstance(dbn_data.get("all_chains"), dict) and "sstr" in dbn_data["all_chains"]:
                 return dbn_data["all_chains"]["sstr"]
             if "sstr" in dbn_data:
                 return dbn_data["sstr"]
@@ -649,6 +613,8 @@ class ParsingAlgos:
             lines.append("%s: %d" % (label, count))
         return "\n".join(lines)
 
+
+
     @staticmethod
     def _sort_resi_key(resi_str):
         try:
@@ -691,16 +657,13 @@ class ParsingAlgos:
             layer_keys = sorted(layers.keys())
             if idx < 1 or idx > len(layer_keys):
                 raise CmdException(
-                    "pseudoknot layer index %d out of range (1..%d)"
-                    % (idx, len(layer_keys))
+                    "pseudoknot layer index %d out of range (1..%d)" % (idx, len(layer_keys))
                 )
 
             pairs = layers[layer_keys[idx - 1]]
             sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
             if not sel_str:
-                raise CmdException(
-                    "Could not build selection for pseudoknot layer %d" % idx
-                )
+                raise CmdException("Could not build selection for pseudoknot layer %d" % idx)
             return sel_str
 
         if feature not in FEATURE_MAP:
@@ -742,7 +705,6 @@ class ParsingAlgos:
             "ssSegments",
             "multiplets",
             "splayunits",
-            "uturns",
         ):
             nts_long = entry.get("nts_long", "")
             if not nts_long:
@@ -788,9 +750,7 @@ class DssrFunctions:
         precolor = int(precolor)
         feature = HelperFunctions.unquote(feature).lower().strip()
 
-        user_color = HelperFunctions._resolve_color_spec(
-            HelperFunctions.unquote(color).strip()
-        )
+        user_color = HelperFunctions._resolve_color_spec(HelperFunctions.unquote(color).strip())
 
         if feature in ("features", "help"):
             keys = sorted(FEATURE_MAP.keys())
@@ -807,25 +767,14 @@ class DssrFunctions:
 
         dssr_data = HelperFunctions._selection_json(selection, state, exe, precolor)
         return DssrFunctions._select_feature_data(
-            dssr_data,
-            selection,
-            state,
-            feature,
-            index,
-            name,
-            user_color,
-            show_info,
-            quiet,
-        )
+            dssr_data, selection, state, feature, index, name, user_color, show_info, quiet)
 
     @staticmethod
     def _create_feature_selection(name, selection, residue_selection):
         cmd.select(name, "((%s) and (%s))" % (selection, residue_selection))
         if int(cmd.count_atoms(name)) <= 0:
             cmd.delete(name)
-            raise CmdException(
-                "DSSR residues did not map back to the requested PyMOL selection"
-            )
+            raise CmdException("DSSR residues did not map back to the requested PyMOL selection")
         _DSSR_SELECTION_OBJECTS.add(str(name))
 
     @staticmethod
@@ -1107,9 +1056,7 @@ class DssrFunctions:
                 out_lines.append(DssrFunctions._wrap_seq(s, wrap))
             else:
                 out_lines.append(
-                    hdr
-                    + ": "
-                    + (DssrFunctions._wrap_seq(s, wrap) if int(wrap) > 0 else s)
+                    hdr + ": " + (DssrFunctions._wrap_seq(s, wrap) if int(wrap) > 0 else s)
                 )
 
         out = "\n".join(out_lines)
@@ -1118,17 +1065,8 @@ class DssrFunctions:
         return out
 
     @staticmethod
-    def _select_feature_data(
-        dssr_data,
-        selection,
-        state,
-        feature,
-        index,
-        name,
-        user_color=None,
-        show_info=0,
-        quiet=1,
-    ):
+    def _select_feature_data(dssr_data, selection, state, feature, index, name,
+                             user_color=None, show_info=0, quiet=1):
         """Create a feature selection from already analyzed DSSR data."""
         json_key = FEATURE_MAP[feature]
         if feature == "pseudoknot":
@@ -1148,9 +1086,7 @@ class DssrFunctions:
             if index == 0:
                 print("pseudoknot: %d layer(s)" % len(layer_keys))
                 for j, k in enumerate(layer_keys, 1):
-                    print(
-                        "  layer %d (key=%s): %d pair(s)" % (j, str(k), len(layers[k]))
-                    )
+                    print("  layer %d (key=%s): %d pair(s)" % (j, str(k), len(layers[k])))
                 if not quiet and show_info:
                     print("pseudoknot dot-bracket: " + str(dotbracket))
                 return
@@ -1188,9 +1124,7 @@ class DssrFunctions:
             show_n = 20 if not quiet else 10
             show_n = min(show_n, total)
             for i in range(show_n):
-                print(
-                    "  " + ParsingAlgos._preview_entry(feature, feature_list[i], i + 1)
-                )
+                print("  " + ParsingAlgos._preview_entry(feature, feature_list[i], i + 1))
             if total > show_n:
                 print("  ... (%d more)" % (total - show_n))
             return
@@ -1202,9 +1136,7 @@ class DssrFunctions:
 
         sel_str = ParsingAlgos._build_residue_sel_from_dssr(dssr_data, feature, index)
         if not sel_str:
-            raise CmdException(
-                "Could not build selection for %s index %d" % (feature, index)
-            )
+            raise CmdException("Could not build selection for %s index %d" % (feature, index))
         DssrFunctions._create_feature_selection(name, selection, sel_str)
         cmd.color(user_color if user_color else "pink", name)
 
@@ -1224,6 +1156,8 @@ class DssrFunctions:
                 pass
             if int(do_zoom):
                 cmd.zoom(name)
+
+
 
 
 def _button(text, clicked, tip=""):
@@ -1318,15 +1252,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.show_2d_btn = QtWidgets.QPushButton("2D")
         self.show_2d_btn.setCheckable(True)
         self.show_2d_btn.setChecked(True)
-        self.show_2d_btn.setToolTip(
-            "Show / hide the sequence and 2D panel; keep the edited layout"
-        )
+        self.show_2d_btn.setToolTip("Show / hide the sequence and 2D panel; keep the edited layout")
         self.show_2d_btn.toggled.connect(self._set_2d_visible)
         top.addWidget(self.show_2d_btn)
         self.settings_btn = QtWidgets.QPushButton("Settings")
-        self.settings_btn.setToolTip(
-            "Display options, base blocks, and the DSSR executable path"
-        )
+        self.settings_btn.setToolTip("Display options, base blocks, and the DSSR executable path")
         self.settings_btn.setCheckable(True)
         top.addWidget(self.settings_btn)
 
@@ -1406,23 +1336,15 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         panel_title = QtWidgets.QHBoxLayout()
         panel_title.addWidget(QtWidgets.QLabel("Sequence · RNA 2D"))
         panel_title.addStretch(1)
-        self.minimize_2d_btn = _button(
-            "−",
-            lambda: self.show_2d_btn.setChecked(False),
-            "Collapse 2D; keep the layout and undo history",
-        )
-        self.hide_2d_btn = _button(
-            "×",
-            lambda: self.show_2d_btn.setChecked(False),
-            "Hide 2D; reopen with the 2D button above",
-        )
+        self.minimize_2d_btn = _button("−", lambda: self.show_2d_btn.setChecked(False),
+                                     "Collapse 2D; keep the layout and undo history")
+        self.hide_2d_btn = _button("×", lambda: self.show_2d_btn.setChecked(False),
+                                 "Hide 2D; reopen with the 2D button above")
         for button in (self.minimize_2d_btn, self.hide_2d_btn):
             button.setFixedWidth(28)
             panel_title.addWidget(button)
         self.editor_layout.addLayout(panel_title)
-        self.empty_label = QtWidgets.QLabel(
-            "RNA 2D view\n\nLoad a molecule and click Analyze."
-        )
+        self.empty_label = QtWidgets.QLabel("RNA 2D view\n\nLoad a molecule and click Analyze.")
         self.empty_label.setAlignment(QtCore.Qt.AlignCenter)
         self.editor_layout.addWidget(self.empty_label)
         self.splitter.addWidget(self.editor_container)
@@ -1444,13 +1366,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if (
-            event.type() == QtCore.QEvent.WindowStateChange
-            and getattr(self, "editor", None) is not None
-        ):
-            self.editor.set_view_active(
-                self.show_2d_btn.isChecked() and not self.isMinimized()
-            )
+        if event.type() == QtCore.QEvent.WindowStateChange and getattr(self, "editor", None) is not None:
+            self.editor.set_view_active(self.show_2d_btn.isChecked() and not self.isMinimized())
 
     def _get_object_text(self):
         return self.obj_combo.currentText().strip() or "all"
@@ -1460,12 +1377,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return max(1, int(cmd.get_state())) if state in (None, -1) else int(state)
 
     def _get_dssr_context(self):
-        return (
-            self._get_object_text(),
-            self.exe_edit.text().strip() or "x3dna-dssr",
-            self._get_state_value(),
-            int(self.precolor_cb.isChecked()),
-        )
+        return (self._get_object_text(), self.exe_edit.text().strip() or "x3dna-dssr",
+                self._get_state_value(), int(self.precolor_cb.isChecked()))
 
     def _context(self):
         selection, exe, state, _precolor = self._get_dssr_context()
@@ -1473,13 +1386,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _molecule_objects(self):
         objects = cmd.get_object_list()
-        return [
-            name
-            for name in objects
-            if name not in _DSSR_BLOCK_OBJECTS
-            and not name.startswith("_dssr_2d_")
-            and cmd.count_atoms(name) > 0
-        ]
+        return [name for name in objects if name not in _DSSR_BLOCK_OBJECTS
+                and not name.startswith("_dssr_2d_") and cmd.count_atoms(name) > 0]
 
     def _update_state_combo(self, wanted=None):
         selected = self.state_combo.currentData() if wanted is None else wanted
@@ -1517,9 +1425,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         finally:
             self._updating_context = False
         if not objects:
-            self._clear_analysis(
-                "No molecule loaded. Load a PDB/CIF file, then click Analyze."
-            )
+            self._clear_analysis("No molecule loaded. Load a PDB/CIF file, then click Analyze.")
         elif self._analysis_context != self._context():
             self._clear_analysis("Choose an object / selection, then click Analyze.")
 
@@ -1530,9 +1436,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _on_dssr_context_changed(self, *_args):
         if not self._updating_context:
-            self._clear_analysis(
-                "Analysis context changed. Click Analyze to update the structure."
-            )
+            self._clear_analysis("Analysis context changed. Click Analyze to update the structure.")
 
     def _invalidate_dssr_cache(self):
         self._cache_key = self._cache_data = None
@@ -1564,13 +1468,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             return
         try:
             selection, state, _exe = self._context()
-            if (
-                not self._molecule_objects()
-                or cmd.count_atoms(selection, state=state) <= 0
-            ):
-                self._clear_analysis(
-                    "The analyzed structure is no longer loaded. Click Analyze after loading it."
-                )
+            if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
+                self._clear_analysis("The analyzed structure is no longer loaded. Click Analyze after loading it.")
             elif self._analysis_context != self._context():
                 self._on_dssr_context_changed()
         except Exception as error:
@@ -1598,11 +1497,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if self._loading:
             return self.editor
         selection, exe, state, precolor = self._get_dssr_context()
-        if (
-            not force
-            and self.editor is not None
-            and self._analysis_context == (selection, state, exe)
-        ):
+        if not force and self.editor is not None and self._analysis_context == (selection, state, exe):
             return self.editor
         self._loading = True
         self.analyze_btn.setEnabled(False)
@@ -1620,18 +1515,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._loading = False
             self.analyze_btn.setEnabled(True)
 
-    def show_analysis(
-        self,
-        data,
-        selection,
-        state,
-        exe,
-        algorithm="standard",
-        number_every=10,
-        show_tertiary=0,
-        title="",
-        force=False,
-    ):
+    def show_analysis(self, data, selection, state, exe, algorithm="standard",
+                      number_every=10, show_tertiary=0, title="", force=False):
         context = (str(selection), int(state), str(exe))
         if not force and self.editor is not None and context == self._analysis_context:
             if not self._loading:
@@ -1645,9 +1530,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if title:
                 self.editor.model.title = str(title)
             return self.editor
-        model = Dssr2DModel.from_dssr(
-            data, title=title or "%s — state %d" % (selection, state)
-        )
+        model = Dssr2DModel.from_dssr(data, title=title or "%s — state %d" % (selection, state))
         self._dispose_editor()
         keep_current = self._loading and self.state_combo.currentData() == -1
         self._updating_context = True
@@ -1659,42 +1542,27 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._updating_context = False
         self._analysis_context = self._cache_key = context
         self._cache_data = data
-        self.editor = Dssr2DEditor(
-            model, selection, algorithm, number_every, show_tertiary, parent=self
-        )
+        self.editor = Dssr2DEditor(model, selection, algorithm, number_every, show_tertiary, parent=self)
         self.editor.pymol_state = int(state)
         self.editor_layout.addWidget(self.editor)
         self.empty_label.hide()
         self.editor.show()
-        self.editor.set_view_active(
-            self.show_2d_btn.isChecked() and not self.isMinimized()
-        )
+        self.editor.set_view_active(self.show_2d_btn.isChecked() and not self.isMinimized())
         if self.editor.isVisible():
             self.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
         self._update_feature_counts(data)
         self.refresh_list()
         self.report_box.setPlainText(ParsingAlgos._format_rna_summary_text(data))
         self.data_tabs.setCurrentWidget(self.report_box)
-        self.status_label.setText(
-            "%s | state %d | %s" % (selection, state, model.summary())
-        )
+        self.status_label.setText("%s | state %d | %s" % (selection, state, model.summary()))
         QtCore.QTimer.singleShot(0, self.editor.fit_scene)
         return self.editor
 
     def _update_feature_counts(self, data):
         for index, feature in enumerate(FEATURE_ORDER):
-            count = (
-                0
-                if data is None
-                else (
-                    ParsingAlgos._count_pseudoknot_layers(data)
-                    if feature == "pseudoknot"
-                    else len(ParsingAlgos.feature_entries(data, feature))
-                )
-            )
-            self.feature_combo.setItemText(
-                index, "%s (%d)" % (FEATURE_LABELS.get(feature, feature), count)
-            )
+            count = 0 if data is None else (ParsingAlgos._count_pseudoknot_layers(data)
+                if feature == "pseudoknot" else len(ParsingAlgos.feature_entries(data, feature)))
+            self.feature_combo.setItemText(index, "%s (%d)" % (FEATURE_LABELS.get(feature, feature), count))
         self.feature_combo.setEnabled(data is not None)
         self.make_blocks_btn.setEnabled(data is not None)
 
@@ -1708,27 +1576,18 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         data = self._cache_data
         if data is not None:
             if self._current_feature == "pseudoknot":
-                layers = ParsingAlgos.parse_dotbracket_pseudoknots(
-                    ParsingAlgos._extract_dotbracket(data)
-                )
-                self._items_all = [
-                    (i, "%d: layer %s, %d pairs" % (i, key, len(layers[key])))
-                    for i, key in enumerate(sorted(layers), 1)
-                ]
+                layers = ParsingAlgos.parse_dotbracket_pseudoknots(ParsingAlgos._extract_dotbracket(data))
+                self._items_all = [(i, "%d: layer %s, %d pairs" % (i, key, len(layers[key])))
+                                   for i, key in enumerate(sorted(layers), 1)]
             else:
-                self._items_all = [
-                    (i, self._entry_label(self._current_feature, entry, i))
-                    for i, entry in enumerate(
-                        ParsingAlgos.feature_entries(data, self._current_feature), 1
-                    )
-                ]
+                self._items_all = [(i, self._entry_label(self._current_feature, entry, i))
+                    for i, entry in enumerate(ParsingAlgos.feature_entries(data, self._current_feature), 1)]
         self._page = 0
         self._render_list()
 
     @staticmethod
     def _entry_label(feature, entry, index):
         """Compact display labels only; DSSR identifiers and item indices stay intact."""
-
         def short_id(match):
             identifier = match.group(0)
             try:
@@ -1738,7 +1597,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 return "%s:%s%s%s" % (chain or "–", parts[3], resi, atom)
             except (CmdException, IndexError):
                 return identifier
-
         text = ParsingAlgos._preview_entry(feature, entry, index)
         return re.sub(r"[^\s,;()]+\|[^\s,;()]*", short_id, text)
 
@@ -1752,15 +1610,13 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _render_list(self):
         query = self.filter_edit.text().strip().lower()
-        self._items_filtered = [
-            item for item in self._items_all if query in item[1].lower()
-        ]
+        self._items_filtered = [item for item in self._items_all if query in item[1].lower()]
         count = len(self._items_filtered)
         pages = max(1, (count + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
         self._page = min(self._page, pages - 1)
         self.list_widget.clear()
         start = self._page * self.PAGE_SIZE
-        for index, text in self._items_filtered[start : start + self.PAGE_SIZE]:
+        for index, text in self._items_filtered[start:start + self.PAGE_SIZE]:
             item = QtWidgets.QListWidgetItem(text)
             item.setData(QtCore.Qt.UserRole, index)
             self.list_widget.addItem(item)
@@ -1770,9 +1626,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _entry_for_feature_index(self, data, feature, index):
         if feature == "pseudoknot":
-            layers = ParsingAlgos.parse_dotbracket_pseudoknots(
-                ParsingAlgos._extract_dotbracket(data)
-            )
+            layers = ParsingAlgos.parse_dotbracket_pseudoknots(ParsingAlgos._extract_dotbracket(data))
             key = sorted(layers)[index - 1]
             return {"layer": key, "pair_count": len(layers[key]), "pairs": layers[key]}
         return ParsingAlgos.feature_entries(data, feature)[index - 1]
@@ -1794,9 +1648,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         try:
             data = self._require_analysis()
             selection = self._analysis_context[0]
-            core = ParsingAlgos._build_residue_sel_from_dssr(
-                data, self._current_feature, int(index)
-            )
+            core = ParsingAlgos._build_residue_sel_from_dssr(data, self._current_feature, int(index))
             cmd.select("sele", "byres ((%s) and (%s))" % (selection, core))
             self._show_item_details(data, self._current_feature, int(index))
             if self.editor is not None:
@@ -1816,22 +1668,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             selection, state, _exe = self._analysis_context
             feature, index = self._current_feature, int(index)
             user_color = HelperFunctions._resolve_color_spec(
-                HelperFunctions.unquote(
-                    self.color_edit.text().strip() or "auto"
-                ).strip()
-            )
+                HelperFunctions.unquote(self.color_edit.text().strip() or "auto").strip())
             if self.precolor_cb.isChecked():
                 cmd.color("gray", selection)
             name = "%s%d" % (feature.lower(), index)
             DssrFunctions._select_feature_data(
-                data, selection, state, feature, index, name, user_color, quiet=0
-            )
+                data, selection, state, feature, index, name, user_color, quiet=0)
             DssrFunctions._display_feature_selection(
-                name,
-                int(self.display_cb.isChecked()),
-                0.25,
-                int(self.zoom_cb.isChecked()),
-            )
+                name, int(self.display_cb.isChecked()), 0.25, int(self.zoom_cb.isChecked()))
         except Exception as error:
             self.status_label.setText("Selection error: %s" % error)
 
@@ -1839,31 +1683,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         try:
             data = self._require_analysis()
             selection, state, exe = self._analysis_context
-            indices = [
-                item.data(QtCore.Qt.UserRole)
-                for item in self.list_widget.selectedItems()
-            ]
-            parts = [
-                ParsingAlgos._build_residue_sel_from_dssr(
-                    data, self._current_feature, int(index)
-                )
-                for index in indices
-                if index is not None
-            ]
+            indices = [item.data(QtCore.Qt.UserRole) for item in self.list_widget.selectedItems()]
+            parts = [ParsingAlgos._build_residue_sel_from_dssr(data, self._current_feature, int(index))
+                     for index in indices if index is not None]
             core = " or ".join("(%s)" % part for part in parts) if parts else "sele"
             scope = "byres ((%s) and (%s))" % (selection, core)
             if cmd.count_atoms(scope, state=state) <= 0:
                 raise CmdException("Select a feature or some bases first.")
             name = DssrFunctions._unused_name("dssr_blocks")
-            DssrFunctions.dssr_block(
-                selection=scope,
-                state=state,
+            DssrFunctions.dssr_block(selection=scope, state=state,
                 block_file=self.block_file_combo.currentText().strip() or "face",
-                block_depth=float(self.block_depth_spin.value()),
-                name=name,
-                exe=exe,
-                quiet=1,
-            )
+                block_depth=float(self.block_depth_spin.value()), name=name, exe=exe, quiet=1)
             if self.zoom_cb.isChecked():
                 cmd.zoom(name)
             self.status_label.setText("Created %s for the selected bases." % name)
@@ -1901,6 +1731,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if host.editor is not None and host.editor.isVisible():
             host.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
         return host
+
+
 
 
 # RNA data model
@@ -2044,9 +1876,7 @@ class Dssr2DModel:
             target_len = nts_count
 
         if target_len <= 0:
-            raise CmdException(
-                "DSSR output contains no usable sequence or dot-bracket structure"
-            )
+            raise CmdException("DSSR output contains no usable sequence or dot-bracket structure")
 
         if nts_count and target_len != nts_count:
             # DSSR's nts array is the most useful source for PyMOL residue mapping.
@@ -2059,9 +1889,7 @@ class Dssr2DModel:
             if len(derived) >= target_len:
                 seq_no_breaks = derived[:target_len]
             else:
-                seq_no_breaks = (seq_no_breaks + derived + ("N" * target_len))[
-                    :target_len
-                ]
+                seq_no_breaks = (seq_no_breaks + derived + ("N" * target_len))[:target_len]
         elif len(seq_no_breaks) > target_len:
             seq_no_breaks = seq_no_breaks[:target_len]
 
@@ -2088,18 +1916,10 @@ class Dssr2DModel:
         # Normalize nucleotide metadata to exactly target_len entries.
         previous_chain = None
         for i in range(target_len):
-            src = (
-                nts_json[i]
-                if i < len(nts_json) and isinstance(nts_json[i], dict)
-                else {}
-            )
+            src = nts_json[i] if i < len(nts_json) and isinstance(nts_json[i], dict) else {}
             nt_id = str(src.get("nt_id", ""))
             chain, resi = cls._safe_parse_nt_id(nt_id)
-            base = (
-                model.sequence[i]
-                if i < len(model.sequence)
-                else cls._base_from_nt_entry(src)
-            )
+            base = model.sequence[i] if i < len(model.sequence) else cls._base_from_nt_entry(src)
             nt = {
                 "index": i,
                 "number": i + 1,
@@ -2136,8 +1956,7 @@ class Dssr2DModel:
                 stack = stacks.setdefault(opener, [])
                 if not stack:
                     self.warnings.append(
-                        "Unmatched closing bracket %s at nucleotide %d"
-                        % (char, idx + 1)
+                        "Unmatched closing bracket %s at nucleotide %d" % (char, idx + 1)
                     )
                     continue
                 i = stack.pop()
@@ -2168,8 +1987,7 @@ class Dssr2DModel:
                 stack = stacks.setdefault(opener, [])
                 if not stack:
                     self.warnings.append(
-                        "Unmatched pseudoknot symbol %s at nucleotide %d"
-                        % (char, idx + 1)
+                        "Unmatched pseudoknot symbol %s at nucleotide %d" % (char, idx + 1)
                     )
                     continue
                 i = stack.pop()
@@ -2247,9 +2065,7 @@ class Dssr2DModel:
                     "dssr": entry,
                 }
 
-        self.tertiary_pairs = sorted(
-            tertiary_by_key.values(), key=lambda p: (p["i"], p["j"])
-        )
+        self.tertiary_pairs = sorted(tertiary_by_key.values(), key=lambda p: (p["i"], p["j"]))
 
     def planar_secondary_pairs(self):
         """Return a deterministic non-crossing scaffold for layout.
@@ -2307,14 +2123,11 @@ class Dssr2DModel:
         return len(self.chain_breaks) + 1
 
     def summary(self):
-        return (
-            "%d nt | %d chain(s) | %d secondary pair(s) | %d additional DSSR pair(s)"
-            % (
-                len(self.nts),
-                self.chain_count(),
-                len(self.secondary_pairs),
-                len(self.tertiary_pairs),
-            )
+        return "%d nt | %d chain(s) | %d secondary pair(s) | %d additional DSSR pair(s)" % (
+            len(self.nts),
+            self.chain_count(),
+            len(self.secondary_pairs),
+            len(self.tertiary_pairs),
         )
 
 
@@ -2521,8 +2334,7 @@ class Dssr2DLayout:
             else:
                 max_angle = math.radians(min(78.0, 35.0 + 15.0 * (count - 1)))
                 angles = [
-                    -max_angle + (2.0 * max_angle * k / float(count - 1))
-                    for k in range(count)
+                    -max_angle + (2.0 * max_angle * k / float(count - 1)) for k in range(count)
                 ]
 
             branch_distance = 85.0 + 10.0 * max(0, count - 2)
@@ -2543,8 +2355,7 @@ class Dssr2DLayout:
         elif top_count <= 4:
             max_angle = math.radians(70.0)
             angles = [
-                -max_angle + (2.0 * max_angle * k / float(top_count - 1))
-                for k in range(top_count)
+                -max_angle + (2.0 * max_angle * k / float(top_count - 1)) for k in range(top_count)
             ]
             for stem, angle in zip(top_level, angles):
                 direction = Dssr2DLayout._v_rotate((0.0, 1.0), angle)
@@ -2571,9 +2382,7 @@ class Dssr2DLayout:
                 average_direction = (0.0, 0.0)
                 for value in (directions[previous], directions[following]):
                     if value is not None:
-                        average_direction = Dssr2DLayout._v_add(
-                            average_direction, value
-                        )
+                        average_direction = Dssr2DLayout._v_add(average_direction, value)
                 if math.hypot(*average_direction) < 0.1:
                     chord = (b[0] - a[0], b[1] - a[1])
                     average_direction = (-chord[1], chord[0])
@@ -2589,19 +2398,13 @@ class Dssr2DLayout:
                         half_chord + 1.0,
                         ((count + 1) * 34.0 + chord_length) / (2.0 * math.pi),
                     )
-                    center_distance = math.sqrt(
-                        max(1.0, radius * radius - half_chord * half_chord)
-                    )
+                    center_distance = math.sqrt(max(1.0, radius * radius - half_chord * half_chord))
                     circle_center = Dssr2DLayout._v_add(
                         midpoint,
                         Dssr2DLayout._v_mul(average_direction, center_distance),
                     )
-                    theta_a = math.atan2(
-                        a[1] - circle_center[1], a[0] - circle_center[0]
-                    )
-                    theta_b = math.atan2(
-                        b[1] - circle_center[1], b[0] - circle_center[0]
-                    )
+                    theta_a = math.atan2(a[1] - circle_center[1], a[0] - circle_center[0])
+                    theta_b = math.atan2(b[1] - circle_center[1], b[0] - circle_center[0])
                     minor_sweep = (theta_b - theta_a) % (2.0 * math.pi)
                     long_sweep = 2.0 * math.pi - minor_sweep
                     for offset, index in enumerate(range(start, end + 1), 1):
@@ -2756,9 +2559,7 @@ def _layout_solve_circle(edge_lengths):
     lower = max(lengths) * 0.5 + 1.0e-7
 
     def angles_at(radius):
-        return [
-            2.0 * math.asin(min(1.0, length / (2.0 * radius))) for length in lengths
-        ]
+        return [2.0 * math.asin(min(1.0, length / (2.0 * radius))) for length in lengths]
 
     lower_angles = angles_at(lower)
     lower_total = sum(lower_angles)
@@ -2808,9 +2609,7 @@ def _layout_quadratic_equal(indices, start, stop, control, positions):
 
     cumulative = [0.0]
     for first, second in zip(points, points[1:]):
-        cumulative.append(
-            cumulative[-1] + math.hypot(second[0] - first[0], second[1] - first[1])
-        )
+        cumulative.append(cumulative[-1] + math.hypot(second[0] - first[0], second[1] - first[1]))
     total = cumulative[-1]
     if total <= 1.0e-12:
         return
@@ -2874,8 +2673,7 @@ def _layout_place_loop_circle(
                 )
             )
         score = sum(
-            (point[0] - midpoint[0]) * outward[0]
-            + (point[1] - midpoint[1]) * outward[1]
+            (point[0] - midpoint[0]) * outward[0] + (point[1] - midpoint[1]) * outward[1]
             for point in candidate
         ) / float(max(1, len(candidate)))
         candidates.append((score, candidate))
@@ -3347,8 +3145,7 @@ class _DSSRNaview:
         self.nbase = int(pair_table[0])
         if len(pair_table) != self.nbase + 1:
             raise ValueError(
-                "NAView pair table length %d does not match n=%d"
-                % (len(pair_table), self.nbase)
+                "NAView pair table length %d does not match n=%d" % (len(pair_table), self.nbase)
             )
 
         self.bases = [_DSSRNaviewBase() for _ in range(self.nbase + 1)]
@@ -3536,22 +3333,15 @@ class _DSSRNaview:
 
     @staticmethod
     def _connected(connection, following):
-        return bool(connection.extruded) or (
-            int(connection.end) + 1 == int(following.start)
-        )
+        return bool(connection.extruded) or (int(connection.end) + 1 == int(following.start))
 
-    def _find_middle_connection(
-        self, start, end, anchor_connection, anchor_in_loop, loop
-    ):
+    def _find_middle_connection(self, start, end, anchor_connection, anchor_in_loop, loop):
         count = 0
         result = -1
         index = int(start)
         while True:
             count += 1
-            if (
-                anchor_connection is not None
-                and loop.connections[index] is anchor_in_loop
-            ):
+            if anchor_connection is not None and loop.connections[index] is anchor_in_loop:
                 result = index
             if index == end:
                 break
@@ -3596,17 +3386,11 @@ class _DSSRNaview:
                 numerator += delta_angle * (1.0 / count + 1.0)
                 denominator += delta_angle * delta_angle / count
                 increment = delta_angle / count
-                if (
-                    increment < minimum_increment
-                    and not connection.extruded
-                    and count > 1.0
-                ):
+                if increment < minimum_increment and not connection.extruded and count > 1.0:
                     minimum_increment = increment
                     minimum_index = index
 
-            radius = (
-                numerator / denominator if denominator > 1.0e-14 else minimum_radius
-            )
+            radius = numerator / denominator if denominator > 1.0e-14 else minimum_radius
             radius = max(radius, minimum_radius)
             if minimum_increment * radius < length_cutoff:
                 loop.connections[minimum_index].extruded = True
@@ -3643,10 +3427,7 @@ class _DSSRNaview:
             connection.xrad = normal_x / length
             connection.yrad = normal_y / length
             connection.angle = math.atan2(normal_y, normal_x) % (2.0 * math.pi)
-            if (
-                anchor_connection is not None
-                and anchor_connection.region is connection.region
-            ):
+            if anchor_connection is not None and anchor_connection.region is connection.region:
                 anchor_in_loop = connection
                 root_connection_index = index
 
@@ -3665,19 +3446,15 @@ class _DSSRNaview:
                 center_y = 0.0
             else:
                 origin_x = (
-                    self.bases[anchor_in_loop.start].x
-                    + self.bases[anchor_in_loop.end].x
+                    self.bases[anchor_in_loop.start].x + self.bases[anchor_in_loop.end].x
                 ) / 2.0
                 origin_y = (
-                    self.bases[anchor_in_loop.start].y
-                    + self.bases[anchor_in_loop.end].y
+                    self.bases[anchor_in_loop.start].y + self.bases[anchor_in_loop.end].y
                 ) / 2.0
                 center_x = origin_x - radius * anchor_in_loop.xrad
                 center_y = origin_y - radius * anchor_in_loop.yrad
 
-            connection_start = (
-                0 if root_connection_index == -1 else root_connection_index
-            )
+            connection_start = 0 if root_connection_index == -1 else root_connection_index
             connection = loop.connections[connection_start]
             count = 0
             while True:
@@ -3693,9 +3470,7 @@ class _DSSRNaview:
                     largest_index = 0
                     for index, candidate in enumerate(loop.connections):
                         following = loop.connections[(index + 1) % loop.nconnection]
-                        separation = (following.angle - candidate.angle) % (
-                            2.0 * math.pi
-                        )
+                        separation = (following.angle - candidate.angle) % (2.0 * math.pi)
                         if separation > largest_angle:
                             largest_angle = separation
                             largest_index = index
@@ -3744,25 +3519,22 @@ class _DSSRNaview:
 
                     if current_index >= 0:
                         connection = loop.connections[current_index]
-                        if (
-                            anchor_connection is None
-                            or anchor_in_loop is not connection
-                        ):
+                        if anchor_connection is None or anchor_in_loop is not connection:
                             if direction == 0:
                                 half_angle = math.asin(min(1.0, 1.0 / (2.0 * radius)))
                                 start_angle = connection.angle - half_angle
                                 end_angle = connection.angle + half_angle
-                                self.bases[connection.start].x = (
-                                    center_x + radius * math.cos(start_angle)
+                                self.bases[connection.start].x = center_x + radius * math.cos(
+                                    start_angle
                                 )
-                                self.bases[connection.start].y = (
-                                    center_y + radius * math.sin(start_angle)
+                                self.bases[connection.start].y = center_y + radius * math.sin(
+                                    start_angle
                                 )
-                                self.bases[connection.end].x = (
-                                    center_x + radius * math.cos(end_angle)
+                                self.bases[connection.end].x = center_x + radius * math.cos(
+                                    end_angle
                                 )
-                                self.bases[connection.end].y = (
-                                    center_y + radius * math.sin(end_angle)
+                                self.bases[connection.end].y = center_y + radius * math.sin(
+                                    end_angle
                                 )
                             elif direction < 0:
                                 following_index = (current_index + 1) % loop.nconnection
@@ -3773,13 +3545,10 @@ class _DSSRNaview:
                                     angle -= math.pi
                                 line_x = math.sin(angle)
                                 line_y = -math.cos(angle)
-                                separation = (following.angle - connection.angle) % (
-                                    2.0 * math.pi
-                                )
+                                separation = (following.angle - connection.angle) % (2.0 * math.pi)
                                 multiplier = (
                                     2.0
-                                    if connection.extruded
-                                    and separation <= math.pi / 2.0
+                                    if connection.extruded and separation <= math.pi / 2.0
                                     else (1.5 if connection.extruded else 1.0)
                                 )
                                 self.bases[connection.end].x = (
@@ -3803,9 +3572,7 @@ class _DSSRNaview:
                                     angle -= math.pi
                                 line_x = -math.sin(angle)
                                 line_y = math.cos(angle)
-                                separation = (connection.angle - previous.angle) % (
-                                    2.0 * math.pi
-                                )
+                                separation = (connection.angle - previous.angle) % (2.0 * math.pi)
                                 multiplier = (
                                     2.0
                                     if previous.extruded and separation <= math.pi / 2.0
@@ -3846,12 +3613,10 @@ class _DSSRNaview:
                     first_connection = loop.connections[connection_start]
                     last_connection = loop.connections[connection_end]
                     delta_x = (
-                        self.bases[last_connection.end].x
-                        - self.bases[first_connection.start].x
+                        self.bases[last_connection.end].x - self.bases[first_connection.start].x
                     )
                     delta_y = (
-                        self.bases[last_connection.end].y
-                        - self.bases[first_connection.start].y
+                        self.bases[last_connection.end].y - self.bases[first_connection.start].y
                     )
                     middle_x = self.bases[first_connection.start].x + delta_x / 2.0
                     middle_y = self.bases[first_connection.start].y + delta_y / 2.0
@@ -3892,17 +3657,11 @@ class _DSSRNaview:
                                         candidate.start,
                                         candidate.end,
                                     ):
-                                        self.bases[base_index].x += (
-                                            new_middle_x - middle_x
-                                        )
-                                        self.bases[base_index].y += (
-                                            new_middle_y - middle_y
-                                        )
+                                        self.bases[base_index].x += new_middle_x - middle_x
+                                        self.bases[base_index].y += new_middle_y - middle_y
                                     if current_index == connection_end:
                                         break
-                                    current_index = (
-                                        current_index + 1
-                                    ) % loop.nconnection
+                                    current_index = (current_index + 1) % loop.nconnection
 
                 connection_start = next_start
                 all_connections_done = connection_start == first_start
@@ -3924,10 +3683,7 @@ class _DSSRNaview:
                 sweep = angle_following - angle_current
                 expected = (following.angle - connection.angle) % (2.0 * math.pi)
                 if abs(sweep - expected) > math.pi:
-                    if (
-                        not connection.extruded
-                        and (following.start - connection.end) != 1
-                    ):
+                    if not connection.extruded and (following.start - connection.end) != 1:
                         connection.extruded = True
                         restart = True
                         break
@@ -3954,12 +3710,8 @@ class _DSSRNaview:
                                 )
                             else:
                                 local_radius = radius_current
-                            self.bases[base_index].x = (
-                                center_x + local_radius * math.cos(angle)
-                            )
-                            self.bases[base_index].y = (
-                                center_y + local_radius * math.sin(angle)
-                            )
+                            self.bases[base_index].x = center_x + local_radius * math.cos(angle)
+                            self.bases[base_index].y = center_y + local_radius * math.sin(angle)
 
             if restart:
                 continue
@@ -4004,21 +3756,17 @@ class _DSSRNaview:
         for base_index in range(start + 1, end + 1):
             length += 1
             self.bases[base_index].x = (
-                self.bases[connection.start].x
-                + self.HELIX_FACTOR * length * connection.xrad
+                self.bases[connection.start].x + self.HELIX_FACTOR * length * connection.xrad
             )
             self.bases[base_index].y = (
-                self.bases[connection.start].y
-                + self.HELIX_FACTOR * length * connection.yrad
+                self.bases[connection.start].y + self.HELIX_FACTOR * length * connection.yrad
             )
             mate = int(self.bases[base_index].mate)
             self.bases[mate].x = (
-                self.bases[connection.end].x
-                + self.HELIX_FACTOR * length * connection.xrad
+                self.bases[connection.end].x + self.HELIX_FACTOR * length * connection.xrad
             )
             self.bases[mate].y = (
-                self.bases[connection.end].y
-                + self.HELIX_FACTOR * length * connection.yrad
+                self.bases[connection.end].y + self.HELIX_FACTOR * length * connection.yrad
             )
 
     def _construct_extruded_segment(self, connection, following):
@@ -4118,12 +3866,8 @@ class _DSSRNaview:
                 base_index = start + offset
                 if base_index > self.nbase:
                     base_index -= self.nbase + 1
-                self.bases[base_index].x = self.bases[
-                    start
-                ].x + delta_x * offset / float(length)
-                self.bases[base_index].y = self.bases[
-                    start
-                ].y + delta_y * offset / float(length)
+                self.bases[base_index].x = self.bases[start].x + delta_x * offset / float(length)
+                self.bases[base_index].y = self.bases[start].y + delta_y * offset / float(length)
             return
 
         self._find_center_for_arc(length - 1, distance)
@@ -4146,12 +3890,8 @@ class _DSSRNaview:
             base_index = start + offset
             if base_index > self.nbase:
                 base_index -= self.nbase + 1
-            self.bases[base_index].x = center_x + radius * math.cos(
-                angle + offset * self.angleinc
-            )
-            self.bases[base_index].y = center_y + radius * math.sin(
-                angle + offset * self.angleinc
-            )
+            self.bases[base_index].x = center_x + radius * math.cos(angle + offset * self.angleinc)
+            self.bases[base_index].y = center_y + radius * math.sin(angle + offset * self.angleinc)
 
     def _find_center_for_arc(self, count, chord):
         upper = (count + 1.0) / math.pi
@@ -4265,12 +4005,8 @@ def _layout_standardize_trna_orientation(model, points):
     if len(arms) >= 3:
         d_indices = list(range(int(arms[0]["outer_i"]), int(arms[0]["outer_j"]) + 1))
         t_indices = list(range(int(arms[2]["outer_i"]), int(arms[2]["outer_j"]) + 1))
-        d_x = sum(points[index][0] for index in d_indices) / float(
-            max(1, len(d_indices))
-        )
-        t_x = sum(points[index][0] for index in t_indices) / float(
-            max(1, len(t_indices))
-        )
+        d_x = sum(points[index][0] for index in d_indices) / float(max(1, len(d_indices)))
+        t_x = sum(points[index][0] for index in t_indices) / float(max(1, len(t_indices)))
         if d_x > t_x:
             points = [(-point[0], point[1]) for point in points]
 
@@ -4319,9 +4055,7 @@ def _layout_naview_layout(model):
 
 # Qt graphics and editor
 class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
-    def __init__(
-        self, node_a, node_b, kind="backbone", layer=0, lw="", linear_layout=False
-    ):
+    def __init__(self, node_a, node_b, kind="backbone", layer=0, lw="", linear_layout=False):
         super().__init__()
         self.node_a, self.node_b = node_a, node_b
         self.kind, self.layer = str(kind), int(layer)
@@ -4378,9 +4112,7 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             saved = True
             glow = QtGui.QColor(color)
             glow.setAlpha(48)
-            self._draw_paths(
-                painter, (self._pen(glow, width + 4.2), self._pen(color, width))
-            )
+            self._draw_paths(painter, (self._pen(glow, width + 4.2), self._pen(color, width)))
             painter.restore()
         except Exception:
             if saved:
@@ -4454,11 +4186,8 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         self._rectangle_mode = "replace"
         self._brushing = self._brush_erase = False
         self._brush_last = self._brush_path = self._brush_item = None
-        self.setRenderHints(
-            QtGui.QPainter.Antialiasing
-            | QtGui.QPainter.TextAntialiasing
-            | QtGui.QPainter.SmoothPixmapTransform
-        )
+        self.setRenderHints(QtGui.QPainter.Antialiasing | QtGui.QPainter.TextAntialiasing
+                            | QtGui.QPainter.SmoothPixmapTransform)
         self.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("white")))
         self.setDragMode(QtWidgets.QGraphicsView.NoDrag)
         self.setInteractive(True)
@@ -4513,34 +4242,14 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         key, modifiers = event.key(), event.modifiers()
         control = bool(modifiers & QtCore.Qt.ControlModifier)
         shift = bool(modifiers & QtCore.Qt.ShiftModifier)
-        modes = dict(
-            zip(
-                (
-                    QtCore.Qt.Key_1,
-                    QtCore.Qt.Key_2,
-                    QtCore.Qt.Key_3,
-                    QtCore.Qt.Key_4,
-                    QtCore.Qt.Key_5,
-                    QtCore.Qt.Key_6,
-                ),
-                ("base", "selection", "pair", "loop", "stem", "branch"),
-            )
-        )
-        arrows = {
-            QtCore.Qt.Key_Left: (-1, 0),
-            QtCore.Qt.Key_Right: (1, 0),
-            QtCore.Qt.Key_Up: (0, -1),
-            QtCore.Qt.Key_Down: (0, 1),
-        }
+        modes = dict(zip((QtCore.Qt.Key_1, QtCore.Qt.Key_2, QtCore.Qt.Key_3,
+                         QtCore.Qt.Key_4, QtCore.Qt.Key_5, QtCore.Qt.Key_6),
+                        ("base", "selection", "pair", "loop", "stem", "branch")))
+        arrows = {QtCore.Qt.Key_Left: (-1, 0), QtCore.Qt.Key_Right: (1, 0),
+                  QtCore.Qt.Key_Up: (0, -1), QtCore.Qt.Key_Down: (0, 1)}
         movement = dict(arrows)
-        movement.update(
-            {
-                QtCore.Qt.Key_A: (-1, 0),
-                QtCore.Qt.Key_D: (1, 0),
-                QtCore.Qt.Key_W: (0, -1),
-                QtCore.Qt.Key_S: (0, 1),
-            }
-        )
+        movement.update({QtCore.Qt.Key_A: (-1, 0), QtCore.Qt.Key_D: (1, 0),
+                         QtCore.Qt.Key_W: (0, -1), QtCore.Qt.Key_S: (0, 1)})
         if control and key == QtCore.Qt.Key_Z:
             (self.editor.redo_layout if shift else self.editor.undo_layout)()
         elif control and key == QtCore.Qt.Key_Y:
@@ -4557,9 +4266,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             self._pan_view(dx * step, dy * step)
         elif key in (QtCore.Qt.Key_B, QtCore.Qt.Key_P):
             self.cancel_selection_gesture()
-            self.editor.set_interaction_tool(
-                "brush" if key == QtCore.Qt.Key_B else "edit"
-            )
+            self.editor.set_interaction_tool("brush" if key == QtCore.Qt.Key_B else "edit")
         elif key in modes:
             self.editor.set_drag_mode(modes[key])
         elif key == QtCore.Qt.Key_F:
@@ -4594,17 +4301,11 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
     def _begin_rectangle(self, event):
         self.cancel_selection_gesture()
         self._rectangle_origin = self.mapToScene(event.pos())
-        self._rectangle_base = {
-            node.nt_index for node in self.editor.nodes if node.isSelected()
-        }
+        self._rectangle_base = {node.nt_index for node in self.editor.nodes if node.isSelected()}
         modifiers = event.modifiers()
-        self._rectangle_mode = (
-            "subtract"
-            if modifiers & QtCore.Qt.AltModifier
-            else "add"
-            if modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
-            else "replace"
-        )
+        self._rectangle_mode = ("subtract" if modifiers & QtCore.Qt.AltModifier else
+                                "add" if modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
+                                else "replace")
         item = QtWidgets.QGraphicsRectItem()
         pen = QtGui.QPen(QtGui.QColor(45, 126, 225, 230), 1.25)
         pen.setCosmetic(True)
@@ -4637,11 +4338,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
     def _update_rectangle(self, point):
         rect = QtCore.QRectF(self._rectangle_origin, point).normalized()
         self._rectangle_item.setRect(rect)
-        inside = {
-            node.nt_index
-            for node in self.editor.nodes
-            if rect.contains(node.scenePos())
-        }
+        inside = {node.nt_index for node in self.editor.nodes if rect.contains(node.scenePos())}
         if self._rectangle_mode == "add":
             wanted = self._rectangle_base | inside
         elif self._rectangle_mode == "subtract":
@@ -4656,9 +4353,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             self._set_rectangle_selection(self._rectangle_base)
         self.cancel_selection_gesture()
         self.editor._flush_live_sync(final=True)
-        self.editor._update_editor_status(
-            "rectangle canceled" if cancel else "rectangle selection mapped to 3D"
-        )
+        self.editor._update_editor_status("rectangle canceled" if cancel else "rectangle selection mapped to 3D")
 
     def cancel_selection_gesture(self):
         """Drop temporary overlays/state without scheduling hidden-view work."""
@@ -4676,9 +4371,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         self._rectangle_mode = "replace"
         self._brushing = self._brush_erase = False
         self._brush_last = self._brush_path = self._brush_item = None
-        self.setCursor(
-            QtCore.Qt.CrossCursor if self._tool() == "brush" else QtCore.Qt.ArrowCursor
-        )
+        self.setCursor(QtCore.Qt.CrossCursor if self._tool() == "brush" else QtCore.Qt.ArrowCursor)
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -4692,9 +4385,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
     def mouseDoubleClickEvent(self, event):
         node = self._node_item(self.itemAt(event.pos()))
         if node is not None:
-            self.editor.select_indices(
-                self.editor._stem_indices(node.nt_index), replace=True
-            )
+            self.editor.select_indices(self.editor._stem_indices(node.nt_index), replace=True)
             self.editor.fit_selected()
         else:
             self.editor.fit_scene()
@@ -4712,9 +4403,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         return self.editor.interaction_tool()
 
     def _scene_radius(self):
-        return self.editor.brush_radius_spin.value() / max(
-            0.08, abs(self.transform().m11())
-        )
+        return self.editor.brush_radius_spin.value() / max(0.08, abs(self.transform().m11()))
 
     @staticmethod
     def _distance_to_segment(point, first, second):
@@ -4722,21 +4411,15 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         length_sq = dx * dx + dy * dy
         if length_sq <= 1.0e-12:
             return math.hypot(point.x() - first.x(), point.y() - first.y())
-        ratio = (
-            (point.x() - first.x()) * dx + (point.y() - first.y()) * dy
-        ) / length_sq
+        ratio = ((point.x() - first.x()) * dx + (point.y() - first.y()) * dy) / length_sq
         ratio = max(0.0, min(1.0, ratio))
-        return math.hypot(
-            point.x() - (first.x() + ratio * dx), point.y() - (first.y() + ratio * dy)
-        )
+        return math.hypot(point.x() - (first.x() + ratio * dx), point.y() - (first.y() + ratio * dy))
 
     def _begin_brush(self, event):
         self.cancel_selection_gesture()
         self._brushing = True
         self._brush_erase = bool(event.modifiers() & QtCore.Qt.AltModifier)
-        additive = bool(
-            event.modifiers() & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
-        )
+        additive = bool(event.modifiers() & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier))
         point = self.mapToScene(event.pos())
         self._brush_last = QtCore.QPointF(point)
         if not additive and not self._brush_erase:
@@ -4747,11 +4430,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
                 self.editor._rebuilding = False
         self._brush_path = QtGui.QPainterPath(point)
         item = QtWidgets.QGraphicsPathItem(self._brush_path)
-        color = (
-            QtGui.QColor(255, 100, 176, 70)
-            if self._brush_erase
-            else QtGui.QColor(58, 214, 255, 68)
-        )
+        color = QtGui.QColor(255, 100, 176, 70) if self._brush_erase else QtGui.QColor(58, 214, 255, 68)
         pen = QtGui.QPen(color)
         pen.setWidthF(2.0 * self._scene_radius())
         pen.setCapStyle(QtCore.Qt.RoundCap)
@@ -4771,10 +4450,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         self.editor._rebuilding = True
         try:
             for node in self.editor.nodes:
-                if (
-                    self._distance_to_segment(node.scenePos(), first, second)
-                    <= radius + node.RADIUS * 0.65
-                ):
+                if self._distance_to_segment(node.scenePos(), first, second) <= radius + node.RADIUS * 0.65:
                     wanted = not self._brush_erase
                     if node.isSelected() != wanted:
                         node.setSelected(wanted)
@@ -4798,21 +4474,12 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
 
 
 BASE_TEXT_COLORS = {
-    "A": "#237a3b",
-    "C": "#245cc7",
-    "G": "#a65e00",
-    "U": "#b52b47",
-    "T": "#8a3fb0",
-    "I": "#526679",
+    "A": "#237a3b", "C": "#245cc7", "G": "#a65e00",
+    "U": "#b52b47", "T": "#8a3fb0", "I": "#526679",
 }
-
-
 def _base_text_color(base, enabled=True):
-    return QtGui.QColor(
-        BASE_TEXT_COLORS.get(str(base).upper(), "#334155") if enabled else "#334155"
-    )
-
-
+    return QtGui.QColor(BASE_TEXT_COLORS.get(str(base).upper(), "#334155")
+                       if enabled else "#334155")
 class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
     RADIUS = 12.5
 
@@ -4868,11 +4535,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         text.setFont(font)
         rect = text.boundingRect()
         text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
-        text.setBrush(
-            QtGui.QBrush(
-                _base_text_color(self.nt.get("base", ""), self.viewer.base_colors)
-            )
-        )
+        text.setBrush(QtGui.QBrush(_base_text_color(self.nt.get("base", ""), self.viewer.base_colors)))
         self.base_text_item = text
 
     def _tooltip(self):
@@ -4941,9 +4604,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         self._dragging = True
         self._drag_origin = event.scenePos()
         self._drag_before = self.viewer._capture_positions()
-        self._drag_starts = {
-            node.nt_index: QtCore.QPointF(node.pos()) for node in selected
-        }
+        self._drag_starts = {node.nt_index: QtCore.QPointF(node.pos()) for node in selected}
         try:
             self.setCursor(QtCore.Qt.ArrowCursor)
             self.viewer.view.setFocus()
@@ -4995,11 +4656,8 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             self._apply_drag_delta(QtCore.QPointF(self._last_drag_delta))
         if self._dragging:
             self._dragging = False
-            self.viewer._push_history(
-                self._drag_before,
-                self.viewer._capture_positions(),
-                "move base%s" % ("s" if len(self._drag_starts) != 1 else ""),
-            )
+            self.viewer._push_history(self._drag_before, self.viewer._capture_positions(),
+                                      "move base%s" % ("s" if len(self._drag_starts) != 1 else ""))
             self._drag_origin = self._drag_before = None
             self._drag_starts = {}
             try:
@@ -5012,9 +4670,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             super().mouseReleaseEvent(event)
         self._pressed = False
         target = 1.075 if self._hover else (1.045 if self.isSelected() else 1.0)
-        kick = (
-            min(0.11, max(0.02, self._drag_speed * 0.00012)) if was_dragging else 0.025
-        )
+        kick = min(0.11, max(0.02, self._drag_speed * 0.00012)) if was_dragging else 0.025
         self._set_target_scale(target, kick=kick)
         self._drag_weights = {}
         self._last_move_pos = self._last_move_time = None
@@ -5022,10 +4678,8 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
 
     def contextMenuEvent(self, event):
         menu = QtWidgets.QMenu()
-        header = menu.addAction(
-            "%s  ·  nt %s"
-            % (self.nt.get("base", "N"), self.nt.get("resi") or self.nt_index + 1)
-        )
+        header = menu.addAction("%s  ·  nt %s" % (
+            self.nt.get("base", "N"), self.nt.get("resi") or self.nt_index + 1))
         header.setEnabled(False)
         menu.addSeparator()
         groups = {}
@@ -5038,17 +4692,11 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         ):
             groups[menu.addAction(text)] = group
         menu.addSeparator()
-        actions = {
-            menu.addAction(text): callback
-            for text, callback in (
-                ("Center selection", self.viewer.fit_selected),
-                (
-                    "Reset selection to automatic layout",
-                    self.viewer.reset_selected_bases,
-                ),
-                ("Undo", self.viewer.undo_layout),
-            )
-        }
+        actions = {menu.addAction(text): callback for text, callback in (
+            ("Center selection", self.viewer.fit_selected),
+            ("Reset selection to automatic layout", self.viewer.reset_selected_bases),
+            ("Undo", self.viewer.undo_layout),
+        )}
         try:
             chosen = menu.exec_(event.screenPos())
         except Exception:
@@ -5141,9 +4789,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             pen.setWidthF(2.35 if selected else (1.75 if hovered else 1.2))
             painter.setPen(pen)
             painter.setBrush(fill)
-            painter.drawEllipse(
-                QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
-            )
+            painter.drawEllipse(QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius))
 
             if gel:
                 painter.setPen(QtCore.Qt.NoPen)
@@ -5182,10 +4828,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             self._scale_velocity + (target - self._visual_scale) * stiffness
         ) * damping
         self._visual_scale += self._scale_velocity
-        if (
-            abs(target - self._visual_scale) < 0.0006
-            and abs(self._scale_velocity) < 0.0006
-        ):
+        if abs(target - self._visual_scale) < 0.0006 and abs(self._scale_velocity) < 0.0006:
             self._visual_scale = target
             self._scale_velocity = 0.0
         try:
@@ -5194,8 +4837,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         except Exception:
             pass
         return not (
-            abs(target - self._visual_scale) < 0.0007
-            and abs(self._scale_velocity) < 0.0007
+            abs(target - self._visual_scale) < 0.0007 and abs(self._scale_velocity) < 0.0007
         )
 
     def hoverEnterEvent(self, event):
@@ -5241,17 +4883,10 @@ class DssrSequenceView(QtWidgets.QTextEdit):
         font.setStyleHint(QtGui.QFont.TypeWriter)
         self.setFont(font)
         self.document().setDocumentMargin(8)
-        self.setFixedHeight(
-            self.fontMetrics().height() * 2
-            + 24
-            + self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent)
-        )
-        self.setStyleSheet(
-            "QTextEdit { background: white; color: #64748b; border: 1px solid #dce5ea; border-radius: 5px; }"
-        )
-        self.setToolTip(
-            "Sequence: click or drag a range · Shift: extend · Ctrl: toggle\nNumbers are PyMOL residue IDs; hover for the original DSSR identifier."
-        )
+        self.setFixedHeight(self.fontMetrics().height() * 2 + 24
+                            + self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent))
+        self.setStyleSheet("QTextEdit { background: white; color: #64748b; border: 1px solid #dce5ea; border-radius: 5px; }")
+        self.setToolTip("Sequence: click or drag a range · Shift: extend · Ctrl: toggle\nNumbers are PyMOL residue IDs; hover for the original DSSR identifier.")
         self._build_document()
         self.set_letter_colors(editor.base_colors)
 
@@ -5265,11 +4900,7 @@ class DssrSequenceView(QtWidgets.QTextEdit):
         nts, breaks = self.editor.model.nts, self.editor.model.chain_breaks
         for index, nt in enumerate(nts):
             chain_start = index == 0 or index - 1 in breaks
-            prefix = (
-                (("  |  " if index else "") + (str(nt.get("chain", "")) or "–") + ": ")
-                if chain_start
-                else " "
-            )
+            prefix = (("  |  " if index else "") + (str(nt.get("chain", "")) or "–") + ": ") if chain_start else " "
             parts.append(prefix)
             character_offset += len(prefix)
             document_offset += self._text_length(prefix)
@@ -5332,9 +4963,7 @@ class DssrSequenceView(QtWidgets.QTextEdit):
             selection = QtWidgets.QTextEdit.ExtraSelection()
             selection.cursor = QtGui.QTextCursor(self.document())
             selection.cursor.setPosition(self._spans[first][0])
-            selection.cursor.setPosition(
-                self._spans[last][1], QtGui.QTextCursor.KeepAnchor
-            )
+            selection.cursor.setPosition(self._spans[last][1], QtGui.QTextCursor.KeepAnchor)
             selection.format.setBackground(QtGui.QColor("#dfebf8"))
             selections.append(selection)
         self.setExtraSelections(selections)
@@ -5345,14 +4974,8 @@ class DssrSequenceView(QtWidgets.QTextEdit):
         return index if index >= 0 and offset <= self._spans[index][1] else None
 
     def _apply_range(self, index):
-        indices = set(
-            range(min(self._drag_anchor, index), max(self._drag_anchor, index) + 1)
-        )
-        wanted = (
-            self._gesture_base.symmetric_difference(indices)
-            if self._gesture_toggle
-            else indices
-        )
+        indices = set(range(min(self._drag_anchor, index), max(self._drag_anchor, index) + 1))
+        wanted = self._gesture_base.symmetric_difference(indices) if self._gesture_toggle else indices
         if wanted != self._selected:
             self.editor.select_indices(wanted, replace=True)
 
@@ -5363,9 +4986,7 @@ class DssrSequenceView(QtWidgets.QTextEdit):
             return
         self.editor.view.setFocus(QtCore.Qt.MouseFocusReason)
         shift = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
-        self._drag_anchor = (
-            self._anchor if shift and self._anchor is not None else index
-        )
+        self._drag_anchor = self._anchor if shift and self._anchor is not None else index
         if not shift or self._anchor is None:
             self._anchor = index
         self._gesture_base = set(self._selected)
@@ -5377,15 +4998,9 @@ class DssrSequenceView(QtWidgets.QTextEdit):
         index = self._index_at(event.pos())
         if index is not None:
             nt = self.editor.model.nts[index]
-            self.viewport().setToolTip(
-                "%s · %s\n%s"
-                % (
-                    nt.get("base", ""),
-                    nt.get("name", ""),
-                    nt.get("nt_id")
-                    or "Sequence position %d; no DSSR residue identifier" % (index + 1),
-                )
-            )
+            self.viewport().setToolTip("%s · %s\n%s" % (
+                nt.get("base", ""), nt.get("name", ""),
+                nt.get("nt_id") or "Sequence position %d; no DSSR residue identifier" % (index + 1)))
         if self._drag_anchor is not None:
             if index is not None:
                 self._apply_range(index)
@@ -5408,8 +5023,6 @@ class DssrSequenceView(QtWidgets.QTextEdit):
         bar = self.horizontalScrollBar()
         bar.setValue(bar.value() - delta)
         event.accept()
-
-
 class Dssr2DEditor(QtWidgets.QWidget):
     HISTORY_LIMIT = 100
 
@@ -5506,10 +5119,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self.base_colors = self.base_colors_cb.isChecked()
             positions = self._capture_positions()
             selected = [node.nt_index for node in self.nodes if node.isSelected()]
-            preserve = bool(positions) and self.sender() not in (
-                self.layout_combo,
-                self.redraw_btn,
-            )
+            preserve = bool(positions) and self.sender() not in (self.layout_combo, self.redraw_btn)
             if preserve:
                 transform = QtGui.QTransform(self.view.transform())
                 center = self.view.mapToScene(self.view.viewport().rect().center())
@@ -5533,14 +5143,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
             for kind, pairs in groups:
                 for pair in pairs:
                     layer = -1 if kind == "tertiary" else int(pair.get("layer", 0))
-                    self._add_edge(
-                        int(pair["i"]),
-                        int(pair["j"]),
-                        kind,
-                        layer=layer,
-                        lw=pair.get("lw", ""),
-                        linear=linear,
-                    )
+                    self._add_edge(int(pair["i"]), int(pair["j"]), kind,
+                                   layer=layer, lw=pair.get("lw", ""), linear=linear)
             self._add_number_labels()
             self._add_chain_labels()
             self._update_scene_rect()
@@ -5738,6 +5342,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             rect = self.scene.itemsBoundingRect().adjusted(-35, -35, 35, 35)
             self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
 
+
     def select_nucleotide(self, index):
         self.select_indices([index], replace=True)
 
@@ -5814,9 +5419,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
         generator = QtSvg.QSvgGenerator()
         generator.setFileName(path)
-        generator.setSize(
-            QtCore.QSize(max(1, int(rect.width())), max(1, int(rect.height())))
-        )
+        generator.setSize(QtCore.QSize(max(1, int(rect.width())), max(1, int(rect.height()))))
         generator.setViewBox(rect)
         generator.setTitle(self.model.title)
         generator.setDescription("RNA secondary structure derived by DSSR")
@@ -5842,8 +5445,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not first or not second or len(first) != len(second):
             return False
         return any(
-            abs(a[0] - b[0]) > 1.0e-5 or abs(a[1] - b[1]) > 1.0e-5
-            for a, b in zip(first, second)
+            abs(a[0] - b[0]) > 1.0e-5 or abs(a[1] - b[1]) > 1.0e-5 for a, b in zip(first, second)
         )
 
     def _push_history(self, before, after, label="edit"):
@@ -5923,9 +5525,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         blocked = self.scene.blockSignals(True)
         try:
             for node in self.nodes:
-                node.setSelected(
-                    node.nt_index in wanted or (not replace and node.isSelected())
-                )
+                node.setSelected(node.nt_index in wanted or (not replace and node.isSelected()))
         finally:
             self.scene.blockSignals(blocked)
         self._update_editor_status("selection changed")
@@ -5986,9 +5586,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             "sequence": self.model.sequence,
             "structure": self.model.structure,
             "layout": self.layout_combo.currentText().strip().lower(),
-            "positions": [
-                [round(x, 6), round(y, 6)] for x, y in self._capture_positions()
-            ],
+            "positions": [[round(x, 6), round(y, 6)] for x, y in self._capture_positions()],
         }
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
@@ -6016,8 +5614,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             answer = QtWidgets.QMessageBox.question(
                 self,
                 "Sequence mismatch",
-                "This layout was saved for a different sequence. Load its "
-                "coordinates anyway?",
+                "This layout was saved for a different sequence. Load its " "coordinates anyway?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                 QtWidgets.QMessageBox.No,
             )
@@ -6029,11 +5626,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.fit_scene()
         self._update_editor_status("layout loaded: %s" % path)
 
+
     def _update_history_buttons(self):
-        for button, history, action in (
-            (self.undo_btn, self._undo, "Undo"),
-            (self.redo_btn, self._redo, "Redo"),
-        ):
+        for button, history, action in ((self.undo_btn, self._undo, "Undo"),
+                                        (self.redo_btn, self._redo, "Redo")):
             button.setEnabled(bool(history))
             if history:
                 button.setToolTip("%s: %s" % (action, history[-1].get("label", "edit")))
@@ -6041,11 +5637,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
     def _update_editor_status(self, action=""):
         selected = self._sync_sequence_selection()
         variant = str(getattr(self.model, "_dssr2d_layout_variant", self.algorithm))
-        text = "Selected %d · %s · %s" % (
-            len(selected),
-            self.interaction_tool(),
-            variant,
-        )
+        text = "Selected %d · %s · %s" % (len(selected), self.interaction_tool(), variant)
         self.status_label.setText(text + (" · " + action if action else ""))
 
     def _schedule_scene_rect(self):
@@ -6061,9 +5653,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def _update_scene_rect(self):
         if not self._closed:
-            self.scene.setSceneRect(
-                self.scene.itemsBoundingRect().adjusted(-120, -120, 120, 120)
-            )
+            self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-120, -120, 120, 120))
+
 
     def drag_mode(self):
         return str(self.drag_mode_combo.currentData() or "base")
@@ -6087,17 +5678,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         left = index
         right = index
-        while (
-            left > 0
-            and (left - 1) not in self.model.chain_breaks
-            and table[left - 1] < 0
-        ):
+        while left > 0 and (left - 1) not in self.model.chain_breaks and table[left - 1] < 0:
             left -= 1
-        while (
-            right + 1 < n
-            and right not in self.model.chain_breaks
-            and table[right + 1] < 0
-        ):
+        while right + 1 < n and right not in self.model.chain_breaks and table[right + 1] < 0:
             right += 1
         result = set(range(left, right + 1))
 
@@ -6123,11 +5706,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
         return list(range(max(0, left), min(n - 1, right) + 1))
 
     def _branch_group(self, index):
-        candidates = [
-            stem
-            for stem in self._stems
-            if int(stem.get("outer_i", -1)) <= index <= int(stem.get("outer_j", -1))
-        ]
+        candidates = [stem for stem in self._stems
+                      if int(stem.get("outer_i", -1)) <= index <= int(stem.get("outer_j", -1))]
         if not candidates:
             return self._chain_segment(index)
         stem = min(
@@ -6170,24 +5750,16 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 if neighbor not in distance:
                     distance[neighbor] = depth + 1
                     queue.append(neighbor)
-        return {
-            index: 1.0 if depth == 0 else max(0.08, strength**depth)
-            for index, depth in distance.items()
-        }
+        return {index: 1.0 if depth == 0 else max(0.08, strength**depth)
+                for index, depth in distance.items()}
 
     def _prepare_node_drag(self, node, modifiers):
         index = node.nt_index
         selected = sorted(item.nt_index for item in self.nodes if item.isSelected())
         mode = "base" if modifiers & QtCore.Qt.AltModifier else self.drag_mode()
-        additive = bool(
-            modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)
-        )
-        grouped = {
-            "pair": self._pair_group,
-            "loop": self._loop_group,
-            "stem": self._stem_indices,
-            "branch": self._branch_group,
-        }
+        additive = bool(modifiers & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier))
+        grouped = {"pair": self._pair_group, "loop": self._loop_group,
+                   "stem": self._stem_indices, "branch": self._branch_group}
         weights = None
         if additive:
             group = selected or [index]
@@ -6207,14 +5779,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 group = sorted(weights)
         if weights is None:
             weights = dict.fromkeys(group, 1.0)
-        node._drag_starts = {
-            item: QtCore.QPointF(self.nodes[item].pos())
-            for item in group
-            if 0 <= item < len(self.nodes)
-        }
-        node._drag_weights = {
-            item: float(weights.get(item, 1.0)) for item in node._drag_starts
-        }
+        node._drag_starts = {item: QtCore.QPointF(self.nodes[item].pos())
+                             for item in group if 0 <= item < len(self.nodes)}
+        node._drag_weights = {item: float(weights.get(item, 1.0)) for item in node._drag_starts}
         self._update_editor_status("dragging %s" % mode)
 
     def fit_selected(self):
@@ -6226,6 +5793,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         for node in selected[1:]:
             rect = rect.united(node.sceneBoundingRect())
         self.view.fitInView(rect.adjusted(-80, -80, 80, 80), QtCore.Qt.KeepAspectRatio)
+
 
     def _ensure_animation(self):
         if not self._closed and self._view_active and not self._timer.isActive():
@@ -6251,11 +5819,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._update_editor_status("tool=%s" % self.interaction_tool())
 
     def _update_view_cursor(self):
-        cursor = (
-            QtCore.Qt.CrossCursor
-            if self.interaction_tool() == "brush"
-            else QtCore.Qt.ArrowCursor
-        )
+        cursor = QtCore.Qt.CrossCursor if self.interaction_tool() == "brush" else QtCore.Qt.ArrowCursor
         self.view.setCursor(cursor)
 
     def gel_style_enabled(self):
@@ -6268,15 +5832,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def _refresh_scene_style(self):
         for node in self.nodes:
-            node.base_text_item.setBrush(
-                QtGui.QBrush(
-                    _base_text_color(node.nt.get("base", ""), self.base_colors)
-                )
-            )
+            node.base_text_item.setBrush(QtGui.QBrush(_base_text_color(node.nt.get("base", ""), self.base_colors)))
             for child in node.childItems():
-                if child is not node.base_text_item and isinstance(
-                    child, QtWidgets.QGraphicsSimpleTextItem
-                ):
+                if child is not node.base_text_item and isinstance(child, QtWidgets.QGraphicsSimpleTextItem):
                     child.setBrush(QtGui.QBrush(QtGui.QColor(72, 94, 112)))
             node.update()
         self.sequence_view.set_letter_colors(self.base_colors)
@@ -6302,26 +5860,16 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._sync_pymol_selection()
         if final:
             try:
-                if self.zoom_3d_cb.isChecked() and cmd.count_atoms(
-                    self.HIGHLIGHT_OBJECT
-                ):
+                if self.zoom_3d_cb.isChecked() and cmd.count_atoms(self.HIGHLIGHT_OBJECT):
                     cmd.zoom(self.HIGHLIGHT_OBJECT, buffer=4.0)
             except Exception:
                 pass
 
     def _node_residue_signature(self):
-        return tuple(
-            sorted(
-                {
-                    (
-                        str(node.nt.get("chain", "")).strip(),
-                        str(node.nt.get("resi", "")).strip(),
-                    )
-                    for node in self.nodes
-                    if node.isSelected() and str(node.nt.get("resi", "")).strip()
-                }
-            )
-        )
+        return tuple(sorted({(str(node.nt.get("chain", "")).strip(),
+                              str(node.nt.get("resi", "")).strip())
+                             for node in self.nodes if node.isSelected()
+                             and str(node.nt.get("resi", "")).strip()}))
 
     def _reverse_sync_toggled(self, checked):
         self._last_pymol_signature = None
@@ -6332,36 +5880,23 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._update_editor_status("3D-to-2D sync off")
 
     def _pull_pymol_selection(self):
-        if (
-            self._closed
-            or self._sync_pending
-            or self._sync_from_pymol
-            or not self.isVisible()
-            or not self.reverse_3d_cb.isChecked()
-        ):
+        if (self._closed or self._sync_pending or self._sync_from_pymol
+                or not self.isVisible() or not self.reverse_3d_cb.isChecked()):
             return
         residues = set()
         try:
             scoped = "((%s) and sele)" % self.pymol_selection
             if cmd.count_atoms(scoped) > 0:
-                cmd.iterate(
-                    scoped,
-                    "_dssr_residues.add((chain, resi))",
-                    space={"_dssr_residues": residues},
-                )
+                cmd.iterate(scoped, "_dssr_residues.add((chain, resi))", space={"_dssr_residues": residues})
         except Exception:
             residues = set()
         signature = tuple(sorted(residues))
         if signature == self._last_pymol_signature:
             return
         self._last_pymol_signature = signature
-        wanted = {
-            index
-            for index, nt in enumerate(self.model.nts)
-            if str(nt.get("resi", "")).strip()
-            and (str(nt.get("chain", "")).strip(), str(nt.get("resi", "")).strip())
-            in residues
-        }
+        wanted = {index for index, nt in enumerate(self.model.nts)
+                  if str(nt.get("resi", "")).strip()
+                  and (str(nt.get("chain", "")).strip(), str(nt.get("resi", "")).strip()) in residues}
         if wanted == {node.nt_index for node in self.nodes if node.isSelected()}:
             return
         self._sync_from_pymol = self._rebuilding = True
@@ -6373,16 +5908,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._update_pymol_highlight()
         self._update_editor_status("3D selection mirrored to 2D")
 
+
     def _update_pymol_highlight(self, signature=None):
         name = self.HIGHLIGHT_OBJECT
         if signature is None:
             signature = self._node_residue_signature()
-        should_show = (
-            not self._closed
-            and self._view_active
-            and self.live_3d_cb.isChecked()
-            and bool(signature)
-        )
+        should_show = not self._closed and self._view_active and self.live_3d_cb.isChecked() and bool(signature)
         if should_show:
             try:
                 object_exists = name in cmd.get_names("all")
@@ -6405,9 +5936,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             if int(cmd.count_atoms("sele")) <= 0:
                 return
             try:
-                source_state = max(
-                    1, int(getattr(self, "pymol_state", cmd.get_state()))
-                )
+                source_state = max(1, int(getattr(self, "pymol_state", cmd.get_state())))
             except Exception:
                 source_state = 1
             cmd.create(
@@ -6436,6 +5965,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             except Exception:
                 pass
 
+
     def _select_residues_in_pymol(self, signature=None):
         if signature is None:
             signature = self._node_residue_signature()
@@ -6446,9 +5976,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 pass
             return
 
-        core = ParsingAlgos._compact_sel_from_residues(
-            {(chain, resi) for chain, resi in signature if chain}
-        )
+        core = ParsingAlgos._compact_sel_from_residues({(chain, resi) for chain, resi in signature if chain})
         pieces = ["(%s)" % core] if core else []
         pieces.extend("(resi %s)" % resi for chain, resi in signature if not chain)
         if pieces:
@@ -6478,27 +6006,19 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.redraw_btn = _button("Reset layout", self.reset_layout)
         top.addWidget(self.redraw_btn)
         top.addStretch(1)
-        self.file_menu_btn = _menu_button(
-            "File",
-            (
-                ("Export image…", self.export_image),
-                ("Save layout…", self.save_layout),
-                ("Load layout…", self.load_layout),
-                ("Copy sequence / DBN", self.copy_dbn),
-            ),
-            self,
-        )
+        self.file_menu_btn = _menu_button("File", (
+            ("Export image…", self.export_image),
+            ("Save layout…", self.save_layout),
+            ("Load layout…", self.load_layout),
+            ("Copy sequence / DBN", self.copy_dbn),
+        ), self)
         top.addWidget(self.file_menu_btn)
-        self.selection_menu_btn = _menu_button(
-            "Selection",
-            (
-                ("Select all [Ctrl+A]", self.select_all_bases),
-                ("Clear selection [Esc]", self.clear_base_selection),
-                ("Fit selected [C]", self.fit_selected),
-                ("Reset selected coordinates", self.reset_selected_bases),
-            ),
-            self,
-        )
+        self.selection_menu_btn = _menu_button("Selection", (
+            ("Select all [Ctrl+A]", self.select_all_bases),
+            ("Clear selection [Esc]", self.clear_base_selection),
+            ("Fit selected [C]", self.fit_selected),
+            ("Reset selected coordinates", self.reset_selected_bases),
+        ), self)
         top.addWidget(self.selection_menu_btn)
         self.options_btn = QtWidgets.QPushButton("Options")
         self.options_btn.setCheckable(True)
@@ -6515,25 +6035,16 @@ class Dssr2DEditor(QtWidgets.QWidget):
         tools.addWidget(self.brush_radius_spin)
         self.drag_mode_combo = QtWidgets.QComboBox()
         for text, value in (
-            ("Soft drag", "soft"),
-            ("Single base", "base"),
-            ("Selected bases", "selection"),
-            ("Base pair", "pair"),
-            ("Loop", "loop"),
-            ("Stem", "stem"),
-            ("Branch", "branch"),
+            ("Soft drag", "soft"), ("Single base", "base"),
+            ("Selected bases", "selection"), ("Base pair", "pair"),
+            ("Loop", "loop"), ("Stem", "stem"), ("Branch", "branch"),
         ):
             self.drag_mode_combo.addItem(text, value)
         self.drag_mode_combo.currentIndexChanged.connect(
-            lambda: self._update_editor_status("drag mode changed")
-        )
+            lambda: self._update_editor_status("drag mode changed"))
         tools.addWidget(self.drag_mode_combo)
-        self.gel_style_cb = _checkbox(
-            "Gel",
-            True,
-            self._gel_mode_toggled,
-            "Glass-like rendering and elastic motion",
-        )
+        self.gel_style_cb = _checkbox("Gel", True, self._gel_mode_toggled,
+                                       "Glass-like rendering and elastic motion")
         tools.addWidget(self.gel_style_cb)
         tools.addStretch(1)
 
@@ -6564,9 +6075,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.scene = QtWidgets.QGraphicsScene(self)
         self.view = Dssr2DGraphicsView(self.scene, self)
         root.addWidget(self.view, 1)
-        hint = QtWidgets.QLabel(
-            "Drag blank space: box select · Drag bases: edit · Arrows / WASD: pan · Wheel: zoom · B: brush"
-        )
+        hint = QtWidgets.QLabel("Drag blank space: box select · Drag bases: edit · Arrows / WASD: pan · Wheel: zoom · B: brush")
         hint.setObjectName("studioHint")
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -6618,15 +6127,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         return selected
 
 
+
+
 def dssr_2d(
-    selection="all",
-    state=-1,
-    exe="x3dna-dssr",
-    layout="standard",
-    number_every=10,
-    show_tertiary=0,
-    title="",
-    quiet=1,
+    selection="all", state=-1, exe="x3dna-dssr", layout="standard",
+    number_every=10, show_tertiary=0, title="", quiet=1,
 ):
     """Open the shared DSSR workspace and return its embedded 2D editor.
 
@@ -6653,14 +6158,8 @@ def dssr_2d(
     try:
         data = host._get_dssr_data(selection, state, exe, 0)
         editor = host.show_analysis(
-            data,
-            selection,
-            state,
-            exe,
-            algorithm=layout,
-            number_every=number_every,
-            show_tertiary=int(show_tertiary),
-            title=title,
+            data, selection, state, exe, algorithm=layout,
+            number_every=number_every, show_tertiary=int(show_tertiary), title=title,
         )
     except Exception as error:
         host._clear_analysis("Analysis error: %s" % error)
