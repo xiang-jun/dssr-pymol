@@ -26,7 +26,7 @@ import re
 import tempfile
 import os
 
-__DSSR_PLUGIN_VERSION__ = "v1.1.0-dev"
+__DSSR_PLUGIN_VERSION__ = "v1.1.0"
 _DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
 selected_features = []
