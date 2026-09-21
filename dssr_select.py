@@ -1887,6 +1887,18 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     @staticmethod
     def dssr_gui():
         global _DSSR_GUI_DIALOG
+
+        # Guard check: verify if any molecular structure is loaded
+        has_structure = bool(
+            [
+                name
+                for name in cmd.get_object_list()
+                if name not in _DSSR_BLOCK_OBJECTS
+                and not name.startswith("_dssr_2d_")
+                and cmd.count_atoms(name) > 0
+            ]
+        )
+
         if _DSSR_GUI_DIALOG is None:
             _DSSR_GUI_DIALOG = DssrGuiDialog()
         host = _DSSR_GUI_DIALOG
@@ -1894,10 +1906,19 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         host.raise_()
         host.activateWindow()
         host._check_context()
+
         if host.editor is None:
             host.refresh_objects()
-            if host._molecule_objects():
+            if has_structure:
                 host._load_structure(force=False)
+
+        # Trigger terminal warning and pop-up dialog if no structure is present
+        if not has_structure:
+            msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
+            print(msg)
+            host.status_label.setText(msg)
+            QtWidgets.QMessageBox.warning(host, "No Structure Loaded", msg)
+
         if host.editor is not None and host.editor.isVisible():
             host.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
         return host
