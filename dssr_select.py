@@ -1608,6 +1608,19 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._cache_key, self._cache_data = key, data
         return data
 
+    def _big_object_warning(self, sel):
+        thresh = 20000
+        try:
+            n_atoms = int(cmd.count_atoms(sel))
+        except Exception:
+            n_atoms = 0
+        if n_atoms >= thresh:
+            return (
+                "Warning: Large selection (%d atoms). DSSR analysis may be slow. "
+                "Consider selecting a specific chain.\n" % n_atoms
+            )
+        return ""
+
     def _load_structure(self, force=True):
         if self._loading:
             return self.editor
@@ -1620,7 +1633,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             return self.editor
         self._loading = True
         self.analyze_btn.setEnabled(False)
-        self.status_label.setText("Analyzing %s, state %d..." % (selection, state))
+        warn = self._big_object_warning(selection)
+        self.status_label.setText(
+            warn + ("Analyzing %s, state %d..." % (selection, state))
+        )
+        QtWidgets.QApplication.processEvents()
         try:
             if force:
                 self._dispose_editor()
