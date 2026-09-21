@@ -1859,32 +1859,93 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.status_label.setText("Selection error: %s" % error)
 
     def _on_item_double_clicked(self, item):
-        index = item.data(QtCore.Qt.UserRole)
-        if index is None:
+        data = item.data(QtCore.Qt.UserRole)
+        if data is None:
             return
         try:
-            data = self._require_analysis()
-            selection, state, _exe = self._analysis_context
-            feature, index = self._current_feature, int(index)
-            user_color = HelperFunctions._resolve_color_spec(
-                HelperFunctions.unquote(
-                    self.color_edit.text().strip() or "auto"
-                ).strip()
+            idx = int(data)
+        except Exception:
+            return
+
+        sel = self._get_object_text()
+        feat = self._current_feature
+        exe = self.exe_edit.text().strip() or "x3dna-dssr"
+        st = self._get_state_value()
+
+        # Build standard selection name (e.g., junctions1, stems2)
+        nm = "%s%d" % (feat.lower(), idx)
+
+        col = self.color_edit.text().strip() or "auto"
+        precolor_on = 1 if self.precolor_cb.isChecked() else 0
+        display_on = 1 if self.display_cb.isChecked() else 0
+        zoom_on = 1 if self.zoom_cb.isChecked() else 0
+        showinfo_on = 0
+        radius = 0.25
+
+        try:
+            DssrFunctions.dssr(
+                sel=sel,
+                f=feat,
+                i=idx,
+                n=nm,
+                q=0,
+                si=showinfo_on,
+                st=st,
+                exe=exe,
+                color=col,
+                display=display_on,
+                stick_radius=radius,
+                do_zoom=zoom_on,
+                pc=precolor_on,
             )
-            if self.precolor_cb.isChecked():
-                cmd.color("gray", selection)
-            name = "%s%d" % (feature.lower(), index)
-            DssrFunctions._select_feature_data(
-                data, selection, state, feature, index, name, user_color, quiet=0
-            )
-            DssrFunctions._display_feature_selection(
-                name,
-                int(self.display_cb.isChecked()),
-                0.25,
-                int(self.zoom_cb.isChecked()),
-            )
-        except Exception as error:
-            self.status_label.setText("Selection error: %s" % error)
+
+            # Drop temporary (sele) so only the named selection exists in PyMOL
+            try:
+                cmd.delete("sele")
+                cmd.deselect()
+            except Exception:
+                pass
+
+            # Update the 2D layout canvas nodes silently
+            if self.editor is not None:
+                all_residues = set()
+                cmd.iterate(
+                    nm,
+                    "_dssr_res.add((chain, resi))",
+                    space={"_dssr_res": all_residues},
+                )
+                matching = {
+                    i
+                    for i, nt in enumerate(self.editor.model.nts)
+                    if (
+                        str(nt.get("chain", "")).strip(),
+                        str(nt.get("resi", "")).strip(),
+                    )
+                    in all_residues
+                }
+
+                blocked = self.editor.scene.blockSignals(True)
+                was_rebuilding = self.editor._rebuilding
+                self.editor._rebuilding = True
+                try:
+                    for node in self.editor.nodes:
+                        node.setSelected(node.nt_index in matching)
+                finally:
+                    self.editor._rebuilding = was_rebuilding
+                    self.editor.scene.blockSignals(blocked)
+
+                self.editor._sync_sequence_selection()
+                self.editor._last_pymol_signature = tuple()
+
+        except Exception as e:
+            try:
+                QtWidgets.QMessageBox.critical(self, "DSSR GUI error", str(e))
+            except Exception:
+                pass
+            try:
+                print("dssr_gui select error: %s" % str(e))
+            except Exception:
+                pass
 
     def _select_all_current_feature(self):
         try:
@@ -1917,7 +1978,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             name = "%s_all" % feature.lower()
             DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
 
-            cmd.select("sele", name)
+            # Drop temporary (sele) so only 'name' appears in PyMOL
+            try:
+                cmd.delete("sele")
+            except Exception:
+                pass
+
             if self.zoom_cb.isChecked():
                 cmd.zoom(name)
 
@@ -1926,11 +1992,36 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 % (name, len(indices), feature)
             )
 
+            # Highlight matching nodes on the 2D layout canvas directly
             if self.editor is not None:
-                self.editor._sync_timer.stop()
-                self.editor._sync_pending = False
-                self.editor._last_pymol_signature = None
-                self.editor._pull_pymol_selection()
+                all_residues = set()
+                cmd.iterate(
+                    name,
+                    "_dssr_res.add((chain, resi))",
+                    space={"_dssr_res": all_residues},
+                )
+                matching = {
+                    idx
+                    for idx, nt in enumerate(self.editor.model.nts)
+                    if (
+                        str(nt.get("chain", "")).strip(),
+                        str(nt.get("resi", "")).strip(),
+                    )
+                    in all_residues
+                }
+
+                blocked = self.editor.scene.blockSignals(True)
+                was_rebuilding = self.editor._rebuilding
+                self.editor._rebuilding = True
+                try:
+                    for node in self.editor.nodes:
+                        node.setSelected(node.nt_index in matching)
+                finally:
+                    self.editor._rebuilding = was_rebuilding
+                    self.editor.scene.blockSignals(blocked)
+
+                self.editor._sync_sequence_selection()
+                self.editor._last_pymol_signature = tuple()
 
         except Exception as error:
             self.status_label.setText("Select all error: %s" % error)
@@ -5358,8 +5449,10 @@ class DssrSequenceView(QtWidgets.QTextEdit):
         self.setFocusPolicy(QtCore.Qt.NoFocus)
         self.setMouseTracking(True)
         self.viewport().setCursor(QtCore.Qt.ArrowCursor)
-        font = QtGui.QFont("Monospace", 10)
-        font.setStyleHint(QtGui.QFont.TypeWriter)
+        font = QtGui.QFont()
+        font.setStyleHint(QtGui.QFont.Monospace)
+        font.setPointSize(10)
+        font.setFamilies(["Menlo", "Monaco", "Courier New", "DejaVu Sans Mono"])
         self.setFont(font)
         self.document().setDocumentMargin(8)
         self.setFixedHeight(
@@ -6461,6 +6554,16 @@ class Dssr2DEditor(QtWidgets.QWidget):
             or not self.reverse_3d_cb.isChecked()
         ):
             return
+
+        # If sele is not currently an active selection in PyMOL, do not poll or force updates
+        try:
+            if "sele" not in cmd.get_names("selections"):
+                return
+            if int(cmd.count_atoms("sele")) <= 0:
+                return
+        except Exception:
+            return
+
         residues = set()
         try:
             scoped = "((%s) and sele)" % self.pymol_selection
@@ -6472,10 +6575,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 )
         except Exception:
             residues = set()
+
         signature = tuple(sorted(residues))
         if signature == self._last_pymol_signature:
             return
         self._last_pymol_signature = signature
+
         wanted = {
             index
             for index, nt in enumerate(self.model.nts)
@@ -6485,77 +6590,25 @@ class Dssr2DEditor(QtWidgets.QWidget):
         }
         if wanted == {node.nt_index for node in self.nodes if node.isSelected()}:
             return
+
         self._sync_from_pymol = self._rebuilding = True
         try:
             for node in self.nodes:
                 node.setSelected(node.nt_index in wanted)
         finally:
             self._rebuilding = self._sync_from_pymol = False
+
         self._update_pymol_highlight()
         self._update_editor_status("3D selection mirrored to 2D")
 
     def _update_pymol_highlight(self, signature=None):
         name = self.HIGHLIGHT_OBJECT
-        if signature is None:
-            signature = self._node_residue_signature()
-        should_show = (
-            not self._closed
-            and self._view_active
-            and self.live_3d_cb.isChecked()
-            and bool(signature)
-        )
-        if should_show:
-            try:
-                object_exists = name in cmd.get_names("all")
-            except Exception:
-                object_exists = False
-            if signature == self._last_highlight_signature and object_exists:
-                return
-        else:
-            object_exists = False
-
         try:
             cmd.delete(name)
             _DSSR_BLOCK_OBJECTS.discard(name)
         except Exception:
             pass
         self._last_highlight_signature = None
-        if not should_show:
-            return
-        try:
-            if int(cmd.count_atoms("sele")) <= 0:
-                return
-            try:
-                source_state = max(
-                    1, int(getattr(self, "pymol_state", cmd.get_state()))
-                )
-            except Exception:
-                source_state = 1
-            cmd.create(
-                name,
-                "byres ((%s) and sele)" % self.pymol_selection,
-                source_state=source_state,
-                target_state=1,
-                zoom=0,
-                quiet=1,
-            )
-            _DSSR_BLOCK_OBJECTS.add(name)
-            self._last_highlight_signature = signature
-            cmd.hide("everything", name)
-            cmd.show("sticks", name)
-            cmd.show("spheres", "(%s) and name P" % name)
-            cmd.set_color("dssr_2d_glow", [0.08, 0.86, 1.00])
-            cmd.color("dssr_2d_glow", name)
-            cmd.set("stick_radius", 0.23, name)
-            cmd.set("stick_transparency", 0.08, name)
-            cmd.set("sphere_scale", 0.34, name)
-            cmd.enable(name)
-            cmd.refresh()
-        except Exception as error:
-            try:
-                self.status_label.setText("3D highlight error: %s" % str(error))
-            except Exception:
-                pass
 
     def _select_residues_in_pymol(self, signature=None):
         if signature is None:
@@ -6664,7 +6717,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.tertiary_cb = _checkbox("Extra DSSR pairs", self.show_tertiary)
         self.base_colors_cb = _checkbox("Letter colors", True)
         self.follow_spin = _spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
-        self.live_3d_cb = _checkbox("3D highlight", True, self._sync_pymol_selection)
+        self.live_3d_cb = _checkbox("3D highlight", False, self._sync_pymol_selection)
         self.reverse_3d_cb = _checkbox("3D → 2D sync", True, self._reverse_sync_toggled)
         self.zoom_3d_cb = _checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
