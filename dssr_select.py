@@ -1713,21 +1713,33 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return self.editor
 
     def _update_feature_counts(self, data):
-        for index, feature in enumerate(FEATURE_ORDER):
-            count = (
-                0
-                if data is None
-                else (
+        current_feat = self.feature_combo.currentData()
+        self.feature_combo.blockSignals(True)
+        self.feature_combo.clear()
+
+        if data is not None:
+            for feature in FEATURE_ORDER:
+                count = (
                     ParsingAlgos._count_pseudoknot_layers(data)
                     if feature == "pseudoknot"
                     else len(ParsingAlgos.feature_entries(data, feature))
                 )
-            )
-            self.feature_combo.setItemText(
-                index, "%s (%d)" % (FEATURE_LABELS.get(feature, feature), count)
-            )
-        self.feature_combo.setEnabled(data is not None)
-        self.make_blocks_btn.setEnabled(data is not None)
+                if count > 0:
+                    label = "%s (%d)" % (FEATURE_LABELS.get(feature, feature), count)
+                    self.feature_combo.addItem(label, feature)
+
+        idx = self.feature_combo.findData(current_feat)
+        if idx >= 0:
+            self.feature_combo.setCurrentIndex(idx)
+        elif self.feature_combo.count() > 0:
+            self.feature_combo.setCurrentIndex(0)
+
+        has_items = self.feature_combo.count() > 0
+        self.feature_combo.setEnabled(has_items)
+        self.make_blocks_btn.setEnabled(has_items)
+        self.feature_combo.blockSignals(False)
+
+        self._current_feature = str(self.feature_combo.currentData() or "pairs")
 
     def _on_feature_changed(self, *_args):
         self._current_feature = str(self.feature_combo.currentData() or "pairs")
