@@ -1396,14 +1396,22 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.list_widget.itemClicked.connect(self._on_item_clicked_preview)
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         left.addWidget(self.list_widget, 3)
+
         paging = QtWidgets.QHBoxLayout()
         self.prev_btn = _button("Previous", lambda: self._change_page(-1))
+        self.select_all_btn = _button(
+            "Select all",
+            self._select_all_current_feature,
+            "Select all items of the current feature in PyMOL",
+        )
         self.next_btn = _button("Next", lambda: self._change_page(1))
         self.page_label = QtWidgets.QLabel()
         paging.addWidget(self.prev_btn)
+        paging.addWidget(self.select_all_btn)
         paging.addWidget(self.page_label, 1)
         paging.addWidget(self.next_btn)
         left.addLayout(paging)
+
         self.details_box = QtWidgets.QPlainTextEdit()
         self.details_box.setReadOnly(True)
         self.report_box = QtWidgets.QPlainTextEdit()
@@ -1877,6 +1885,55 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             )
         except Exception as error:
             self.status_label.setText("Selection error: %s" % error)
+
+    def _select_all_current_feature(self):
+        try:
+            data = self._require_analysis()
+            selection, state, _exe = self._analysis_context
+            feature = self._current_feature
+
+            if feature == "pseudoknot":
+                layers = ParsingAlgos.parse_dotbracket_pseudoknots(
+                    ParsingAlgos._extract_dotbracket(data)
+                )
+                indices = list(range(1, len(layers) + 1))
+            else:
+                entries = ParsingAlgos.feature_entries(data, feature)
+                indices = list(range(1, len(entries) + 1))
+
+            if not indices:
+                self.status_label.setText("No %s items found to select." % feature)
+                return
+
+            parts = [
+                ParsingAlgos._build_residue_sel_from_dssr(data, feature, idx)
+                for idx in indices
+            ]
+            sel_str = " or ".join("(%s)" % part for part in parts if part)
+            if not sel_str:
+                self.status_label.setText("Could not build selection for %s." % feature)
+                return
+
+            name = "%s_all" % feature.lower()
+            DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
+
+            cmd.select("sele", name)
+            if self.zoom_cb.isChecked():
+                cmd.zoom(name)
+
+            self.status_label.setText(
+                "Created selection '%s' with all %d %s items."
+                % (name, len(indices), feature)
+            )
+
+            if self.editor is not None:
+                self.editor._sync_timer.stop()
+                self.editor._sync_pending = False
+                self.editor._last_pymol_signature = None
+                self.editor._pull_pymol_selection()
+
+        except Exception as error:
+            self.status_label.setText("Select all error: %s" % error)
 
     def _make_blocks_clicked(self):
         try:
