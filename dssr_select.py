@@ -30,9 +30,13 @@ import bisect
 import time
 from collections import deque
 from pymol.Qt import QtGui
-from pymol.Qt import QtSvg
 
-__DSSR_PLUGIN_VERSION__ = "v1.1.0"
+try:
+    from pymol.Qt import QtSvg
+except ImportError:
+    QtSvg = None
+
+__DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
 _DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
 _DSSR_BLOCK_OBJECTS = set()
