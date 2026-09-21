@@ -819,7 +819,7 @@ class DssrFunctions:
         )
 
     @staticmethod
-    def _create_feature_selection(name, selection, residue_selection):
+    def _create_feature_selection(name, selection, residue_selection, quiet=0):
         cmd.select(name, "((%s) and (%s))" % (selection, residue_selection))
         if int(cmd.count_atoms(name)) <= 0:
             cmd.delete(name)
@@ -827,6 +827,18 @@ class DssrFunctions:
                 "DSSR residues did not map back to the requested PyMOL selection"
             )
         _DSSR_SELECTION_OBJECTS.add(str(name))
+
+        if not quiet:
+            _sel_residues = set()
+            cmd.iterate(
+                name,
+                "_sel_residues.add((chain, resi))",
+                space={"_sel_residues": _sel_residues},
+            )
+            print(
+                "dssr_select: %s"
+                % ParsingAlgos._compact_sel_from_residues(_sel_residues)
+            )
 
     @staticmethod
     def _dssr_default_selection():
@@ -1168,7 +1180,9 @@ class DssrFunctions:
             if sel_str is None:
                 raise CmdException("Could not build selection for layer %d" % index)
 
-            DssrFunctions._create_feature_selection(name, selection, sel_str)
+            DssrFunctions._create_feature_selection(
+                name, selection, sel_str, quiet=quiet
+            )
             cmd.color(user_color if user_color else layer_color, name)
 
             if not quiet:
@@ -1205,7 +1219,7 @@ class DssrFunctions:
             raise CmdException(
                 "Could not build selection for %s index %d" % (feature, index)
             )
-        DssrFunctions._create_feature_selection(name, selection, sel_str)
+        DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=quiet)
         cmd.color(user_color if user_color else "pink", name)
 
         if not quiet:
