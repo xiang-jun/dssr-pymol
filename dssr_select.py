@@ -4618,8 +4618,8 @@ def _layout_standardize_trna_orientation(model, points):
     """Orient tRNA like the DSSR/VARNA 1EHZ example.
 
     The acceptor stem points down, the anticodon arm points up, the D arm is
-    left, and the T arm is right.  Detection is topological, never PDB-name
-    based.  Coordinates remain NAView coordinates; only a rigid rotation and
+    left, and the T arm is right. Detection is topological, never PDB-name
+    based. Coordinates remain NAView coordinates; only a rigid rotation and
     optional mirror are applied.
     """
     try:
@@ -4648,7 +4648,7 @@ def _layout_standardize_trna_orientation(model, points):
         points = _layout_rotate(points, math.pi / 2.0 - current_angle)
 
     # Mirror only when the earlier (D) arm appears to the right of the later
-    # (T) arm.  This makes the orientation reproducible across structures.
+    # (T) arm. This makes the orientation reproducible across structures.
     if len(arms) >= 3:
         d_indices = list(range(int(arms[0]["outer_i"]), int(arms[0]["outer_j"]) + 1))
         t_indices = list(range(int(arms[2]["outer_i"]), int(arms[2]["outer_j"]) + 1))
@@ -4660,6 +4660,13 @@ def _layout_standardize_trna_orientation(model, points):
         )
         if d_x > t_x:
             points = [(-point[0], point[1]) for point in points]
+
+        # Gracefully arc variable loop (e.g. A44-C48 in 1ehz) clear of flanking stems
+        v_start, v_end = int(arms[1]["outer_j"]) + 1, int(arms[2]["outer_i"])
+        if 3 <= v_end - v_start <= 7:
+            p1, p2 = points[v_start - 1], points[v_end]
+            ctrl = (max(p1[0], p2[0]) + 48.0, min(p1[1], p2[1]) - 68.0)
+            _layout_quadratic_equal(range(v_start, v_end), p1, p2, ctrl, points)
 
     return _layout_center(points), True
 
@@ -5239,6 +5246,8 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
                     )
                 )
 
+            show_circle = getattr(self.viewer, "show_circles", True)
+
             if gel:
                 base = QtGui.QColor(self._base_fill())
                 gradient = QtGui.QRadialGradient(
@@ -5270,13 +5279,17 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             if pressed:
                 border = QtGui.QColor(15, 23, 42, 255)
 
-            pen = QtGui.QPen(border)
-            pen.setWidthF(2.4 if selected else (1.8 if hovered else 1.4))
-            painter.setPen(pen)
-            painter.setBrush(fill)
-            painter.drawEllipse(
-                QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
-            )
+            # Draw the circle if circles are enabled, or if the node is currently selected/hovered
+            if show_circle or selected or hovered or gel:
+                pen = QtGui.QPen(border)
+                pen.setWidthF(2.4 if selected else (1.8 if hovered else 1.4))
+                painter.setPen(pen)
+                painter.setBrush(
+                    fill if (show_circle or selected or gel) else QtCore.Qt.NoBrush
+                )
+                painter.drawEllipse(
+                    QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
+                )
 
             if gel:
                 painter.setPen(QtCore.Qt.NoPen)
@@ -5992,6 +6005,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.number_every = max(0, int(number_every))
         self.show_tertiary = bool(show_tertiary)
         self.base_colors = True
+        self.show_circles = True  # Default: circles visible
         self.is_dark = False
         self.nodes, self.edges = [], []
         self._rebuilding = False
@@ -6990,6 +7004,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._ensure_animation()
         self._update_editor_status("gel mode on" if checked else "gel mode off")
 
+    def _circles_toggled(self, checked):
+        self.show_circles = bool(checked)
+        self._refresh_scene_style()
+
     def _refresh_scene_style(self):
         is_dark = getattr(self, "is_dark", False)
         label_color = (
@@ -7245,6 +7263,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.base_colors_cb = _checkbox(
             "Base colors", True, tip="Color bases using classical PyMOL/DSSR scheme"
         )
+        self.circles_cb = _checkbox(
+            "Circles",
+            True,
+            changed=self._circles_toggled,
+            tip="Show or hide circular node borders around bases",
+        )
         self.follow_spin = _spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
         self.live_3d_cb = _checkbox("3D highlight", False, self._sync_pymol_selection)
         self.reverse_3d_cb = _checkbox("3D → 2D sync", True, self._reverse_sync_toggled)
@@ -7253,6 +7277,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options.addWidget(self.number_spin, 0, 1)
         options.addWidget(self.tertiary_cb, 0, 2)
         options.addWidget(self.base_colors_cb, 0, 3)
+        options.addWidget(self.circles_cb, 0, 4)
         options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
         options.addWidget(self.follow_spin, 1, 1)
         options.addWidget(self.live_3d_cb, 1, 2)
