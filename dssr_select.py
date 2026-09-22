@@ -6052,6 +6052,48 @@ class Dssr2DEditor(QtWidgets.QWidget):
             edge._set_style()
         self._refresh_scene_style()
 
+    @staticmethod
+    def _segment_intersects_box(p1, p2, rx1, ry1, rx2, ry2):
+        """Liang-Barsky line clipping: returns True if segment p1-p2 intersects box."""
+        if rx1 > rx2:
+            rx1, rx2 = rx2, rx1
+        if ry1 > ry2:
+            ry1, ry2 = ry2, ry1
+
+        min_x, max_x = (p1[0], p2[0]) if p1[0] <= p2[0] else (p2[0], p1[0])
+        min_y, max_y = (p1[1], p2[1]) if p1[1] <= p2[1] else (p2[1], p1[1])
+        if max_x < rx1 or min_x > rx2 or max_y < ry1 or min_y > ry2:
+            return False
+
+        if rx1 <= p1[0] <= rx2 and ry1 <= p1[1] <= ry2:
+            return True
+        if rx1 <= p2[0] <= rx2 and ry1 <= p2[1] <= ry2:
+            return True
+
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        p = [-dx, dx, -dy, dy]
+        q = [p1[0] - rx1, rx2 - p1[0], p1[1] - ry1, ry2 - p1[1]]
+
+        u1, u2 = 0.0, 1.0
+        for pi, qi in zip(p, q):
+            if pi == 0:
+                if qi < 0:
+                    return False
+            else:
+                t = qi / pi
+                if pi < 0:
+                    if t > u2:
+                        return False
+                    if t > u1:
+                        u1 = t
+                else:
+                    if t < u1:
+                        return False
+                    if t < u2:
+                        u2 = t
+        return u1 <= u2
+
     def _add_edge(self, i, j, kind, layer=0, lw="", linear=False):
         if i < 0 or j < 0 or i >= len(self.nodes) or j >= len(self.nodes):
             return None
@@ -6120,8 +6162,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
                         lw=pair.get("lw", ""),
                         linear=linear,
                     )
+            self._chain_rects = self._add_chain_labels()
             self._add_number_labels()
-            self._add_chain_labels()
             self._update_scene_rect()
             for index in selected:
                 if index < len(self.nodes):
@@ -6142,6 +6184,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._ensure_animation()
 
     def _add_number_labels(self):
+        """Add sparse residue numbers strictly outside helices and clear of all linkages."""
         total = len(self.nodes)
         if total <= 0:
             return
@@ -6167,7 +6210,33 @@ class Dssr2DEditor(QtWidgets.QWidget):
             )
             for node in self.nodes
         ]
-        used_label_rects = []
+
+        # Collect all physical edge lines (backbone and rungs) to protect them from overlap
+        edge_segments = []
+        for i in range(total - 1):
+            if i not in self.model.chain_breaks:
+                p1 = self.nodes[i].pos()
+                p2 = self.nodes[i + 1].pos()
+                edge_segments.append(((p1.x(), p1.y()), (p2.x(), p2.y())))
+
+        for pair in self.model.secondary_pairs:
+            i = int(pair.get("i", -1))
+            j = int(pair.get("j", -1))
+            if 0 <= i < total and 0 <= j < total and i != j:
+                p1 = self.nodes[i].pos()
+                p2 = self.nodes[j].pos()
+                edge_segments.append(((p1.x(), p1.y()), (p2.x(), p2.y())))
+
+        if self.show_tertiary:
+            for pair in self.model.tertiary_pairs:
+                i = int(pair.get("i", -1))
+                j = int(pair.get("j", -1))
+                if 0 <= i < total and 0 <= j < total and i != j:
+                    p1 = self.nodes[i].pos()
+                    p2 = self.nodes[j].pos()
+                    edge_segments.append(((p1.x(), p1.y()), (p2.x(), p2.y())))
+
+        used_label_rects = list(getattr(self, "_chain_rects", []))
 
         def _intersection_area(first, second):
             try:
@@ -6192,97 +6261,138 @@ class Dssr2DEditor(QtWidgets.QWidget):
             label.setFont(font)
             label.setBrush(QtGui.QBrush(num_color))
 
+            pos = node.pos()
             partner_idx = self._pair_partner(index)
-            if partner_idx >= 0 and partner_idx < total:
+
+            # 1. Determine strict OUTWARD vector
+            if 0 <= partner_idx < total:
+                # Paired base: points strictly away from base-pair partner
                 p_pos = self.nodes[partner_idx].pos()
-                outward_x = node.pos().x() - p_pos.x()
-                outward_y = node.pos().y() - p_pos.y()
-                tangent_x, tangent_y = -outward_y, outward_x
+                vx = pos.x() - p_pos.x()
+                vy = pos.y() - p_pos.y()
+                vlen = math.hypot(vx, vy)
+                outward_x, outward_y = (
+                    (vx / vlen, vy / vlen) if vlen > 1e-6 else (1.0, 0.0)
+                )
             else:
-                previous = None
-                following = None
-                if index > 0 and (index - 1) not in self.model.chain_breaks:
-                    previous = self.nodes[index - 1].pos()
-                if index + 1 < total and index not in self.model.chain_breaks:
-                    following = self.nodes[index + 1].pos()
+                # Unpaired base (loops/linkers): use curve curvature (2N - P - F)
+                previous = (
+                    self.nodes[index - 1].pos()
+                    if index > 0 and (index - 1) not in self.model.chain_breaks
+                    else None
+                )
+                following = (
+                    self.nodes[index + 1].pos()
+                    if index + 1 < total and index not in self.model.chain_breaks
+                    else None
+                )
 
                 if previous is not None and following is not None:
-                    tangent_x = following.x() - previous.x()
-                    tangent_y = following.y() - previous.y()
-                elif following is not None:
-                    tangent_x = following.x() - node.pos().x()
-                    tangent_y = following.y() - node.pos().y()
+                    kx = 2.0 * pos.x() - previous.x() - following.x()
+                    ky = 2.0 * pos.y() - previous.y() - following.y()
+                    klen = math.hypot(kx, ky)
+                    if klen > 0.5:
+                        outward_x, outward_y = kx / klen, ky / klen
+                    else:
+                        tx = following.x() - previous.x()
+                        ty = following.y() - previous.y()
+                        nx, ny = -ty, tx
+                        nlen = math.hypot(nx, ny)
+                        if nlen > 1e-6:
+                            nx /= nlen
+                            ny /= nlen
+                            if (
+                                nx * (pos.x() - center_x) + ny * (pos.y() - center_y)
+                                < 0.0
+                            ):
+                                nx, ny = -nx, -ny
+                            outward_x, outward_y = nx, ny
+                        else:
+                            outward_x, outward_y = 1.0, 0.0
                 elif previous is not None:
-                    tangent_x = node.pos().x() - previous.x()
-                    tangent_y = node.pos().y() - previous.y()
+                    tx = pos.x() - previous.x()
+                    ty = pos.y() - previous.y()
+                    outward_x, outward_y = (
+                        tx / max(1e-6, math.hypot(tx, ty)),
+                        ty / max(1e-6, math.hypot(tx, ty)),
+                    )
+                elif following is not None:
+                    tx = following.x() - pos.x()
+                    ty = following.y() - pos.y()
+                    outward_x, outward_y = (
+                        -tx / max(1e-6, math.hypot(tx, ty)),
+                        -ty / max(1e-6, math.hypot(tx, ty)),
+                    )
                 else:
-                    tangent_x, tangent_y = 1.0, 0.0
+                    cx = pos.x() - center_x
+                    cy = pos.y() - center_y
+                    clen = math.hypot(cx, cy)
+                    outward_x, outward_y = (
+                        (cx / clen, cy / clen) if clen > 1e-6 else (1.0, 0.0)
+                    )
 
-                outward_x = node.pos().x() - center_x
-                outward_y = node.pos().y() - center_y
-
-            tangent_length = math.hypot(tangent_x, tangent_y)
-            if tangent_length <= 1.0e-8:
-                tangent_x, tangent_y, tangent_length = 1.0, 0.0, 1.0
-            tangent_x /= tangent_length
-            tangent_y /= tangent_length
-            normal_x, normal_y = -tangent_y, tangent_x
-
-            outward_length = math.hypot(outward_x, outward_y)
-            if outward_length <= 1.0e-8:
-                outward_x, outward_y, outward_length = normal_x, normal_y, 1.0
-            outward_x /= outward_length
-            outward_y /= outward_length
-            if normal_x * outward_x + normal_y * outward_y < 0.0:
-                normal_x = -normal_x
-                normal_y = -normal_y
-
-            directions = [
-                (outward_x, outward_y),
-                (normal_x, normal_y),
-                (-normal_x, -normal_y),
-                (-outward_x, -outward_y),
-                (tangent_x, tangent_y),
-                (-tangent_x, -tangent_y),
-            ]
-            distances = (20.0, 26.0, 32.0, 38.0)
+            # 2. Candidate directions: only outward hemisphere (within +/- 60 deg of outward)
+            candidate_angles = [0.0, 0.35, -0.35, 0.70, -0.70, 1.05, -1.05]
+            candidate_distances = (22.0, 28.0, 35.0, 42.0)
             rect = label.boundingRect()
             best = None
-            for direction_rank, (dir_x, dir_y) in enumerate(directions):
-                for distance_rank, distance in enumerate(distances):
-                    local_x = dir_x * distance - 0.5 * rect.width()
-                    local_y = dir_y * distance - 0.5 * rect.height()
-                    scene_rect = QtCore.QRectF(
-                        node.pos().x() + local_x,
-                        node.pos().y() + local_y,
-                        rect.width(),
-                        rect.height(),
+
+            for dir_rank, alpha in enumerate(candidate_angles):
+                cosa = math.cos(alpha)
+                sina = math.sin(alpha)
+                dx = outward_x * cosa - outward_y * sina
+                dy = outward_x * sina + outward_y * cosa
+
+                for dist_rank, dist in enumerate(candidate_distances):
+                    lx = dx * dist - 0.5 * rect.width()
+                    ly = dy * dist - 0.5 * rect.height()
+                    srect = QtCore.QRectF(
+                        pos.x() + lx, pos.y() + ly, rect.width(), rect.height()
                     )
-                    overlap = 0.0
-                    for node_index, occupied in enumerate(node_rects):
-                        if node_index == index:
+
+                    score = 0.05 * dist_rank + 0.02 * dir_rank
+
+                    # Avoid other node bubbles
+                    for n_idx, n_rect in enumerate(node_rects):
+                        if n_idx == index:
                             continue
-                        overlap += 8.0 * _intersection_area(scene_rect, occupied)
-                    for occupied in used_label_rects:
-                        overlap += 35.0 * _intersection_area(scene_rect, occupied)
-                    score = overlap + 0.08 * distance_rank + 0.04 * direction_rank
-                    candidate = (score, local_x, local_y, scene_rect)
-                    if best is None or candidate[0] < best[0]:
-                        best = candidate
+                        area = _intersection_area(srect, n_rect)
+                        if area > 0:
+                            score += 25.0 * area
+
+                    # Avoid previously placed text
+                    for u_rect in used_label_rects:
+                        area = _intersection_area(srect, u_rect)
+                        if area > 0:
+                            score += 50.0 * area
+
+                    # Avoid backbone and base-pair linkages (3 px buffer)
+                    for p1, p2 in edge_segments:
+                        if self._segment_intersects_box(
+                            p1,
+                            p2,
+                            srect.left() - 3.0,
+                            srect.top() - 3.0,
+                            srect.right() + 3.0,
+                            srect.bottom() + 3.0,
+                        ):
+                            score += 60.0
+
+                    if best is None or score < best[0]:
+                        best = (score, lx, ly, srect)
+
             if best is None:
-                best = (0.0, 20.0, -20.0, QtCore.QRectF())
+                best = (0.0, outward_x * 24.0, outward_y * 24.0, QtCore.QRectF())
+
             label.setPos(best[1], best[2])
             used_label_rects.append(best[3])
             label.setZValue(8.0)
-            try:
-                label.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-            except Exception:
-                pass
+            _layout_no_mouse(label)
 
     def _add_chain_labels(self):
         total = len(self.nodes)
         if total <= 0:
-            return
+            return []
         segments = []
         start = 0
         for break_after in sorted(self.model.chain_breaks):
@@ -6296,6 +6406,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         is_dark = getattr(self, "is_dark", False)
         term_color = QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(15, 23, 42)
+        chain_rects = []
 
         for segment_number, (first, last) in enumerate(segments, 1):
             for index, text_value, offset in (
@@ -6311,6 +6422,16 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setPos(offset[0], offset[1])
                 label.setZValue(8.0)
                 _layout_no_mouse(label)
+                br = label.boundingRect()
+                pos = self.nodes[index].pos()
+                chain_rects.append(
+                    QtCore.QRectF(
+                        pos.x() + offset[0],
+                        pos.y() + offset[1],
+                        br.width(),
+                        br.height(),
+                    )
+                )
 
             if len(segments) > 1:
                 chain = str(self.model.nts[first].get("chain", "")).strip()
@@ -6324,6 +6445,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setPos(-48.0, -52.0)
                 label.setZValue(8.0)
                 _layout_no_mouse(label)
+                br = label.boundingRect()
+                pos = self.nodes[first].pos()
+                chain_rects.append(
+                    QtCore.QRectF(
+                        pos.x() - 48.0,
+                        pos.y() - 52.0,
+                        br.width(),
+                        br.height(),
+                    )
+                )
+        return chain_rects
 
     def fit_scene(self):
         if not self._closed:
