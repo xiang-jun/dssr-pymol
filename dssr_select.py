@@ -112,59 +112,109 @@ BLOCK_FEATURES = [
     "hbond",
 ]
 
-
 LAYOUT_CHOICES = ["standard", "circular", "linear", "legacy radiate"]
 
-WHITE_THEME = """
-QDialog, QWidget#dssrWorkspace { background: #ffffff; color: #263746; }
-QMenu { background: #ffffff; color: #263746; border: 1px solid #d4dde5; }
-QMenu::item:selected { background: #d6f0fa; }
-QLabel, QCheckBox, QGroupBox { color: #263746; }
+LIGHT_THEME = """
+QDialog, QWidget#dssrWorkspace { background: #f1f5f9; color: #0f172a; }
+QMenu { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
+QMenu::item:selected { background: #ffe4e6; color: #e11d48; font-weight: 600; }
+QLabel, QCheckBox, QGroupBox { color: #0f172a; }
 QGroupBox {
-    border: 1px solid #d4dde5; border-radius: 9px;
-    margin-top: 8px; padding-top: 8px; background: #ffffff;
-    font-weight: 600;
+    border: 1px solid #cbd5e1; border-radius: 8px;
+    margin-top: 8px; padding-top: 10px; background: #ffffff;
+    font-weight: 600; color: #0f172a;
 }
 QGroupBox::title {
-    subcontrol-origin: margin; left: 10px; padding: 0 6px;
-    color: #24657d;
+    subcontrol-origin: margin; left: 10px; padding: 0 4px;
+    color: #0369a1;
 }
 QPushButton, QToolButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-    color: #263746; background: #ffffff;
-    border: 1px solid #bdcbd6; border-radius: 6px;
-    padding: 4px 7px; min-height: 21px;
+    color: #0f172a; background: #ffffff;
+    border: 1px solid #94a3b8; border-radius: 6px;
+    padding: 4px 7px; min-height: 22px; font-weight: 500;
 }
 QPushButton:hover, QComboBox:hover, QLineEdit:focus {
-    background: #eef9fd; border-color: #52b9da;
+    background: #f8fafc; border-color: #0284c7;
 }
 QPushButton:checked {
-    color: #16475b; background: #d8f1fa; border-color: #55b9d9;
+    color: #ffffff; background: #0284c7; border-color: #0369a1;
     font-weight: 700;
 }
 QPushButton:disabled, QComboBox:disabled {
-    color: #98a6b1; background: #f3f5f7; border-color: #dce2e7;
+    color: #94a3b8; background: #f1f5f9; border-color: #e2e8f0;
 }
 QListWidget, QPlainTextEdit {
-    color: #263746; background: #ffffff;
-    border: 1px solid #d4dde5; border-radius: 7px;
-    selection-color: #123d50; selection-background-color: #d6f0fa;
+    color: #0f172a; background: #ffffff;
+    border: 1px solid #cbd5e1; border-radius: 7px;
+    selection-color: #ffffff; selection-background-color: #e11d48;
 }
 QComboBox QAbstractItemView {
-    color: #263746; background: #ffffff;
-    selection-color: #123d50; selection-background-color: #d6f0fa;
+    color: #0f172a; background: #ffffff;
+    selection-color: #ffffff; selection-background-color: #e11d48;
 }
-QTabWidget::pane { border: 1px solid #d4dde5; border-radius: 7px; }
+QTabWidget::pane { border: 1px solid #cbd5e1; border-radius: 7px; background: #ffffff; }
 QTabBar::tab {
-    color: #647581; background: #f2f5f7;
-    border: 1px solid #d4dde5; padding: 6px 12px;
+    color: #647581; background: #e2e8f0;
+    border: 1px solid #cbd5e1; padding: 6px 12px;
 }
-QTabBar::tab:selected { color: #174c61; background: #ffffff; }
-QToolTip { color: #263746; background: #ffffff;
-    border: 1px solid #52b9da; }
-QPushButton:pressed { background: #dceff6; }
+QTabBar::tab:selected { color: #0369a1; background: #ffffff; font-weight: 600; }
+QToolTip { color: #0f172a; background: #ffffff; border: 1px solid #0284c7; }
+QPushButton:pressed { background: #e2e8f0; }
 QCheckBox::indicator { width: 15px; height: 15px; }
-QLabel#studioHint { color: #607682; font-weight: 400; }
+QLabel#studioHint { color: #64748b; font-weight: 400; }
 """
+
+DARK_THEME = """
+QDialog, QWidget#dssrWorkspace { background: #0f172a; color: #f8fafc; }
+QMenu { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+QMenu::item:selected { background: #e11d48; color: #ffffff; font-weight: 600; }
+QLabel, QCheckBox, QGroupBox { color: #f8fafc; }
+QGroupBox {
+    border: 1px solid #334155; border-radius: 8px;
+    margin-top: 8px; padding-top: 10px; background: #1e293b;
+    font-weight: 600; color: #38bdf8;
+}
+QGroupBox::title {
+    subcontrol-origin: margin; left: 10px; padding: 0 4px;
+    color: #38bdf8;
+}
+QPushButton, QToolButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
+    color: #f8fafc; background: #1e293b;
+    border: 1px solid #475569; border-radius: 6px;
+    padding: 4px 7px; min-height: 22px; font-weight: 500;
+}
+QPushButton:hover, QComboBox:hover, QLineEdit:focus {
+    background: #334155; border-color: #38bdf8;
+}
+QPushButton:checked {
+    color: #ffffff; background: #0284c7; border-color: #38bdf8;
+    font-weight: 700;
+}
+QPushButton:disabled, QComboBox:disabled {
+    color: #64748b; background: #0f172a; border-color: #1e293b;
+}
+QListWidget, QPlainTextEdit {
+    color: #f8fafc; background: #1e293b;
+    border: 1px solid #334155; border-radius: 7px;
+    selection-color: #ffffff; selection-background-color: #e11d48;
+}
+QComboBox QAbstractItemView {
+    color: #f8fafc; background: #1e293b;
+    selection-color: #ffffff; selection-background-color: #e11d48;
+}
+QTabWidget::pane { border: 1px solid #334155; border-radius: 7px; background: #1e293b; }
+QTabBar::tab {
+    color: #94a3b8; background: #0f172a;
+    border: 1px solid #334155; padding: 6px 12px;
+}
+QTabBar::tab:selected { color: #38bdf8; background: #1e293b; font-weight: 600; }
+QToolTip { color: #f8fafc; background: #1e293b; border: 1px solid #38bdf8; }
+QPushButton:pressed { background: #334155; }
+QCheckBox::indicator { width: 15px; height: 15px; }
+QLabel#studioHint { color: #94a3b8; font-weight: 400; }
+"""
+
+WHITE_THEME = LIGHT_THEME
 
 
 class HelperFunctions:
@@ -1306,7 +1356,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.setWindowTitle("DSSR RNA studio")
         self.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, True)
         self.resize(1360, 860)
-        self.setStyleSheet(WHITE_THEME)
+        self.setStyleSheet(LIGHT_THEME)
         self.editor = None
         self._analysis_context = None
         self._cache_key = self._cache_data = None
@@ -1348,6 +1398,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         )
         self.show_2d_btn.toggled.connect(self._set_2d_visible)
         top.addWidget(self.show_2d_btn)
+        self.dark_btn = QtWidgets.QPushButton("Dark")
+        self.dark_btn.setCheckable(True)
+        self.dark_btn.setChecked(False)
+        self.dark_btn.setToolTip("Toggle PyMOL dark / light mode")
+        self.dark_btn.toggled.connect(self._set_dark_mode)
+        top.addWidget(self.dark_btn)
         self.settings_btn = QtWidgets.QPushButton("Settings")
         self.settings_btn.setToolTip(
             "Display options, base blocks, and the DSSR executable path"
@@ -1476,6 +1532,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.editor.set_view_active(visible and not self.isMinimized())
             if visible:
                 self.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
+
+    def _set_dark_mode(self, is_dark):
+        self.dark_btn.setText("Light" if is_dark else "Dark")
+        self.setStyleSheet(DARK_THEME if is_dark else LIGHT_THEME)
+        if self.editor is not None:
+            self.editor.set_theme(is_dark)
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -1715,6 +1777,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             model, selection, algorithm, number_every, show_tertiary, parent=self
         )
         self.editor.pymol_state = int(state)
+        self.editor.set_theme(self.dark_btn.isChecked())
         self.editor_layout.addWidget(self.editor)
         self.empty_label.hide()
         self.editor.show()
@@ -4659,24 +4722,31 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         self.update_geometry()
 
     def _set_style(self):
+        is_dark = getattr(getattr(self.node_a, "viewer", None), "is_dark", False)
         if self.kind == "backbone":
-            # Soft, thin slate line (1.0 px) so backbone acts as a subtle guide
-            color = QtGui.QColor(148, 163, 184)  # #94a3b8
+            # Slate gray backbone
+            color = (
+                QtGui.QColor(100, 116, 139) if is_dark else QtGui.QColor(148, 163, 184)
+            )
             width = 1.0
             style = QtCore.Qt.SolidLine
         elif self.kind == "tertiary":
-            # Extra non-canonical / tertiary DSSR pairs: dashed violet line
-            color = QtGui.QColor(124, 58, 237)  # #7c3aed
+            # Tertiary pairs: luminous violet
+            color = (
+                QtGui.QColor(192, 132, 252) if is_dark else QtGui.QColor(124, 58, 237)
+            )
             width = 1.35
             style = QtCore.Qt.DashLine
         elif self.layer > 0:
-            # Pseudoknot / non-nested secondary pairs: distinct dashed purple rung
-            color = QtGui.QColor(147, 51, 234)  # #9333ea
+            # Pseudoknots: bright purple
+            color = (
+                QtGui.QColor(216, 180, 254) if is_dark else QtGui.QColor(147, 51, 234)
+            )
             width = 1.45
             style = QtCore.Qt.DashLine
         else:
-            # Canonical Watson-Crick & Wobble stem rungs: strong 2.2 px solid royal blue
-            color = QtGui.QColor(29, 78, 216)  # #1d4ed8
+            # Canonical Watson-Crick/Wobble rungs: electric sky-blue in dark mode, royal cobalt in light mode
+            color = QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(29, 78, 216)
             width = 2.2
             style = QtCore.Qt.SolidLine
 
@@ -5822,7 +5892,10 @@ class DssrSequenceView(QtWidgets.QTextEdit):
             selection.cursor.setPosition(
                 self._spans[last][1], QtGui.QTextCursor.KeepAnchor
             )
-            selection.format.setBackground(QtGui.QColor("#dfebf8"))
+            is_dark = getattr(self.editor, "is_dark", False)
+            selection.format.setBackground(
+                QtGui.QColor("#881337") if is_dark else QtGui.QColor("#fce7f3")
+            )
             selections.append(selection)
         self.setExtraSelections(selections)
 
@@ -5919,12 +5992,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.number_every = max(0, int(number_every))
         self.show_tertiary = bool(show_tertiary)
         self.base_colors = True
+        self.is_dark = False
         self.nodes, self.edges = [], []
         self._rebuilding = False
         self._auto_positions = []
         self._undo, self._redo = [], []
         self._scene_rect_pending = False
-        # Topology belongs to this model; coordinate edits do not change it.
         self._pair_table = Dssr2DLayout._planar_pair_table(model)
         self._stems = Dssr2DLayout._stem_tree(self._pair_table, model.chain_breaks)
         self._adjacency = None
@@ -5947,9 +6020,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._reverse_timer.setInterval(450)
         self._reverse_timer.timeout.connect(self._pull_pymol_selection)
 
+        # Build widgets once and establish initial theme
         self._build_widgets()
-        self.setStyleSheet(WHITE_THEME)
-        self.view.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("white")))
+        self.set_theme(False)
+
         self.scene.selectionChanged.connect(self._selection_changed)
         self.layout_combo.currentTextChanged.connect(self.redraw)
         self.number_spin.valueChanged.connect(self.redraw)
@@ -5961,6 +6035,22 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._update_editor_status("ready")
         self._reverse_timer.start()
         QtCore.QTimer.singleShot(0, self.fit_scene)
+
+    def set_theme(self, is_dark):
+        self.is_dark = bool(is_dark)
+        self.setStyleSheet(DARK_THEME if self.is_dark else LIGHT_THEME)
+        bg = QtGui.QColor("#0f172a" if self.is_dark else "#ffffff")
+        self.view.setBackgroundBrush(QtGui.QBrush(bg))
+        seq_bg = "#0f172a" if self.is_dark else "#ffffff"
+        seq_text = "#94a3b8" if self.is_dark else "#475569"
+        seq_border = "#334155" if self.is_dark else "#cbd5e1"
+        self.sequence_view.setStyleSheet(
+            "QTextEdit { background: %s; color: %s; border: 1px solid %s; border-radius: 5px; }"
+            % (seq_bg, seq_text, seq_border)
+        )
+        for edge in self.edges:
+            edge._set_style()
+        self._refresh_scene_style()
 
     def _add_edge(self, i, j, kind, layer=0, lw="", linear=False):
         if i < 0 or j < 0 or i >= len(self.nodes) or j >= len(self.nodes):
@@ -5987,7 +6077,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.view.cancel_selection_gesture()
         self._rebuilding = True
         try:
-            self.algorithm = self.layout_combo.currentText().strip().lower() or "smart"
+            self.algorithm = (
+                self.layout_combo.currentText().strip().lower() or "standard"
+            )
             self.number_every = self.number_spin.value()
             self.show_tertiary = self.tertiary_cb.isChecked()
             self.base_colors = self.base_colors_cb.isChecked()
@@ -6050,7 +6142,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._ensure_animation()
 
     def _add_number_labels(self):
-        """Add sparse residue numbers without covering bases or earlier labels."""
         total = len(self.nodes)
         if total <= 0:
             return
@@ -6087,6 +6178,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
             except Exception:
                 return 0.0
 
+        is_dark = getattr(self, "is_dark", False)
+        num_color = QtGui.QColor(248, 250, 252) if is_dark else QtGui.QColor(15, 23, 42)
+
         for index in sorted(indices):
             node = self.nodes[index]
             nt = self.model.nts[index]
@@ -6096,9 +6190,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
             font.setPointSize(11)
             font.setBold(True)
             label.setFont(font)
-            label.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
+            label.setBrush(QtGui.QBrush(num_color))
 
-            # If the nucleotide is base-paired, point directly outward away from its partner
             partner_idx = self._pair_partner(index)
             if partner_idx >= 0 and partner_idx < total:
                 p_pos = self.nodes[partner_idx].pos()
@@ -6201,6 +6294,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not segments:
             segments = [(0, total - 1)]
 
+        is_dark = getattr(self, "is_dark", False)
+        term_color = QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(15, 23, 42)
+
         for segment_number, (first, last) in enumerate(segments, 1):
             for index, text_value, offset in (
                 (first, "5′", (-42.0, -26.0)),
@@ -6208,10 +6304,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
             ):
                 label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[index])
                 font = QtGui.QFont("Sans Serif")
-                font.setPointSize(13)  # Increased to 13 pt Bold
+                font.setPointSize(13)
                 font.setBold(True)
                 label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
+                label.setBrush(QtGui.QBrush(term_color))
                 label.setPos(offset[0], offset[1])
                 label.setZValue(8.0)
                 _layout_no_mouse(label)
@@ -6221,10 +6317,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 text_value = "chain %s" % (chain or segment_number)
                 label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[first])
                 font = QtGui.QFont("Sans Serif")
-                font.setPointSize(11)  # Increased to 11 pt Bold
+                font.setPointSize(11)
                 font.setBold(True)
                 label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
+                label.setBrush(QtGui.QBrush(term_color))
                 label.setPos(-48.0, -52.0)
                 label.setZValue(8.0)
                 _layout_no_mouse(label)
@@ -6293,7 +6389,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
             width = max(1, int(width * factor))
             height = max(1, int(height * factor))
         image = QtGui.QImage(width, height, QtGui.QImage.Format_ARGB32)
-        image.fill(QtGui.QColor("white"))
+        image.fill(
+            QtGui.QColor("#0f172a" if getattr(self, "is_dark", False) else "#ffffff")
+        )
         painter = QtGui.QPainter(image)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         self.scene.render(
@@ -6377,7 +6475,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def reset_layout(self):
         before = self._capture_positions()
-        algorithm = self.layout_combo.currentText().strip().lower() or "smart"
+        algorithm = self.layout_combo.currentText().strip().lower() or "standard"
         after = Dssr2DLayout.compute(self.model, algorithm)
         self._auto_positions = [(float(x), float(y)) for x, y in after]
         self._apply_positions(after)
@@ -6389,7 +6487,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if len(self._auto_positions) != len(self.nodes):
             self._auto_positions = Dssr2DLayout.compute(
                 self.model,
-                self.layout_combo.currentText().strip().lower() or "smart",
+                self.layout_combo.currentText().strip().lower() or "standard",
             )
         selected = [node for node in self.nodes if node.isSelected()]
         if not selected:
@@ -6597,7 +6695,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             right += 1
         result = set(range(left, right + 1))
 
-        # Include a common closing pair when this is a hairpin/internal loop.
         if left > 0 and right + 1 < n:
             a = left - 1
             b = right + 1
@@ -6728,7 +6825,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._timer.start()
 
     def _animation_tick(self):
-        # Evaluate every node, even when an earlier one is still animating.
         active = [node._advance_visual() for node in self.nodes]
         if not any(active):
             self._timer.stop()
@@ -6763,6 +6859,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._update_editor_status("gel mode on" if checked else "gel mode off")
 
     def _refresh_scene_style(self):
+        is_dark = getattr(self, "is_dark", False)
+        label_color = (
+            QtGui.QColor(248, 250, 252) if is_dark else QtGui.QColor(15, 23, 42)
+        )
         for node in self.nodes:
             node.base_text_item.setBrush(
                 QtGui.QBrush(
@@ -6773,8 +6873,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 if child is not node.base_text_item and isinstance(
                     child, QtWidgets.QGraphicsSimpleTextItem
                 ):
-                    # Use crisp near-black (#0f172a) instead of faint gray (72, 94, 112)
-                    child.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
+                    child.setBrush(QtGui.QBrush(label_color))
             node.update()
         self.sequence_view.set_letter_colors(self.base_colors)
         self.scene.update()
@@ -6838,13 +6937,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         ):
             return
 
-        # Check all currently active selections in PyMOL
         try:
             enabled_selections = cmd.get_names("selections", enabled_only=1)
         except Exception:
             enabled_selections = []
 
-        # If all selections are toggled off in PyMOL, clear the 2D canvas selection
         if not enabled_selections:
             if (
                 any(node.isSelected() for node in self.nodes)
@@ -6934,7 +7031,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 self.status_label.setText("PyMOL selection error: %s" % str(error))
 
     def _build_widgets(self):
-        """Two compact toolbars; occasional operations live in menus/options."""
+        """Build the toolbars, sequence view, and single 2D graphics canvas."""
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         top = QtWidgets.QHBoxLayout()
@@ -7000,7 +7097,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             lambda: self._update_editor_status("drag mode changed")
         )
         tools.addWidget(self.drag_mode_combo)
-        # Changed default from True to False so the editor starts in crisp non-Gel mode
         self.gel_style_cb = _checkbox(
             "Gel",
             False,
@@ -7050,7 +7146,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         root.addWidget(self.status_label)
 
     def set_view_active(self, active):
-        """Pause a hidden pane, keeping the scene, camera and undo history."""
         active = bool(active) and not self._closed
         if active == self._view_active:
             return
@@ -7077,7 +7172,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             QtCore.QTimer.singleShot(0, self.fit_scene)
 
     def shutdown(self):
-        """Release PyMOL overlays and all timers before replacement or close."""
         if not self._closed:
             self.set_view_active(False)
             self._closed = True
@@ -7103,14 +7197,6 @@ def dssr_2d(
     title="",
     quiet=1,
 ):
-    """Open the shared DSSR workspace and return its embedded 2D editor.
-
-    Usage: dssr_2d [selection [, state [, exe [, layout [, number_every
-        [, show_tertiary [, title [, quiet ]]]]]]]]
-    Layout: standard, circular, linear, or legacy radiate. Number_every=0
-    disables periodic labels. show_tertiary=1 displays additional DSSR pairs.
-    The existing dssr_gui window is reused; no second viewer is created.
-    """
     global _DSSR_GUI_DIALOG
     selection = HelperFunctions.unquote(selection)
     exe = HelperFunctions.unquote(exe)
@@ -7123,7 +7209,6 @@ def dssr_2d(
         _DSSR_GUI_DIALOG = DssrGuiDialog()
     host = _DSSR_GUI_DIALOG
     if host._analysis_context != (selection, state, exe):
-        # Retire the old highlight before exporting an 'all' selection to DSSR.
         host._clear_analysis("Analyzing the requested structure...")
     try:
         data = host._get_dssr_data(selection, state, exe, 0)
@@ -7150,7 +7235,7 @@ def dssr_2d(
     return editor
 
 
-# Public PyMOL commands are registered once, after all implementations exist.
+# Public PyMOL commands are registered once
 dssr_select = DssrFunctions.dssr_select
 dssr_gui = DssrGuiDialog.dssr_gui
 dssr_block = DssrFunctions.dssr_block
