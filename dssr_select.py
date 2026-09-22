@@ -1362,7 +1362,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.exe_edit.textChanged.connect(self._on_dssr_context_changed)
         self.precolor_cb = _checkbox("Gray precolor", checked=True)
         self.display_cb = _checkbox("Display sticks", checked=False)
-        self.zoom_cb = _checkbox("Zoom to selection", checked=True)
+        self.zoom_cb = _checkbox("Zoom to selection", checked=False)
         self.color_edit = QtWidgets.QLineEdit("auto")
         self.block_file_combo = _combo(BLOCK_FEATURES, editable=True)
         self.block_depth_spin = _spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
@@ -4656,13 +4656,29 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
 
     def _set_style(self):
         if self.kind == "backbone":
-            color, width = (105, 105, 105), 1.05
+            # Soft, thin slate line (1.0 px) so the backbone acts as a subtle guide
+            color = QtGui.QColor(148, 163, 184)  # #94a3b8
+            width = 1.0
+            style = QtCore.Qt.SolidLine
         elif self.kind == "tertiary":
-            color, width = (145, 115, 165), 0.95
+            # Extra non-canonical / tertiary DSSR pairs: dashed violet line
+            color = QtGui.QColor(124, 58, 237)  # #7c3aed
+            width = 1.35
+            style = QtCore.Qt.DashLine
+        elif self.layer > 0:
+            # Pseudoknot / non-nested secondary pairs: distinct dashed purple rung
+            color = QtGui.QColor(147, 51, 234)  # #9333ea
+            width = 1.45
+            style = QtCore.Qt.DashLine
         else:
-            # Flat primary and pseudoknot pairs use the same scientific blue.
-            color, width = (60, 85, 175), 1.25 if self.layer == 0 else 1.15
-        self.setPen(self._pen(QtGui.QColor(*color), width))
+            # Canonical Watson-Crick & Wobble stem rungs: strong 2.2 px solid royal blue
+            color = QtGui.QColor(29, 78, 216)  # #1d4ed8
+            width = 2.2
+            style = QtCore.Qt.SolidLine
+
+        self.setPen(
+            QtGui.QPen(color, width, style, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+        )
         if self.lw:
             self.setToolTip("Base pair: %s" % self.lw)
 
@@ -4679,13 +4695,17 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             painter.drawPath(self.path())
 
     def paint(self, painter, option, widget=None):
-        """Paint gel edges, retaining the plain/base-item failure fallbacks."""
+        """Paint gel edges or crisp flat edges depending on the Gel setting."""
         try:
             gel = self.node_a.viewer.gel_style_enabled()
         except Exception:
             gel = False
+
+        # If Gel mode is unchecked, paint flat clean lines
         if not gel:
             return self._paint_flat(painter, option, widget)
+
+        # Gel mode multi-pass rendering
         if self.kind == "backbone":
             rgba, width = (112, 154, 186, 225), 1.65
         elif self.kind == "tertiary":
@@ -4695,6 +4715,7 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             rgba, width = palette[(self.layer - 1) % len(palette)], 2.05
         else:
             rgba, width = (78, 200, 255, 245), 2.15
+
         color = QtGui.QColor(*rgba)
         saved = False
         try:
@@ -4731,6 +4752,7 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         second = self.node_b.pos()
         path = QtGui.QPainterPath()
         path.moveTo(first)
+
         if self.linear_layout and self.kind != "backbone":
             span = abs(int(self.node_a.nt_index) - int(self.node_b.nt_index))
             height = min(330.0, 25.0 + 6.0 * span)
@@ -4741,7 +4763,8 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
                 QtCore.QPointF(0.5 * (first.x() + second.x()), sign * height),
                 second,
             )
-        elif self.kind == "tertiary":
+        elif self.kind == "tertiary" or self.layer > 0:
+            # Arc tertiary and pseudoknot pairs gracefully above the intervening structure
             delta_x = second.x() - first.x()
             delta_y = second.y() - first.y()
             distance = math.hypot(delta_x, delta_y)
@@ -4750,7 +4773,8 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             else:
                 normal_x = -delta_y / distance
                 normal_y = delta_x / distance
-                curvature = min(120.0, max(24.0, 0.14 * distance))
+                # Arch outward away from the center of the molecule
+                curvature = min(80.0, max(25.0, 0.16 * distance))
                 middle_x = 0.5 * (first.x() + second.x())
                 middle_y = 0.5 * (first.y() + second.y())
                 path.quadTo(
@@ -4761,9 +4785,9 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
                     second,
                 )
         else:
-            # Backbone, canonical pairs, and pseudoknot pairs are straight,
-            # exactly as in the simple DSSR/VARNA 1EHZ diagram.
+            # Straight solid rungs for backbone and standard stem base pairs
             path.lineTo(second)
+
         self.setPath(path)
 
 
@@ -5122,23 +5146,23 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
 
 
 BASE_TEXT_COLORS = {
-    "A": "#237a3b",
-    "C": "#245cc7",
-    "G": "#a65e00",
-    "U": "#b52b47",
-    "T": "#8a3fb0",
-    "I": "#526679",
+    "A": "#15803d",  # Deep emerald
+    "C": "#1d4ed8",  # Royal blue
+    "G": "#b45309",  # Deep amber
+    "U": "#be123c",  # Deep rose / red
+    "T": "#7e22ce",  # Deep purple
+    "I": "#0f172a",
 }
 
 
 def _base_text_color(base, enabled=True):
     return QtGui.QColor(
-        BASE_TEXT_COLORS.get(str(base).upper(), "#334155") if enabled else "#334155"
+        BASE_TEXT_COLORS.get(str(base).upper(), "#0f172a") if enabled else "#0f172a"
     )
 
 
 class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
-    RADIUS = 12.5
+    RADIUS = 13.5  # Increased from 12.5 for better proportions
 
     def __init__(self, viewer, nt, x, y):
         radius = self.RADIUS
@@ -5176,7 +5200,8 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         self.setToolTip(self._tooltip())
 
     def _base_fill(self):
-        rgb = (184, 207, 222) if self.viewer.gel_style_enabled() else (250, 252, 254)
+        # Luminous pearl ice-white for Gel mode, pure white for Flat mode
+        rgb = (236, 245, 252) if self.viewer.gel_style_enabled() else (255, 255, 255)
         return QtGui.QColor(*rgb)
 
     def _apply_style(self, selected):
@@ -5187,7 +5212,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
     def _add_text(self):
         text = QtWidgets.QGraphicsSimpleTextItem(str(self.nt.get("base", "N")), self)
         font = QtGui.QFont("Sans Serif")
-        font.setPointSize(8)
+        font.setPointSize(12)  # Enlarge base letters to 12pt Bold
         font.setBold(True)
         text.setFont(font)
         rect = text.boundingRect()
@@ -5414,17 +5439,19 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             pressed = bool(getattr(self, "_pressed", False))
             base = QtGui.QColor(self._base_fill())
 
-            shadow = QtGui.QColor(2, 8, 23, 105 if gel else 38)
-            painter.setPen(QtCore.Qt.NoPen)
-            painter.setBrush(QtGui.QBrush(shadow))
-            painter.drawEllipse(
-                QtCore.QRectF(
-                    -radius + 2.2,
-                    -radius + 3.4,
-                    2.0 * radius,
-                    2.0 * radius,
+            # Drop shadow strictly in Gel mode; no smudge in non-Gel mode
+            if gel:
+                shadow = QtGui.QColor(2, 8, 23, 105)
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(shadow))
+                painter.drawEllipse(
+                    QtCore.QRectF(
+                        -radius + 2.2,
+                        -radius + 3.4,
+                        2.0 * radius,
+                        2.0 * radius,
+                    )
                 )
-            )
 
             if selected or hovered:
                 aura = QtGui.QColor(55, 220, 255, 120 if selected else 55)
@@ -5452,8 +5479,9 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
                 fill = QtGui.QBrush(gradient)
                 border = QtGui.QColor(188, 235, 255, 225)
             else:
-                fill = QtGui.QBrush(base)
-                border = QtGui.QColor(55, 72, 96, 210)
+                # Solid white circle with crisp slate border
+                fill = QtGui.QBrush(QtGui.QColor(255, 255, 255))
+                border = QtGui.QColor(30, 41, 59)
 
             if selected:
                 border = QtGui.QColor(44, 215, 255, 255)
@@ -5462,7 +5490,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             if pressed:
                 border = QtGui.QColor(255, 255, 255, 250)
             pen = QtGui.QPen(border)
-            pen.setWidthF(2.35 if selected else (1.75 if hovered else 1.2))
+            pen.setWidthF(2.35 if selected else (1.75 if hovered else 1.35))
             painter.setPen(pen)
             painter.setBrush(fill)
             painter.drawEllipse(
@@ -5471,13 +5499,13 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
 
             if gel:
                 painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 145)))
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 110)))
                 painter.drawEllipse(
                     QtCore.QRectF(
                         -radius * 0.58,
                         -radius * 0.68,
-                        radius * 0.92,
-                        radius * 0.45,
+                        radius * 0.82,
+                        radius * 0.38,
                     )
                 )
             painter.restore()
@@ -5757,7 +5785,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.algorithm = requested if requested in LAYOUT_CHOICES else "standard"
         self.number_every = max(0, int(number_every))
         self.show_tertiary = bool(show_tertiary)
-        self.base_colors = True
+        self.base_colors = False
         self.nodes, self.edges = [], []
         self._rebuilding = False
         self._auto_positions = []
@@ -5894,7 +5922,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if total <= 0:
             return
         period = int(self.number_every)
-        indices = {0, total - 1}
+        indices = set()
         if period > 0:
             indices.update(index for index in range(total) if (index + 1) % period == 0)
         for break_after in self.model.chain_breaks:
@@ -5905,7 +5933,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         center_x = sum(node.pos().x() for node in self.nodes) / float(total)
         center_y = sum(node.pos().y() for node in self.nodes) / float(total)
-        node_radius = float(getattr(Dssr2DNodeItem, "RADIUS", 9.5)) + 2.5
+        node_radius = float(getattr(Dssr2DNodeItem, "RADIUS", 13.5)) + 2.5
         node_rects = [
             QtCore.QRectF(
                 node.pos().x() - node_radius,
@@ -5932,28 +5960,40 @@ class Dssr2DEditor(QtWidgets.QWidget):
             value = str(nt.get("resi") or nt.get("number", index + 1))
             label = QtWidgets.QGraphicsSimpleTextItem(value, node)
             font = QtGui.QFont("Sans Serif")
-            font.setPointSize(7)
+            font.setPointSize(11)
+            font.setBold(True)
             label.setFont(font)
-            label.setBrush(QtGui.QBrush(QtGui.QColor(35, 35, 35)))
+            label.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
 
-            previous = None
-            following = None
-            if index > 0 and (index - 1) not in self.model.chain_breaks:
-                previous = self.nodes[index - 1].pos()
-            if index + 1 < total and index not in self.model.chain_breaks:
-                following = self.nodes[index + 1].pos()
-
-            if previous is not None and following is not None:
-                tangent_x = following.x() - previous.x()
-                tangent_y = following.y() - previous.y()
-            elif following is not None:
-                tangent_x = following.x() - node.pos().x()
-                tangent_y = following.y() - node.pos().y()
-            elif previous is not None:
-                tangent_x = node.pos().x() - previous.x()
-                tangent_y = node.pos().y() - previous.y()
+            # If the nucleotide is base-paired, point directly outward away from its partner
+            partner_idx = self._pair_partner(index)
+            if partner_idx >= 0 and partner_idx < total:
+                p_pos = self.nodes[partner_idx].pos()
+                outward_x = node.pos().x() - p_pos.x()
+                outward_y = node.pos().y() - p_pos.y()
+                tangent_x, tangent_y = -outward_y, outward_x
             else:
-                tangent_x, tangent_y = 1.0, 0.0
+                previous = None
+                following = None
+                if index > 0 and (index - 1) not in self.model.chain_breaks:
+                    previous = self.nodes[index - 1].pos()
+                if index + 1 < total and index not in self.model.chain_breaks:
+                    following = self.nodes[index + 1].pos()
+
+                if previous is not None and following is not None:
+                    tangent_x = following.x() - previous.x()
+                    tangent_y = following.y() - previous.y()
+                elif following is not None:
+                    tangent_x = following.x() - node.pos().x()
+                    tangent_y = following.y() - node.pos().y()
+                elif previous is not None:
+                    tangent_x = node.pos().x() - previous.x()
+                    tangent_y = node.pos().y() - previous.y()
+                else:
+                    tangent_x, tangent_y = 1.0, 0.0
+
+                outward_x = node.pos().x() - center_x
+                outward_y = node.pos().y() - center_y
 
             tangent_length = math.hypot(tangent_x, tangent_y)
             if tangent_length <= 1.0e-8:
@@ -5962,8 +6002,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             tangent_y /= tangent_length
             normal_x, normal_y = -tangent_y, tangent_x
 
-            outward_x = node.pos().x() - center_x
-            outward_y = node.pos().y() - center_y
             outward_length = math.hypot(outward_x, outward_y)
             if outward_length <= 1.0e-8:
                 outward_x, outward_y, outward_length = normal_x, normal_y, 1.0
@@ -5974,13 +6012,14 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 normal_y = -normal_y
 
             directions = [
-                (normal_x, normal_y),
                 (outward_x, outward_y),
+                (normal_x, normal_y),
                 (-normal_x, -normal_y),
+                (-outward_x, -outward_y),
                 (tangent_x, tangent_y),
                 (-tangent_x, -tangent_y),
             ]
-            distances = (17.0, 22.0, 28.0, 34.0)
+            distances = (20.0, 26.0, 32.0, 38.0)
             rect = label.boundingRect()
             best = None
             for direction_rank, (dir_x, dir_y) in enumerate(directions):
@@ -5999,15 +6038,13 @@ class Dssr2DEditor(QtWidgets.QWidget):
                             continue
                         overlap += 8.0 * _intersection_area(scene_rect, occupied)
                     for occupied in used_label_rects:
-                        overlap += 12.0 * _intersection_area(scene_rect, occupied)
-                    # Prefer the outward local normal and a short leader-free offset
-                    # whenever collision scores are equal.
+                        overlap += 35.0 * _intersection_area(scene_rect, occupied)
                     score = overlap + 0.08 * distance_rank + 0.04 * direction_rank
                     candidate = (score, local_x, local_y, scene_rect)
                     if best is None or candidate[0] < best[0]:
                         best = candidate
             if best is None:
-                best = (0.0, 16.0, -16.0, QtCore.QRectF())
+                best = (0.0, 20.0, -20.0, QtCore.QRectF())
             label.setPos(best[1], best[2])
             used_label_rects.append(best[3])
             label.setZValue(8.0)
@@ -6033,15 +6070,15 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         for segment_number, (first, last) in enumerate(segments, 1):
             for index, text_value, offset in (
-                (first, "5′", (-35.0, -22.0)),
-                (last, "3′", (20.0, -22.0)),
+                (first, "5′", (-42.0, -26.0)),
+                (last, "3′", (24.0, -26.0)),
             ):
                 label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[index])
                 font = QtGui.QFont("Sans Serif")
-                font.setPointSize(10)
+                font.setPointSize(13)  # Increased to 13 pt Bold
                 font.setBold(True)
                 label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
+                label.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
                 label.setPos(offset[0], offset[1])
                 label.setZValue(8.0)
                 _layout_no_mouse(label)
@@ -6051,11 +6088,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 text_value = "chain %s" % (chain or segment_number)
                 label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[first])
                 font = QtGui.QFont("Sans Serif")
-                font.setPointSize(8)
+                font.setPointSize(11)  # Increased to 11 pt Bold
                 font.setBold(True)
                 label.setFont(font)
-                label.setBrush(QtGui.QBrush(QtGui.QColor(25, 90, 120)))
-                label.setPos(-42.0, -46.0)
+                label.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
+                label.setPos(-48.0, -52.0)
                 label.setZValue(8.0)
                 _layout_no_mouse(label)
 
@@ -6603,7 +6640,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 if child is not node.base_text_item and isinstance(
                     child, QtWidgets.QGraphicsSimpleTextItem
                 ):
-                    child.setBrush(QtGui.QBrush(QtGui.QColor(72, 94, 112)))
+                    # Use crisp near-black (#0f172a) instead of faint gray (72, 94, 112)
+                    child.setBrush(QtGui.QBrush(QtGui.QColor(15, 23, 42)))
             node.update()
         self.sequence_view.set_letter_colors(self.base_colors)
         self.scene.update()
@@ -6829,9 +6867,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
             lambda: self._update_editor_status("drag mode changed")
         )
         tools.addWidget(self.drag_mode_combo)
+        # Changed default from True to False so the editor starts in crisp non-Gel mode
         self.gel_style_cb = _checkbox(
             "Gel",
-            True,
+            False,
             self._gel_mode_toggled,
             "Glass-like rendering and elastic motion",
         )
@@ -6842,7 +6881,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options = QtWidgets.QGridLayout(self.options_panel)
         self.number_spin = _spinbox(0, 10000, self.number_every)
         self.tertiary_cb = _checkbox("Extra DSSR pairs", self.show_tertiary)
-        self.base_colors_cb = _checkbox("Letter colors", True)
+        self.base_colors_cb = _checkbox("Letter colors", False)
         self.follow_spin = _spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
         self.live_3d_cb = _checkbox("3D highlight", False, self._sync_pymol_selection)
         self.reverse_3d_cb = _checkbox("3D → 2D sync", True, self._reverse_sync_toggled)
