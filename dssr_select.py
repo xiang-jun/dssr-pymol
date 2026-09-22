@@ -4641,7 +4641,11 @@ def _layout_naview_layout(model):
     return _layout_center(points)
 
 
-# Qt graphics and editor
+# ---------------------------------------------------------------------------
+# 2D Graphics Items: Edges, PyMOL Color Palette, and Nucleotide Nodes
+# ---------------------------------------------------------------------------
+
+
 class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
     def __init__(
         self, node_a, node_b, kind="backbone", layer=0, lw="", linear_layout=False
@@ -4656,7 +4660,7 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
 
     def _set_style(self):
         if self.kind == "backbone":
-            # Soft, thin slate line (1.0 px) so the backbone acts as a subtle guide
+            # Soft, thin slate line (1.0 px) so backbone acts as a subtle guide
             color = QtGui.QColor(148, 163, 184)  # #94a3b8
             width = 1.0
             style = QtCore.Qt.SolidLine
@@ -4687,7 +4691,7 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         return QtGui.QPen(color, width, style, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
 
     def _draw_paths(self, painter, pens):
-        """Share painter setup across plain lines and the two gel passes."""
+        """Share painter setup across plain lines and gel passes."""
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         painter.setBrush(QtCore.Qt.NoBrush)
         for pen in pens:
@@ -4695,17 +4699,16 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             painter.drawPath(self.path())
 
     def paint(self, painter, option, widget=None):
-        """Paint gel edges or crisp flat edges depending on the Gel setting."""
+        """Paint lines for backbone and base pairs."""
         try:
             gel = self.node_a.viewer.gel_style_enabled()
         except Exception:
             gel = False
 
-        # If Gel mode is unchecked, paint flat clean lines
         if not gel:
             return self._paint_flat(painter, option, widget)
 
-        # Gel mode multi-pass rendering
+        # Multi-pass gel mode line rendering
         if self.kind == "backbone":
             rgba, width = (112, 154, 186, 225), 1.65
         elif self.kind == "tertiary":
@@ -4773,7 +4776,6 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             else:
                 normal_x = -delta_y / distance
                 normal_y = delta_x / distance
-                # Arch outward away from the center of the molecule
                 curvature = min(80.0, max(25.0, 0.16 * distance))
                 middle_x = 0.5 * (first.x() + second.x())
                 middle_y = 0.5 * (first.y() + second.y())
@@ -4785,10 +4787,499 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
                     second,
                 )
         else:
-            # Straight solid rungs for backbone and standard stem base pairs
+            # Straight lines for backbone and standard stem base pairs
             path.lineTo(second)
 
         self.setPath(path)
+
+
+# Classical PyMOL / DSSR nucleic acid color scheme:
+# A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
+PYMOL_BASE_COLORS = {
+    "A": {
+        "text": "#b91c1c",  # Deep crimson red (high contrast on white)
+        "fill": "#fee2e2",  # Soft red pastel
+        "border": "#ef4444",  # Red border
+    },
+    "C": {
+        "text": "#b45309",  # Deep warm amber/gold (readable on white)
+        "fill": "#fef9c3",  # Soft yellow pastel
+        "border": "#eab308",  # Amber/yellow border
+    },
+    "G": {
+        "text": "#15803d",  # Forest green
+        "fill": "#dcfce7",  # Soft green pastel
+        "border": "#22c55e",  # Green border
+    },
+    "U": {
+        "text": "#0369a1",  # Deep cyan / sky blue
+        "fill": "#e0f2fe",  # Soft cyan pastel
+        "border": "#0ea5e9",  # Cyan border
+    },
+    "T": {
+        "text": "#0369a1",  # Deep cyan / sky blue
+        "fill": "#e0f2fe",  # Soft cyan pastel
+        "border": "#0ea5e9",  # Cyan border
+    },
+    "I": {
+        "text": "#6d28d9",  # Inosine / modified: purple
+        "fill": "#f3e8ff",
+        "border": "#a855f7",
+    },
+}
+
+
+def _base_style(base, enabled=True):
+    b = str(base).strip().upper()
+    if not enabled:
+        return {
+            "text": QtGui.QColor("#0f172a"),
+            "fill": QtGui.QColor("#ffffff"),
+            "border": QtGui.QColor(30, 41, 59),
+        }
+    if b in PYMOL_BASE_COLORS:
+        spec = PYMOL_BASE_COLORS[b]
+    elif b in ("P", "PSU"):  # Pseudouridine
+        spec = PYMOL_BASE_COLORS["U"]
+    else:
+        spec = PYMOL_BASE_COLORS.get(
+            "I",
+            {
+                "text": "#6d28d9",
+                "fill": "#f3e8ff",
+                "border": "#a855f7",
+            },
+        )
+    return {
+        "text": QtGui.QColor(spec["text"]),
+        "fill": QtGui.QColor(spec["fill"]),
+        "border": QtGui.QColor(spec["border"]),
+    }
+
+
+def _base_text_color(base, enabled=True):
+    return _base_style(base, enabled)["text"]
+
+
+class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
+    RADIUS = 13.5  # 27 px diameter fits NAView 44 px spacing cleanly
+
+    def __init__(self, viewer, nt, x, y):
+        radius = self.RADIUS
+        super().__init__(-radius, -radius, 2.0 * radius, 2.0 * radius)
+        self.viewer, self.nt = viewer, nt
+        self.nt_index = int(nt.get("index", 0))
+        self.edge_items = []
+        self._dragging = False
+        self._drag_origin = None
+        self._drag_starts = {}
+        self._drag_before = None
+        self._hover = False
+        self._pressed = False
+        self._visual_scale = 1.0
+        self._scale_target = 1.0
+        self._scale_velocity = 0.0
+        self._drag_weights = {}
+        self._last_drag_delta = QtCore.QPointF(0.0, 0.0)
+        self._last_move_pos = None
+        self._last_move_time = None
+        self._drag_speed = 0.0
+        self.setFlags(
+            QtWidgets.QGraphicsItem.ItemIsSelectable
+            | QtWidgets.QGraphicsItem.ItemIsFocusable
+            | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setCursor(QtCore.Qt.ArrowCursor)
+        self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        self.setPos(float(x), float(y))
+        self.setZValue(5.0)
+        self._apply_style(False)
+        self._add_text()
+        _layout_no_mouse(self.base_text_item)
+        self.setToolTip(self._tooltip())
+
+    def _base_fill(self):
+        if self.viewer.gel_style_enabled():
+            return QtGui.QColor(236, 245, 252)
+        return _base_style(self.nt.get("base", ""), self.viewer.base_colors)["fill"]
+
+    def _apply_style(self, selected):
+        color = QtGui.QColor(225, 29, 72) if selected else QtGui.QColor(45, 45, 45)
+        self.setPen(QtGui.QPen(color, 2.8 if selected else 1.2))
+        self.setBrush(QtGui.QBrush(self._base_fill()))
+
+    def _add_text(self):
+        text = QtWidgets.QGraphicsSimpleTextItem(str(self.nt.get("base", "N")), self)
+        font = QtGui.QFont("Sans Serif")
+        font.setPointSize(12)  # High-legibility 12pt Bold
+        font.setBold(True)
+        text.setFont(font)
+        rect = text.boundingRect()
+        text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
+        text.setBrush(
+            QtGui.QBrush(
+                _base_text_color(self.nt.get("base", ""), self.viewer.base_colors)
+            )
+        )
+        self.base_text_item = text
+
+    def _tooltip(self):
+        pieces = ["nt %d" % int(self.nt.get("number", self.nt_index + 1))]
+        if self.nt.get("nt_id"):
+            pieces.append(str(self.nt.get("nt_id")))
+        else:
+            if self.nt.get("chain"):
+                pieces.append("chain %s" % self.nt.get("chain"))
+            if self.nt.get("resi"):
+                pieces.append("resi %s" % self.nt.get("resi"))
+        return "\n".join(pieces)
+
+    def itemChange(self, change, value):
+        if change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
+            for edge in self.edge_items:
+                edge.update_geometry()
+        result = super().itemChange(change, value)
+        try:
+            if change == QtWidgets.QGraphicsItem.ItemSelectedHasChanged:
+                selected = bool(value)
+                self._apply_style(selected)
+                self.setZValue(12.0 if selected else (16.0 if self._hover else 5.0))
+                self._set_target_scale(
+                    1.045 if selected else (1.075 if self._hover else 1.0),
+                    kick=0.010 if selected else 0.0,
+                )
+                self.update()
+            elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
+                self.viewer._schedule_scene_rect()
+        except Exception:
+            pass
+        return result
+
+    def mousePressEvent(self, event):
+        self._pressed = True
+        self._set_target_scale(0.935, kick=-0.035)
+        self._last_move_pos = event.scenePos()
+        self._last_move_time = time.monotonic()
+        self._drag_speed = 0.0
+        button = event.button()
+        if button != QtCore.Qt.LeftButton:
+            self.viewer.select_nucleotide(self.nt_index)
+            super().mousePressEvent(event)
+            return
+
+        modifiers = event.modifiers()
+        if modifiers & QtCore.Qt.ControlModifier:
+            self.setSelected(not self.isSelected())
+            if not self.isSelected():
+                self.viewer._sync_pymol_selection()
+                event.accept()
+                return
+        elif modifiers & QtCore.Qt.ShiftModifier:
+            self.setSelected(True)
+        elif not self.isSelected():
+            try:
+                self.scene().clearSelection()
+            except Exception:
+                pass
+            self.setSelected(True)
+        selected = [node for node in self.viewer.nodes if node.isSelected()]
+        if self not in selected:
+            selected.append(self)
+            self.setSelected(True)
+        self._dragging = True
+        self._drag_origin = event.scenePos()
+        self._drag_before = self.viewer._capture_positions()
+        self._drag_starts = {
+            node.nt_index: QtCore.QPointF(node.pos()) for node in selected
+        }
+        try:
+            self.setCursor(QtCore.Qt.ArrowCursor)
+            self.viewer.view.setFocus()
+        except Exception:
+            pass
+        self.viewer._sync_pymol_selection()
+        event.accept()
+        try:
+            self.viewer._prepare_node_drag(self, modifiers)
+        except Exception:
+            pass
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging or self._drag_origin is None:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.scenePos() - self._drag_origin
+        self._last_drag_delta = QtCore.QPointF(delta)
+        now = time.monotonic()
+        if self._last_move_pos is not None and self._last_move_time is not None:
+            dt = max(0.001, now - self._last_move_time)
+            step = event.scenePos() - self._last_move_pos
+            instant = math.hypot(step.x(), step.y()) / dt
+            self._drag_speed = 0.72 * self._drag_speed + 0.28 * instant
+        self._last_move_pos, self._last_move_time = event.scenePos(), now
+        self._apply_drag_delta(delta, smooth=self.viewer.gel_style_enabled())
+        event.accept()
+
+    def _apply_drag_delta(self, delta, smooth=False):
+        for index, start in self._drag_starts.items():
+            if not 0 <= index < len(self.viewer.nodes):
+                continue
+            weight = float(self._drag_weights.get(index, 1.0))
+            x = start.x() + delta.x() * weight
+            y = start.y() + delta.y() * weight
+            node = self.viewer.nodes[index]
+            if smooth and weight < 0.999:
+                follow = 0.44 + 0.34 * weight
+                current = node.pos()
+                x = current.x() + (x - current.x()) * follow
+                y = current.y() + (y - current.y()) * follow
+            node.setPos(x, y)
+
+    def mouseReleaseEvent(self, event):
+        was_dragging = self._dragging
+        if was_dragging:
+            self._apply_drag_delta(QtCore.QPointF(self._last_drag_delta))
+        if self._dragging:
+            self._dragging = False
+            self.viewer._push_history(
+                self._drag_before,
+                self.viewer._capture_positions(),
+                "move base%s" % ("s" if len(self._drag_starts) != 1 else ""),
+            )
+            self._drag_origin = self._drag_before = None
+            self._drag_starts = {}
+            try:
+                self.setCursor(QtCore.Qt.ArrowCursor)
+            except Exception:
+                pass
+            self.viewer._update_editor_status("manual move")
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+        self._pressed = False
+        target = 1.075 if self._hover else (1.045 if self.isSelected() else 1.0)
+        kick = (
+            min(0.11, max(0.02, self._drag_speed * 0.00012)) if was_dragging else 0.025
+        )
+        self._set_target_scale(target, kick=kick)
+        self._drag_weights = {}
+        self._last_move_pos = self._last_move_time = None
+        self.update()
+
+    def contextMenuEvent(self, event):
+        menu = QtWidgets.QMenu()
+        header = menu.addAction(
+            "%s  ·  nt %s"
+            % (self.nt.get("base", "N"), self.nt.get("resi") or self.nt_index + 1)
+        )
+        header.setEnabled(False)
+        menu.addSeparator()
+        groups = {}
+        for text, group in (
+            ("Select base", lambda i: [i]),
+            ("Select base pair", self.viewer._pair_group),
+            ("Select loop / unpaired region", self.viewer._loop_group),
+            ("Select stem", self.viewer._stem_indices),
+            ("Select whole branch", self.viewer._branch_group),
+        ):
+            groups[menu.addAction(text)] = group
+        menu.addSeparator()
+        actions = {
+            menu.addAction(text): callback
+            for text, callback in (
+                ("Center selection", self.viewer.fit_selected),
+                (
+                    "Reset selection to automatic layout",
+                    self.viewer.reset_selected_bases,
+                ),
+                ("Undo", self.viewer.undo_layout),
+            )
+        }
+        try:
+            chosen = menu.exec_(event.screenPos())
+        except Exception:
+            try:
+                chosen = menu.exec(event.screenPos())
+            except Exception:
+                chosen = None
+        if chosen in groups:
+            self.viewer.select_indices(groups[chosen](self.nt_index), replace=True)
+        elif chosen in actions:
+            actions[chosen]()
+        event.accept()
+
+    def boundingRect(self):
+        radius = float(self.RADIUS)
+        return QtCore.QRectF(
+            -radius - 7.0,
+            -radius - 7.0,
+            2.0 * radius + 14.0,
+            2.0 * radius + 14.0,
+        )
+
+    def shape(self):
+        radius = float(self.RADIUS) + 3.0
+        path = QtGui.QPainterPath()
+        path.addEllipse(QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius))
+        return path
+
+    def paint(self, painter, option, widget=None):
+        radius = float(self.RADIUS)
+        gel = self.viewer.gel_style_enabled()
+        saved = False
+        try:
+            painter.save()
+            saved = True
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            selected = bool(self.isSelected())
+            hovered = bool(getattr(self, "_hover", False))
+            pressed = bool(getattr(self, "_pressed", False))
+
+            # Drop shadow strictly in Gel mode; keep non-Gel completely flat and crisp
+            if gel:
+                shadow = QtGui.QColor(2, 8, 23, 105)
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(shadow))
+                painter.drawEllipse(
+                    QtCore.QRectF(
+                        -radius + 2.2,
+                        -radius + 3.4,
+                        2.0 * radius,
+                        2.0 * radius,
+                    )
+                )
+
+            # Selection aura: PyMOL hot pink glow
+            if selected or hovered:
+                aura_color = (
+                    QtGui.QColor(244, 63, 94, 125)
+                    if selected
+                    else QtGui.QColor(148, 163, 184, 70)
+                )
+                aura_radius = radius + (5.0 if selected else 3.0)
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(aura_color))
+                painter.drawEllipse(
+                    QtCore.QRectF(
+                        -aura_radius,
+                        -aura_radius,
+                        2.0 * aura_radius,
+                        2.0 * aura_radius,
+                    )
+                )
+
+            if gel:
+                base = QtGui.QColor(self._base_fill())
+                gradient = QtGui.QRadialGradient(
+                    QtCore.QPointF(-radius * 0.38, -radius * 0.48),
+                    radius * 1.58,
+                )
+                gradient.setColorAt(0.00, QtGui.QColor(255, 255, 255, 252))
+                gradient.setColorAt(0.18, base.lighter(148))
+                gradient.setColorAt(0.62, base.lighter(106))
+                gradient.setColorAt(1.00, base.darker(132))
+                fill = QtGui.QBrush(gradient)
+                border = QtGui.QColor(188, 235, 255, 225)
+            else:
+                # Flat classical PyMOL base colors (soft pastel fill + crisp border)
+                style = _base_style(self.nt.get("base", ""), self.viewer.base_colors)
+                fill = QtGui.QBrush(style["fill"])
+                border = style["border"]
+
+            if selected:
+                # Signature PyMOL selection pink/crimson (#e11d48) with soft rose fill
+                border = QtGui.QColor(225, 29, 72, 255)
+                fill = QtGui.QBrush(QtGui.QColor(255, 228, 230))
+            elif hovered:
+                border = (
+                    border.lighter(125)
+                    if self.viewer.base_colors
+                    else QtGui.QColor(105, 225, 255, 245)
+                )
+            if pressed:
+                border = QtGui.QColor(15, 23, 42, 255)
+
+            pen = QtGui.QPen(border)
+            pen.setWidthF(2.4 if selected else (1.8 if hovered else 1.4))
+            painter.setPen(pen)
+            painter.setBrush(fill)
+            painter.drawEllipse(
+                QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
+            )
+
+            if gel:
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 110)))
+                painter.drawEllipse(
+                    QtCore.QRectF(
+                        -radius * 0.58,
+                        -radius * 0.68,
+                        radius * 0.82,
+                        radius * 0.38,
+                    )
+                )
+            painter.restore()
+        except Exception:
+            if saved:
+                try:
+                    painter.restore()
+                except Exception:
+                    pass
+            QtWidgets.QGraphicsEllipseItem.paint(self, painter, option, widget)
+
+    def _set_target_scale(self, target, kick=0.0):
+        self._scale_target = float(target)
+        self._scale_velocity += float(kick)
+        try:
+            self.viewer._ensure_animation()
+        except Exception:
+            pass
+
+    def _advance_visual(self):
+        enabled = self.viewer.gel_style_enabled()
+        target = self._scale_target if enabled else 1.0
+        stiffness = 0.24 if enabled else 0.42
+        damping = 0.68 if enabled else 0.55
+        self._scale_velocity = (
+            self._scale_velocity + (target - self._visual_scale) * stiffness
+        ) * damping
+        self._visual_scale += self._scale_velocity
+        if (
+            abs(target - self._visual_scale) < 0.0006
+            and abs(self._scale_velocity) < 0.0006
+        ):
+            self._visual_scale = target
+            self._scale_velocity = 0.0
+        try:
+            self.setScale(max(0.82, min(1.24, self._visual_scale)))
+            self.update()
+        except Exception:
+            pass
+        return not (
+            abs(target - self._visual_scale) < 0.0007
+            and abs(self._scale_velocity) < 0.0007
+        )
+
+    def hoverEnterEvent(self, event):
+        self._hover = True
+        self.setZValue(16.0)
+        self._set_target_scale(1.075, kick=0.018)
+        self.update()
+        try:
+            super().hoverEnterEvent(event)
+        except Exception:
+            pass
+
+    def hoverLeaveEvent(self, event):
+        self._hover = False
+        self.setZValue(12.0 if self.isSelected() else 5.0)
+        self._set_target_scale(1.045 if self.isSelected() else 1.0)
+        self.update()
+        try:
+            super().hoverLeaveEvent(event)
+        except Exception:
+            pass
 
 
 class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
@@ -5145,430 +5636,72 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             event.accept()
 
 
-BASE_TEXT_COLORS = {
-    "A": "#15803d",  # Deep emerald
-    "C": "#1d4ed8",  # Royal blue
-    "G": "#b45309",  # Deep amber
-    "U": "#be123c",  # Deep rose / red
-    "T": "#7e22ce",  # Deep purple
-    "I": "#0f172a",
+# Classical PyMOL / DSSR nucleic acid color scheme:
+# A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
+PYMOL_BASE_COLORS = {
+    "A": {
+        "text": "#b91c1c",  # Deep crimson red (high contrast on white)
+        "fill": "#fee2e2",  # Soft red pastel
+        "border": "#ef4444",  # Red border
+    },
+    "C": {
+        "text": "#b45309",  # Deep warm amber/gold (readable on white)
+        "fill": "#fef9c3",  # Soft yellow pastel
+        "border": "#eab308",  # Amber/yellow border
+    },
+    "G": {
+        "text": "#15803d",  # Forest green
+        "fill": "#dcfce7",  # Soft green pastel
+        "border": "#22c55e",  # Green border
+    },
+    "U": {
+        "text": "#0369a1",  # Deep cyan / sky blue
+        "fill": "#e0f2fe",  # Soft cyan pastel
+        "border": "#0ea5e9",  # Cyan border
+    },
+    "T": {
+        "text": "#0369a1",  # Deep cyan / sky blue
+        "fill": "#e0f2fe",  # Soft cyan pastel
+        "border": "#0ea5e9",  # Cyan border
+    },
+    "I": {
+        "text": "#6d28d9",  # Inosine / modified: purple
+        "fill": "#f3e8ff",
+        "border": "#a855f7",
+    },
 }
 
 
+def _base_style(base, enabled=True):
+    b = str(base).strip().upper()
+    if not enabled:
+        return {
+            "text": QtGui.QColor("#0f172a"),
+            "fill": QtGui.QColor("#ffffff"),
+            "border": QtGui.QColor(30, 41, 59),
+        }
+    if b in PYMOL_BASE_COLORS:
+        spec = PYMOL_BASE_COLORS[b]
+    elif b in ("P", "PSU"):  # Pseudouridine
+        spec = PYMOL_BASE_COLORS["U"]
+    else:
+        spec = PYMOL_BASE_COLORS.get(
+            "I",
+            {
+                "text": "#6d28d9",
+                "fill": "#f3e8ff",
+                "border": "#a855f7",
+            },
+        )
+    return {
+        "text": QtGui.QColor(spec["text"]),
+        "fill": QtGui.QColor(spec["fill"]),
+        "border": QtGui.QColor(spec["border"]),
+    }
+
+
 def _base_text_color(base, enabled=True):
-    return QtGui.QColor(
-        BASE_TEXT_COLORS.get(str(base).upper(), "#0f172a") if enabled else "#0f172a"
-    )
-
-
-class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
-    RADIUS = 13.5  # Increased from 12.5 for better proportions
-
-    def __init__(self, viewer, nt, x, y):
-        radius = self.RADIUS
-        super().__init__(-radius, -radius, 2.0 * radius, 2.0 * radius)
-        self.viewer, self.nt = viewer, nt
-        self.nt_index = int(nt.get("index", 0))
-        self.edge_items = []
-        self._dragging = False
-        self._drag_origin = None
-        self._drag_starts = {}
-        self._drag_before = None
-        self._hover = False
-        self._pressed = False
-        self._visual_scale = 1.0
-        self._scale_target = 1.0
-        self._scale_velocity = 0.0
-        self._drag_weights = {}
-        self._last_drag_delta = QtCore.QPointF(0.0, 0.0)
-        self._last_move_pos = None
-        self._last_move_time = None
-        self._drag_speed = 0.0
-        self.setFlags(
-            QtWidgets.QGraphicsItem.ItemIsSelectable
-            | QtWidgets.QGraphicsItem.ItemIsFocusable
-            | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges
-        )
-        self.setAcceptHoverEvents(True)
-        self.setCursor(QtCore.Qt.ArrowCursor)
-        self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
-        self.setPos(float(x), float(y))
-        self.setZValue(5.0)
-        self._apply_style(False)
-        self._add_text()
-        _layout_no_mouse(self.base_text_item)
-        self.setToolTip(self._tooltip())
-
-    def _base_fill(self):
-        # Luminous pearl ice-white for Gel mode, pure white for Flat mode
-        rgb = (236, 245, 252) if self.viewer.gel_style_enabled() else (255, 255, 255)
-        return QtGui.QColor(*rgb)
-
-    def _apply_style(self, selected):
-        color = QtGui.QColor(230, 55, 35) if selected else QtGui.QColor(45, 45, 45)
-        self.setPen(QtGui.QPen(color, 2.8 if selected else 1.2))
-        self.setBrush(QtGui.QBrush(self._base_fill()))
-
-    def _add_text(self):
-        text = QtWidgets.QGraphicsSimpleTextItem(str(self.nt.get("base", "N")), self)
-        font = QtGui.QFont("Sans Serif")
-        font.setPointSize(12)  # Enlarge base letters to 12pt Bold
-        font.setBold(True)
-        text.setFont(font)
-        rect = text.boundingRect()
-        text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
-        text.setBrush(
-            QtGui.QBrush(
-                _base_text_color(self.nt.get("base", ""), self.viewer.base_colors)
-            )
-        )
-        self.base_text_item = text
-
-    def _tooltip(self):
-        pieces = ["nt %d" % int(self.nt.get("number", self.nt_index + 1))]
-        if self.nt.get("nt_id"):
-            pieces.append(str(self.nt.get("nt_id")))
-        else:
-            if self.nt.get("chain"):
-                pieces.append("chain %s" % self.nt.get("chain"))
-            if self.nt.get("resi"):
-                pieces.append("resi %s" % self.nt.get("resi"))
-        return "\n".join(pieces)
-
-    def itemChange(self, change, value):
-        if change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-            for edge in self.edge_items:
-                edge.update_geometry()
-        result = super().itemChange(change, value)
-        try:
-            if change == QtWidgets.QGraphicsItem.ItemSelectedHasChanged:
-                selected = bool(value)
-                self._apply_style(selected)
-                self.setZValue(12.0 if selected else (16.0 if self._hover else 5.0))
-                self._set_target_scale(
-                    1.045 if selected else (1.075 if self._hover else 1.0),
-                    kick=0.010 if selected else 0.0,
-                )
-                self.update()
-            elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-                self.viewer._schedule_scene_rect()
-        except Exception:
-            pass
-        return result
-
-    def mousePressEvent(self, event):
-        self._pressed = True
-        self._set_target_scale(0.935, kick=-0.035)
-        self._last_move_pos = event.scenePos()
-        self._last_move_time = time.monotonic()
-        self._drag_speed = 0.0
-        button = event.button()
-        if button != QtCore.Qt.LeftButton:
-            self.viewer.select_nucleotide(self.nt_index)
-            super().mousePressEvent(event)
-            return
-
-        modifiers = event.modifiers()
-        if modifiers & QtCore.Qt.ControlModifier:
-            self.setSelected(not self.isSelected())
-            if not self.isSelected():
-                self.viewer._sync_pymol_selection()
-                event.accept()
-                return
-        elif modifiers & QtCore.Qt.ShiftModifier:
-            self.setSelected(True)
-        elif not self.isSelected():
-            try:
-                self.scene().clearSelection()
-            except Exception:
-                pass
-            self.setSelected(True)
-        selected = [node for node in self.viewer.nodes if node.isSelected()]
-        if self not in selected:
-            selected.append(self)
-            self.setSelected(True)
-        self._dragging = True
-        self._drag_origin = event.scenePos()
-        self._drag_before = self.viewer._capture_positions()
-        self._drag_starts = {
-            node.nt_index: QtCore.QPointF(node.pos()) for node in selected
-        }
-        try:
-            self.setCursor(QtCore.Qt.ArrowCursor)
-            self.viewer.view.setFocus()
-        except Exception:
-            pass
-        self.viewer._sync_pymol_selection()
-        event.accept()
-        try:
-            self.viewer._prepare_node_drag(self, modifiers)
-        except Exception:
-            pass
-
-    def mouseMoveEvent(self, event):
-        if not self._dragging or self._drag_origin is None:
-            super().mouseMoveEvent(event)
-            return
-        delta = event.scenePos() - self._drag_origin
-        self._last_drag_delta = QtCore.QPointF(delta)
-        now = time.monotonic()
-        if self._last_move_pos is not None and self._last_move_time is not None:
-            dt = max(0.001, now - self._last_move_time)
-            step = event.scenePos() - self._last_move_pos
-            instant = math.hypot(step.x(), step.y()) / dt
-            self._drag_speed = 0.72 * self._drag_speed + 0.28 * instant
-        self._last_move_pos, self._last_move_time = event.scenePos(), now
-        self._apply_drag_delta(delta, smooth=self.viewer.gel_style_enabled())
-        event.accept()
-
-    def _apply_drag_delta(self, delta, smooth=False):
-        """Use the same weighted endpoint during movement and history capture."""
-        for index, start in self._drag_starts.items():
-            if not 0 <= index < len(self.viewer.nodes):
-                continue
-            weight = float(self._drag_weights.get(index, 1.0))
-            x = start.x() + delta.x() * weight
-            y = start.y() + delta.y() * weight
-            node = self.viewer.nodes[index]
-            if smooth and weight < 0.999:
-                follow = 0.44 + 0.34 * weight
-                current = node.pos()
-                x = current.x() + (x - current.x()) * follow
-                y = current.y() + (y - current.y()) * follow
-            node.setPos(x, y)
-
-    def mouseReleaseEvent(self, event):
-        was_dragging = self._dragging
-        if was_dragging:
-            # Followers reach the weighted endpoint before the undo snapshot.
-            self._apply_drag_delta(QtCore.QPointF(self._last_drag_delta))
-        if self._dragging:
-            self._dragging = False
-            self.viewer._push_history(
-                self._drag_before,
-                self.viewer._capture_positions(),
-                "move base%s" % ("s" if len(self._drag_starts) != 1 else ""),
-            )
-            self._drag_origin = self._drag_before = None
-            self._drag_starts = {}
-            try:
-                self.setCursor(QtCore.Qt.ArrowCursor)
-            except Exception:
-                pass
-            self.viewer._update_editor_status("manual move")
-            event.accept()
-        else:
-            super().mouseReleaseEvent(event)
-        self._pressed = False
-        target = 1.075 if self._hover else (1.045 if self.isSelected() else 1.0)
-        kick = (
-            min(0.11, max(0.02, self._drag_speed * 0.00012)) if was_dragging else 0.025
-        )
-        self._set_target_scale(target, kick=kick)
-        self._drag_weights = {}
-        self._last_move_pos = self._last_move_time = None
-        self.update()
-
-    def contextMenuEvent(self, event):
-        menu = QtWidgets.QMenu()
-        header = menu.addAction(
-            "%s  ·  nt %s"
-            % (self.nt.get("base", "N"), self.nt.get("resi") or self.nt_index + 1)
-        )
-        header.setEnabled(False)
-        menu.addSeparator()
-        groups = {}
-        for text, group in (
-            ("Select base", lambda i: [i]),
-            ("Select base pair", self.viewer._pair_group),
-            ("Select loop / unpaired region", self.viewer._loop_group),
-            ("Select stem", self.viewer._stem_indices),
-            ("Select whole branch", self.viewer._branch_group),
-        ):
-            groups[menu.addAction(text)] = group
-        menu.addSeparator()
-        actions = {
-            menu.addAction(text): callback
-            for text, callback in (
-                ("Center selection", self.viewer.fit_selected),
-                (
-                    "Reset selection to automatic layout",
-                    self.viewer.reset_selected_bases,
-                ),
-                ("Undo", self.viewer.undo_layout),
-            )
-        }
-        try:
-            chosen = menu.exec_(event.screenPos())
-        except Exception:
-            try:
-                chosen = menu.exec(event.screenPos())
-            except Exception:
-                chosen = None
-        if chosen in groups:
-            self.viewer.select_indices(groups[chosen](self.nt_index), replace=True)
-        elif chosen in actions:
-            actions[chosen]()
-        event.accept()
-
-    def boundingRect(self):
-        radius = float(self.RADIUS)
-        return QtCore.QRectF(
-            -radius - 7.0,
-            -radius - 7.0,
-            2.0 * radius + 14.0,
-            2.0 * radius + 14.0,
-        )
-
-    def shape(self):
-        radius = float(self.RADIUS) + 3.0
-        path = QtGui.QPainterPath()
-        path.addEllipse(QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius))
-        return path
-
-    def paint(self, painter, option, widget=None):
-        radius = float(self.RADIUS)
-        gel = self.viewer.gel_style_enabled()
-        saved = False
-        try:
-            painter.save()
-            saved = True
-            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-            selected = bool(self.isSelected())
-            hovered = bool(getattr(self, "_hover", False))
-            pressed = bool(getattr(self, "_pressed", False))
-            base = QtGui.QColor(self._base_fill())
-
-            # Drop shadow strictly in Gel mode; no smudge in non-Gel mode
-            if gel:
-                shadow = QtGui.QColor(2, 8, 23, 105)
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(shadow))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -radius + 2.2,
-                        -radius + 3.4,
-                        2.0 * radius,
-                        2.0 * radius,
-                    )
-                )
-
-            if selected or hovered:
-                aura = QtGui.QColor(55, 220, 255, 120 if selected else 55)
-                aura_radius = radius + (5.2 if selected else 3.4)
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(aura))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -aura_radius,
-                        -aura_radius,
-                        2.0 * aura_radius,
-                        2.0 * aura_radius,
-                    )
-                )
-
-            if gel:
-                gradient = QtGui.QRadialGradient(
-                    QtCore.QPointF(-radius * 0.38, -radius * 0.48),
-                    radius * 1.58,
-                )
-                gradient.setColorAt(0.00, QtGui.QColor(255, 255, 255, 252))
-                gradient.setColorAt(0.18, base.lighter(148))
-                gradient.setColorAt(0.62, base.lighter(106))
-                gradient.setColorAt(1.00, base.darker(132))
-                fill = QtGui.QBrush(gradient)
-                border = QtGui.QColor(188, 235, 255, 225)
-            else:
-                # Solid white circle with crisp slate border
-                fill = QtGui.QBrush(QtGui.QColor(255, 255, 255))
-                border = QtGui.QColor(30, 41, 59)
-
-            if selected:
-                border = QtGui.QColor(44, 215, 255, 255)
-            elif hovered:
-                border = QtGui.QColor(105, 225, 255, 245)
-            if pressed:
-                border = QtGui.QColor(255, 255, 255, 250)
-            pen = QtGui.QPen(border)
-            pen.setWidthF(2.35 if selected else (1.75 if hovered else 1.35))
-            painter.setPen(pen)
-            painter.setBrush(fill)
-            painter.drawEllipse(
-                QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
-            )
-
-            if gel:
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 110)))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -radius * 0.58,
-                        -radius * 0.68,
-                        radius * 0.82,
-                        radius * 0.38,
-                    )
-                )
-            painter.restore()
-        except Exception:
-            if saved:
-                try:
-                    painter.restore()
-                except Exception:
-                    pass
-            QtWidgets.QGraphicsEllipseItem.paint(self, painter, option, widget)
-
-    def _set_target_scale(self, target, kick=0.0):
-        self._scale_target = float(target)
-        self._scale_velocity += float(kick)
-        try:
-            self.viewer._ensure_animation()
-        except Exception:
-            pass
-
-    def _advance_visual(self):
-        enabled = self.viewer.gel_style_enabled()
-        target = self._scale_target if enabled else 1.0
-        stiffness = 0.24 if enabled else 0.42
-        damping = 0.68 if enabled else 0.55
-        self._scale_velocity = (
-            self._scale_velocity + (target - self._visual_scale) * stiffness
-        ) * damping
-        self._visual_scale += self._scale_velocity
-        if (
-            abs(target - self._visual_scale) < 0.0006
-            and abs(self._scale_velocity) < 0.0006
-        ):
-            self._visual_scale = target
-            self._scale_velocity = 0.0
-        try:
-            self.setScale(max(0.82, min(1.24, self._visual_scale)))
-            self.update()
-        except Exception:
-            pass
-        return not (
-            abs(target - self._visual_scale) < 0.0007
-            and abs(self._scale_velocity) < 0.0007
-        )
-
-    def hoverEnterEvent(self, event):
-        self._hover = True
-        self.setZValue(16.0)
-        self._set_target_scale(1.075, kick=0.018)
-        self.update()
-        try:
-            super().hoverEnterEvent(event)
-        except Exception:
-            pass
-
-    def hoverLeaveEvent(self, event):
-        self._hover = False
-        self.setZValue(12.0 if self.isSelected() else 5.0)
-        self._set_target_scale(1.045 if self.isSelected() else 1.0)
-        self.update()
-        try:
-            super().hoverLeaveEvent(event)
-        except Exception:
-            pass
+    return _base_style(base, enabled)["text"]
 
 
 class DssrSequenceView(QtWidgets.QTextEdit):
@@ -5785,7 +5918,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.algorithm = requested if requested in LAYOUT_CHOICES else "standard"
         self.number_every = max(0, int(number_every))
         self.show_tertiary = bool(show_tertiary)
-        self.base_colors = False
+        self.base_colors = True
         self.nodes, self.edges = [], []
         self._rebuilding = False
         self._auto_positions = []
@@ -6881,7 +7014,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options = QtWidgets.QGridLayout(self.options_panel)
         self.number_spin = _spinbox(0, 10000, self.number_every)
         self.tertiary_cb = _checkbox("Extra DSSR pairs", self.show_tertiary)
-        self.base_colors_cb = _checkbox("Letter colors", False)
+        self.base_colors_cb = _checkbox(
+            "Base colors", True, tip="Color bases using classical PyMOL/DSSR scheme"
+        )
         self.follow_spin = _spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
         self.live_3d_cb = _checkbox("3D highlight", False, self._sync_pymol_selection)
         self.reverse_3d_cb = _checkbox("3D → 2D sync", True, self._reverse_sync_toggled)
