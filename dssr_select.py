@@ -2045,6 +2045,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.status_label.setText("No %s items found to select." % feature)
                 return
 
+            # 1. Highlight all items in the GUI list widget
+            self.list_widget.selectAll()
+
+            # 2. Build the combined selection string for all items
             parts = [
                 ParsingAlgos._build_residue_sel_from_dssr(data, feature, idx)
                 for idx in indices
@@ -2054,19 +2058,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.status_label.setText("Could not build selection for %s." % feature)
                 return
 
+            # 3. Create the named feature selection in PyMOL (e.g., uturns_all)
             name = "%s_all" % feature.lower()
             DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
 
-            # Drop temporary selections
-            try:
-                cmd.delete("sele")
-                cmd.delete("indicate")
-            except Exception:
-                pass
-
-            # Force transition to show pink indicators in 3D
-            cmd.disable(name)
-            cmd.enable(name)
+            # Keep 'sele' active so PyMOL selection dots remain visible
+            cmd.select("sele", name)
+            cmd.enable("sele")
+            cmd.refresh()
 
             if self.zoom_cb.isChecked():
                 cmd.zoom(name)
@@ -2076,7 +2075,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 % (name, len(indices), feature)
             )
 
-            # Highlight matching nodes on the 2D layout canvas directly
+            # 4. Highlight matching nodes on the 2D layout canvas directly
             if self.editor is not None:
                 all_residues = set()
                 cmd.iterate(
@@ -2105,7 +2104,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     self.editor.scene.blockSignals(blocked)
 
                 self.editor._sync_sequence_selection()
-                self.editor._last_pymol_signature = tuple()
+                self.editor._last_pymol_signature = tuple(sorted(all_residues))
+                self.editor._update_editor_status("all %s selected" % feature)
 
         except Exception as error:
             self.status_label.setText("Select all error: %s" % error)
@@ -2125,10 +2125,38 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 for index in indices
                 if index is not None
             ]
-            core = " or ".join("(%s)" % part for part in parts) if parts else "sele"
+
+            # Determine the core atom selection for block generation
+            if parts:
+                core = " or ".join("(%s)" % part for part in parts)
+            else:
+                # Fallbacks: feature_all, sele, or 2D canvas selection
+                feature_all_name = "%s_all" % self._current_feature.lower()
+                if (
+                    feature_all_name in cmd.get_names("selections")
+                    and cmd.count_atoms(feature_all_name) > 0
+                ):
+                    core = feature_all_name
+                elif (
+                    "sele" in cmd.get_names("selections")
+                    and cmd.count_atoms("sele") > 0
+                ):
+                    core = "sele"
+                elif self.editor is not None and any(
+                    n.isSelected() for n in self.editor.nodes
+                ):
+                    sig = self.editor._node_residue_signature()
+                    res_parts = ParsingAlgos._compact_sel_from_residues(
+                        {(c, r) for c, r in sig if c}
+                    )
+                    core = res_parts if res_parts else "all"
+                else:
+                    raise CmdException("Select a feature or some bases first.")
+
             scope = "byres ((%s) and (%s))" % (selection, core)
             if cmd.count_atoms(scope, state=state) <= 0:
                 raise CmdException("Select a feature or some bases first.")
+
             name = DssrFunctions._unused_name("dssr_blocks")
             DssrFunctions.dssr_block(
                 selection=scope,
