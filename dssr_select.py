@@ -119,6 +119,7 @@ QDialog, QWidget#dssrWorkspace { background: #f1f5f9; color: #0f172a; }
 QMenu { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
 QMenu::item:selected { background: #ffe4e6; color: #e11d48; font-weight: 600; }
 QLabel, QCheckBox, QGroupBox { color: #0f172a; }
+QCheckBox { spacing: 5px; }
 QGroupBox {
     border: 1px solid #cbd5e1; border-radius: 8px;
     margin-top: 8px; padding-top: 10px; background: #ffffff;
@@ -169,6 +170,7 @@ QDialog, QWidget#dssrWorkspace { background: #0f172a; color: #f8fafc; }
 QMenu { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
 QMenu::item:selected { background: #e11d48; color: #ffffff; font-weight: 600; }
 QLabel, QCheckBox, QGroupBox { color: #f8fafc; }
+QCheckBox { spacing: 5px; }
 QGroupBox {
     border: 1px solid #334155; border-radius: 8px;
     margin-top: 8px; padding-top: 10px; background: #1e293b;
@@ -213,8 +215,6 @@ QPushButton:pressed { background: #334155; }
 QCheckBox::indicator { width: 15px; height: 15px; }
 QLabel#studioHint { color: #94a3b8; font-weight: 400; }
 """
-
-WHITE_THEME = LIGHT_THEME
 
 
 class HelperFunctions:
@@ -1414,6 +1414,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.settings_widget = QtWidgets.QWidget()
         settings = QtWidgets.QGridLayout(self.settings_widget)
         settings.setContentsMargins(0, 0, 0, 0)
+        settings.setHorizontalSpacing(16)  # Generous separation between columns
         self.exe_edit = QtWidgets.QLineEdit("x3dna-dssr")
         self.exe_edit.textChanged.connect(self._on_dssr_context_changed)
         self.precolor_cb = _checkbox("Gray precolor", checked=True)
