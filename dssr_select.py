@@ -820,6 +820,7 @@ class DssrFunctions:
 
     @staticmethod
     def _create_feature_selection(name, selection, residue_selection, quiet=0):
+        # Create the selection
         cmd.select(name, "((%s) and (%s))" % (selection, residue_selection))
         if int(cmd.count_atoms(name)) <= 0:
             cmd.delete(name)
@@ -827,6 +828,16 @@ class DssrFunctions:
                 "DSSR residues did not map back to the requested PyMOL selection"
             )
         _DSSR_SELECTION_OBJECTS.add(str(name))
+
+        # Clean up any leftover 'indicate' selection from previous versions
+        try:
+            cmd.delete("indicate")
+        except Exception:
+            pass
+
+        # Force a clean 0 -> 1 transition so PyMOL activates the pink selection indicators
+        cmd.disable(name)
+        cmd.enable(name)
 
         if not quiet:
             _sel_residues = set()
@@ -1393,7 +1404,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addWidget(self.filter_edit)
         self.list_widget = QtWidgets.QListWidget()
         self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        self.list_widget.itemClicked.connect(self._on_item_clicked_preview)
+        self.list_widget.itemSelectionChanged.connect(
+            self._on_selection_changed_preview
+        )
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         left.addWidget(self.list_widget, 3)
 
@@ -1838,23 +1851,85 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.details_box.setPlainText("\n".join(lines))
         self.data_tabs.setCurrentWidget(self.details_box)
 
-    def _on_item_clicked_preview(self, item):
-        index = item.data(QtCore.Qt.UserRole)
-        if index is None:
+    def _on_selection_changed_preview(self):
+        items = self.list_widget.selectedItems()
+
+        # Clear the temporary PyMOL selection and 2D highlights if nothing is selected
+        if not items:
+            try:
+                cmd.delete("sele")
+                cmd.refresh()
+            except Exception:
+                pass
+            self.details_box.clear()
+            if self.editor is not None:
+                self.editor.clear_base_selection()
             return
+
         try:
             data = self._require_analysis()
             selection = self._analysis_context[0]
-            core = ParsingAlgos._build_residue_sel_from_dssr(
-                data, self._current_feature, int(index)
-            )
-            cmd.select("sele", "byres ((%s) and (%s))" % (selection, core))
-            self._show_item_details(data, self._current_feature, int(index))
-            if self.editor is not None:
-                self.editor._sync_timer.stop()
-                self.editor._sync_pending = False
-                self.editor._last_pymol_signature = None
-                self.editor._pull_pymol_selection()
+            cores = []
+
+            for item in items:
+                index = item.data(QtCore.Qt.UserRole)
+                if index is not None:
+                    core = ParsingAlgos._build_residue_sel_from_dssr(
+                        data, self._current_feature, int(index)
+                    )
+                    if core:
+                        cores.append(core)
+
+            if cores:
+                sel_str = " or ".join("(%s)" % c for c in cores)
+
+                # 1. Update PyMOL 3D Viewer and force an immediate graphics refresh
+                cmd.select("sele", "byres ((%s) and (%s))" % (selection, sel_str))
+                cmd.enable("sele")
+                cmd.refresh()
+
+                if len(items) == 1:
+                    index = items[0].data(QtCore.Qt.UserRole)
+                    self._show_item_details(data, self._current_feature, int(index))
+                else:
+                    self.details_box.setPlainText(
+                        "%d items selected for preview." % len(items)
+                    )
+                    self.data_tabs.setCurrentWidget(self.details_box)
+
+                # 2. Update 2D Canvas directly (bypassing the toggle-dependent _pull_pymol_selection)
+                if self.editor is not None:
+                    all_residues = set()
+                    cmd.iterate(
+                        "sele",
+                        "_dssr_res.add((chain, resi))",
+                        space={"_dssr_res": all_residues},
+                    )
+                    matching = {
+                        i
+                        for i, nt in enumerate(self.editor.model.nts)
+                        if (
+                            str(nt.get("chain", "")).strip(),
+                            str(nt.get("resi", "")).strip(),
+                        )
+                        in all_residues
+                    }
+
+                    blocked = self.editor.scene.blockSignals(True)
+                    was_rebuilding = self.editor._rebuilding
+                    self.editor._rebuilding = True
+                    try:
+                        for node in self.editor.nodes:
+                            node.setSelected(node.nt_index in matching)
+                    finally:
+                        self.editor._rebuilding = was_rebuilding
+                        self.editor.scene.blockSignals(blocked)
+
+                    self.editor._sync_sequence_selection()
+                    self.editor._last_pymol_signature = tuple()
+                    self.editor._sync_timer.stop()
+                    self.editor._sync_pending = False
+
         except Exception as error:
             self.status_label.setText("Selection error: %s" % error)
 
@@ -1872,7 +1947,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         exe = self.exe_edit.text().strip() or "x3dna-dssr"
         st = self._get_state_value()
 
-        # Build standard selection name (e.g., junctions1, stems2)
+        # Build standard selection name (e.g., junctions1, stems2, uturns1)
         nm = "%s%d" % (feat.lower(), idx)
 
         col = self.color_edit.text().strip() or "auto"
@@ -1899,12 +1974,16 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 pc=precolor_on,
             )
 
-            # Drop temporary (sele) so only the named selection exists in PyMOL
+            # Drop temporary (sele) without deselecting the named object
             try:
                 cmd.delete("sele")
-                cmd.deselect()
+                cmd.delete("indicate")
             except Exception:
                 pass
+
+            # Force state transition so PyMOL paints selection markers
+            cmd.disable(nm)
+            cmd.enable(nm)
 
             # Update the 2D layout canvas nodes silently
             if self.editor is not None:
@@ -1978,11 +2057,16 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             name = "%s_all" % feature.lower()
             DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
 
-            # Drop temporary (sele) so only 'name' appears in PyMOL
+            # Drop temporary selections
             try:
                 cmd.delete("sele")
+                cmd.delete("indicate")
             except Exception:
                 pass
+
+            # Force transition to show pink indicators in 3D
+            cmd.disable(name)
+            cmd.enable(name)
 
             if self.zoom_cb.isChecked():
                 cmd.zoom(name)
@@ -6555,18 +6639,104 @@ class Dssr2DEditor(QtWidgets.QWidget):
         ):
             return
 
-        # If sele is not currently an active selection in PyMOL, do not poll or force updates
+        # Check all currently active selections in PyMOL
         try:
-            if "sele" not in cmd.get_names("selections"):
-                return
-            if int(cmd.count_atoms("sele")) <= 0:
-                return
+            enabled_selections = cmd.get_names("selections", enabled_only=1)
         except Exception:
+            enabled_selections = []
+
+        # If all selections are toggled off in PyMOL, clear the 2D canvas selection
+        if not enabled_selections:
+            if (
+                any(node.isSelected() for node in self.nodes)
+                and self._last_pymol_signature
+            ):
+                self._last_pymol_signature = tuple()
+                self._sync_from_pymol = self._rebuilding = True
+                try:
+                    for node in self.nodes:
+                        node.setSelected(False)
+                finally:
+                    self._rebuilding = self._sync_from_pymol = False
+                self._update_pymol_highlight()
+                self._update_editor_status("3D selection cleared")
             return
 
         residues = set()
         try:
-            scoped = "((%s) and sele)" % self.pymol_selection
+            active_sel = " or ".join("(%s)" % s for s in enabled_selections)
+            scoped = "((%s) and (%s))" % (self.pymol_selection, active_sel)
+            if cmd.count_atoms(scoped) > 0:
+                cmd.iterate(
+                    scoped,
+                    "_dssr_residues.add((chain, resi))",
+                    space={"_dssr_residues": residues},
+                )
+        except Exception:
+            residues = set()
+
+        signature = tuple(sorted(residues))
+        if signature == self._last_pymol_signature:
+            return
+        self._last_pymol_signature = signature
+
+        wanted = {
+            index
+            for index, nt in enumerate(self.model.nts)
+            if str(nt.get("resi", "")).strip()
+            and (str(nt.get("chain", "")).strip(), str(nt.get("resi", "")).strip())
+            in residues
+        }
+        if wanted == {node.nt_index for node in self.nodes if node.isSelected()}:
+            return
+
+        self._sync_from_pymol = self._rebuilding = True
+        try:
+            for node in self.nodes:
+                node.setSelected(node.nt_index in wanted)
+        finally:
+            self._rebuilding = self._sync_from_pymol = False
+
+        self._update_pymol_highlight()
+        self._update_editor_status("3D selection mirrored to 2D")
+
+    def _pull_pymol_selection(self):
+        if (
+            self._closed
+            or self._sync_pending
+            or self._sync_from_pymol
+            or not self.isVisible()
+            or not self.reverse_3d_cb.isChecked()
+        ):
+            return
+
+        # Check all currently active selections in PyMOL
+        try:
+            enabled_selections = cmd.get_names("selections", enabled_only=1)
+        except Exception:
+            enabled_selections = []
+
+        # If all selections are toggled off in PyMOL, clear the 2D canvas selection
+        if not enabled_selections:
+            if (
+                any(node.isSelected() for node in self.nodes)
+                and self._last_pymol_signature
+            ):
+                self._last_pymol_signature = tuple()
+                self._sync_from_pymol = self._rebuilding = True
+                try:
+                    for node in self.nodes:
+                        node.setSelected(False)
+                finally:
+                    self._rebuilding = self._sync_from_pymol = False
+                self._update_pymol_highlight()
+                self._update_editor_status("3D selection cleared")
+            return
+
+        residues = set()
+        try:
+            active_sel = " or ".join("(%s)" % s for s in enabled_selections)
+            scoped = "((%s) and (%s))" % (self.pymol_selection, active_sel)
             if cmd.count_atoms(scoped) > 0:
                 cmd.iterate(
                     scoped,
