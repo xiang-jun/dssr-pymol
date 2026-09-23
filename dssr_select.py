@@ -37,6 +37,16 @@ except ImportError:
     QtSvg = None
 
 __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
+
+# Safely tear down existing GUI dialog if reloading the script inside PyMOL
+_prev_dialog = globals().get("_DSSR_GUI_DIALOG")
+if _prev_dialog is not None:
+    try:
+        _prev_dialog.close()
+        _prev_dialog.deleteLater()
+    except Exception:
+        pass
+
 _DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
 _DSSR_BLOCK_OBJECTS = set()
