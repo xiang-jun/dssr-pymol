@@ -2126,6 +2126,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             name = "%s_all" % feature.lower()
             DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
 
+            # Apply user color
+            col = self.color_edit.text().strip() or "auto"
+            user_color = HelperFunctions._resolve_color_spec(col)
+            cmd.color(user_color if user_color else "pink", name)
+
+            # Display sticks if "Display sticks" checkbox is checked
+            if self.display_cb.isChecked():
+                DssrFunctions._display_feature_selection(
+                    name, display=1, stick_radius=0.25, do_zoom=0
+                )
+
             # Keep 'sele' active so PyMOL selection dots remain visible
             cmd.select("sele", name)
             cmd.enable("sele")
