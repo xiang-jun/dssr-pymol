@@ -366,6 +366,54 @@ class HelperFunctions:
             )
         return name
 
+    @staticmethod
+    def matches_boolean_query(text, query):
+        """Evaluate whether `text` satisfies a boolean query supporting:
+        - AND: space or 'and' / '&&'
+        - OR: 'or' / '|'
+        - NOT: '-' / '!' / 'not'
+        """
+        text = str(text).lower()
+        query = str(query).strip().lower()
+        if not query:
+            return True
+
+        # 1. Split across OR clauses (either '|' or whole-word 'or')
+        or_clauses = [
+            c.strip() for c in re.split(r"\s+\bor\b\s+|\|", query) if c.strip()
+        ]
+
+        # 2. Entry matches if it satisfies ANY OR clause
+        for clause in or_clauses:
+            tokens = [t.strip() for t in clause.split() if t.strip()]
+            clause_match = True
+            expect_not = False
+
+            for token in tokens:
+                if token in ("and", "&&"):
+                    continue
+                if token in ("not", "!"):
+                    expect_not = True
+                    continue
+
+                # Handle negative terms like "-wc", "!wobble", or "NOT wc"
+                if expect_not or token.startswith(("-", "!")):
+                    neg_term = token.lstrip("-!") if not expect_not else token
+                    expect_not = False
+                    if neg_term and neg_term in text:
+                        clause_match = False
+                        break
+                else:
+                    # Positive term must appear in the entry text
+                    if token not in text:
+                        clause_match = False
+                        break
+
+            if clause_match:
+                return True
+
+        return False
+
 
 class ParsingAlgos:
     @staticmethod
@@ -1483,7 +1531,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.feature_combo.currentIndexChanged.connect(self._on_feature_changed)
         left.addWidget(self.feature_combo)
         self.filter_edit = QtWidgets.QLineEdit()
-        self.filter_edit.setPlaceholderText("Filter feature entries...")
+        self.filter_edit.setPlaceholderText("Filter (e.g. wc | wobble, -wc -wobble)...")
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         left.addWidget(self.filter_edit)
         self.list_widget = QtWidgets.QListWidget()
@@ -1906,9 +1954,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._render_list()
 
     def _render_list(self):
-        query = self.filter_edit.text().strip().lower()
+        query = self.filter_edit.text().strip()
         self._items_filtered = [
-            item for item in self._items_all if query in item[1].lower()
+            item
+            for item in self._items_all
+            if HelperFunctions.matches_boolean_query(item[1], query)
         ]
         count = len(self._items_filtered)
         pages = max(1, (count + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
