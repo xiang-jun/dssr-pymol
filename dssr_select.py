@@ -1547,7 +1547,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.select_all_btn = _button(
             "Select all",
             self._select_all_current_feature,
-            "Select all items of the current feature in PyMOL",
+            "Select all items (or all filtered items) in PyMOL",
         )
         self.next_btn = _button("Next", lambda: self._change_page(1))
         self.page_label = QtWidgets.QLabel()
@@ -2173,7 +2173,13 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             selection, state, _exe = self._analysis_context
             feature = self._current_feature
 
-            if feature == "pseudoknot":
+            # 1. Determine whether an active filter query is present
+            has_filter = bool(self.filter_edit.text().strip())
+
+            if has_filter and self._items_filtered:
+                # Use only the items currently passing the boolean filter
+                indices = [item[0] for item in self._items_filtered]
+            elif feature == "pseudoknot":
                 layers = ParsingAlgos.parse_dotbracket_pseudoknots(
                     ParsingAlgos._extract_dotbracket(data)
                 )
@@ -2186,10 +2192,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.status_label.setText("No %s items found to select." % feature)
                 return
 
-            # 1. Highlight all items in the GUI list widget
+            # 2. Select only the matching items in the GUI list widget
+            self.list_widget.blockSignals(True)
             self.list_widget.selectAll()
+            self.list_widget.blockSignals(False)
 
-            # 2. Build the combined selection string for all items
+            # 3. Build the combined PyMOL selection expression
             parts = [
                 ParsingAlgos._build_residue_sel_from_dssr(data, feature, idx)
                 for idx in indices
@@ -2199,22 +2207,22 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.status_label.setText("Could not build selection for %s." % feature)
                 return
 
-            # 3. Create the named feature selection in PyMOL (e.g., uturns_all)
-            name = "%s_all" % feature.lower()
+            # 4. Create named PyMOL selection: <feature>_filtered vs <feature>_all
+            name = "%s_%s" % (feature.lower(), "filtered" if has_filter else "all")
             DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
 
-            # Apply user color
+            # Apply custom user color if configured
             col = self.color_edit.text().strip() or "auto"
             user_color = HelperFunctions._resolve_color_spec(col)
             cmd.color(user_color if user_color else "pink", name)
 
-            # Display sticks if "Display sticks" checkbox is checked
+            # Display sticks if the option is checked
             if self.display_cb.isChecked():
                 DssrFunctions._display_feature_selection(
                     name, display=1, stick_radius=0.25, do_zoom=0
                 )
 
-            # Keep 'sele' active so PyMOL selection dots remain visible
+            # Keep 'sele' active so PyMOL displays pink indicator dots
             cmd.select("sele", name)
             cmd.enable("sele")
             cmd.refresh()
@@ -2223,11 +2231,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 cmd.zoom(name)
 
             self.status_label.setText(
-                "Created selection '%s' with all %d %s items."
+                "Created selection '%s' with %d %s items."
                 % (name, len(indices), feature)
             )
 
-            # 4. Highlight matching nodes on the 2D layout canvas directly
+            # 5. Highlight the matching residues in the 2D layout canvas
             if self.editor is not None:
                 all_residues = set()
                 cmd.iterate(
@@ -2257,7 +2265,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
                 self.editor._sync_sequence_selection()
                 self.editor._last_pymol_signature = tuple(sorted(all_residues))
-                self.editor._update_editor_status("all %s selected" % feature)
+                self.editor._update_editor_status(
+                    "%d %s selected" % (len(indices), feature)
+                )
 
         except Exception as error:
             self.status_label.setText("Select all error: %s" % error)
