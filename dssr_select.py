@@ -1363,6 +1363,54 @@ class DssrFunctions:
             if int(do_zoom):
                 cmd.zoom(name)
 
+    @staticmethod
+    def dssr_2d(
+        selection="all",
+        state=-1,
+        exe="x3dna-dssr",
+        layout="standard",
+        number_every=10,
+        show_tertiary=0,
+        title="",
+        quiet=1,
+    ):
+        global _DSSR_GUI_DIALOG
+        selection = HelperFunctions.unquote(selection)
+        exe = HelperFunctions.unquote(exe)
+        layout = HelperFunctions.unquote(layout)
+        title = HelperFunctions.unquote(title)
+        state, number_every = int(state), int(number_every)
+        if state <= 0:
+            state = int(cmd.get_state())
+        if _DSSR_GUI_DIALOG is None:
+            _DSSR_GUI_DIALOG = DssrGuiDialog()
+        host = _DSSR_GUI_DIALOG
+        if host._analysis_context != (selection, state, exe):
+            host._clear_analysis("Analyzing the requested structure...")
+        try:
+            data = host._get_dssr_data(selection, state, exe, 0)
+            editor = host.show_analysis(
+                data,
+                selection,
+                state,
+                exe,
+                algorithm=layout,
+                number_every=number_every,
+                show_tertiary=int(show_tertiary),
+                title=title,
+            )
+        except Exception as error:
+            host._clear_analysis("Analysis error: %s" % error)
+            raise
+        host.show()
+        host.raise_()
+        host.activateWindow()
+        host.show_2d_btn.setChecked(True)
+        editor.view.setFocus(QtCore.Qt.OtherFocusReason)
+        if not int(quiet):
+            print("dssr_2d: shared workspace — %s" % editor.model.summary())
+        return editor
+
 
 def _button(text, clicked, tip=""):
     widget = QtWidgets.QPushButton(text)
@@ -7453,60 +7501,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
         return selected
 
 
-def dssr_2d(
-    selection="all",
-    state=-1,
-    exe="x3dna-dssr",
-    layout="standard",
-    number_every=10,
-    show_tertiary=0,
-    title="",
-    quiet=1,
-):
-    global _DSSR_GUI_DIALOG
-    selection = HelperFunctions.unquote(selection)
-    exe = HelperFunctions.unquote(exe)
-    layout = HelperFunctions.unquote(layout)
-    title = HelperFunctions.unquote(title)
-    state, number_every = int(state), int(number_every)
-    if state <= 0:
-        state = int(cmd.get_state())
-    if _DSSR_GUI_DIALOG is None:
-        _DSSR_GUI_DIALOG = DssrGuiDialog()
-    host = _DSSR_GUI_DIALOG
-    if host._analysis_context != (selection, state, exe):
-        host._clear_analysis("Analyzing the requested structure...")
-    try:
-        data = host._get_dssr_data(selection, state, exe, 0)
-        editor = host.show_analysis(
-            data,
-            selection,
-            state,
-            exe,
-            algorithm=layout,
-            number_every=number_every,
-            show_tertiary=int(show_tertiary),
-            title=title,
-        )
-    except Exception as error:
-        host._clear_analysis("Analysis error: %s" % error)
-        raise
-    host.show()
-    host.raise_()
-    host.activateWindow()
-    host.show_2d_btn.setChecked(True)
-    editor.view.setFocus(QtCore.Qt.OtherFocusReason)
-    if not int(quiet):
-        print("dssr_2d: shared workspace — %s" % editor.model.summary())
-    return editor
-
-
 # Public PyMOL commands are registered once
 dssr_select = DssrFunctions.dssr_select
 dssr_gui = DssrGuiDialog.dssr_gui
 dssr_block = DssrFunctions.dssr_block
 dssr_seq = DssrFunctions.dssr_seq
-DssrFunctions.dssr_2d = staticmethod(dssr_2d)
+dssr_2d = DssrFunctions.dssr_2d
 
 for _command in (dssr_select, dssr_gui, dssr_block, dssr_seq, dssr_2d):
     cmd.extend(_command.__name__, _command)
