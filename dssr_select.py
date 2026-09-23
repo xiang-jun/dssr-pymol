@@ -1424,18 +1424,40 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.block_file_combo = _combo(BLOCK_FEATURES, editable=True)
         self.block_depth_spin = _spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
         self.make_blocks_btn = _button("Make blocks", self._make_blocks_clicked)
+
         settings.addWidget(QtWidgets.QLabel("DSSR executable"), 0, 0)
         settings.addWidget(self.exe_edit, 0, 1, 1, 5)
+
         settings.addWidget(self.precolor_cb, 1, 0)
         settings.addWidget(self.display_cb, 1, 1)
         settings.addWidget(self.zoom_cb, 1, 2)
-        settings.addWidget(QtWidgets.QLabel("Color"), 1, 3)
-        settings.addWidget(self.color_edit, 1, 4, 1, 2)
-        settings.addWidget(QtWidgets.QLabel("Block style"), 2, 0)
-        settings.addWidget(self.block_file_combo, 2, 1)
-        settings.addWidget(QtWidgets.QLabel("Depth"), 2, 2)
-        settings.addWidget(self.block_depth_spin, 2, 3)
+
+        # Color label + edit paired cleanly
+        color_box = QtWidgets.QHBoxLayout()
+        color_box.setContentsMargins(0, 0, 0, 0)
+        color_box.setSpacing(6)
+        color_box.addWidget(QtWidgets.QLabel("Color"))
+        color_box.addWidget(self.color_edit, 1)
+        settings.addLayout(color_box, 1, 3, 1, 3)
+
+        # Block style: keep the label and dropdown tight together
+        block_box = QtWidgets.QHBoxLayout()
+        block_box.setContentsMargins(0, 0, 0, 0)
+        block_box.setSpacing(6)
+        block_box.addWidget(QtWidgets.QLabel("Block style"))
+        block_box.addWidget(self.block_file_combo, 1)
+        settings.addLayout(block_box, 2, 0, 1, 2)
+
+        # Depth: keep the label and spinbox tight together
+        depth_box = QtWidgets.QHBoxLayout()
+        depth_box.setContentsMargins(0, 0, 0, 0)
+        depth_box.setSpacing(6)
+        depth_box.addWidget(QtWidgets.QLabel("Depth"))
+        depth_box.addWidget(self.block_depth_spin, 1)
+        settings.addLayout(depth_box, 2, 2, 1, 2)
+
         settings.addWidget(self.make_blocks_btn, 2, 4, 1, 2)
+
         root.addWidget(self.settings_widget)
         self.settings_widget.hide()
         self.settings_btn.toggled.connect(self.settings_widget.setVisible)
