@@ -574,7 +574,12 @@ class ParsingAlgos:
             nt1 = entry.get("nt1", "?")
             nt2 = entry.get("nt2", "?")
             lw = entry.get("LW", entry.get("bp", ""))
-            return "%d: %s - %s%s" % (i, nt1, nt2, (" (%s)" % lw) if lw else "")
+            name = entry.get("name", "").strip()
+
+            # Combine LW classification and pair name (e.g., "cWW, WC")
+            tags = [t for t in (lw, name) if t]
+            tag_str = (" (%s)" % ", ".join(tags)) if tags else ""
+            return "%d: %s - %s%s" % (i, nt1, nt2, tag_str)
 
         if feature in ("stems", "helices"):
             n = (
