@@ -109,6 +109,41 @@ FEATURE_LABELS = {
     "uturns": "U-turns",
 }
 
+# Classical PyMOL / DSSR nucleic acid color scheme:
+# A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
+PYMOL_BASE_COLORS = {
+    "A": {
+        "text": "#b91c1c",  # Deep crimson red (high contrast on white)
+        "fill": "#fee2e2",  # Soft red pastel
+        "border": "#ef4444",  # Red border
+    },
+    "C": {
+        "text": "#b45309",  # Deep warm amber/gold (readable on white)
+        "fill": "#fef9c3",  # Soft yellow pastel
+        "border": "#eab308",  # Amber/yellow border
+    },
+    "G": {
+        "text": "#15803d",  # Forest green
+        "fill": "#dcfce7",  # Soft green pastel
+        "border": "#22c55e",  # Green border
+    },
+    "U": {
+        "text": "#0369a1",  # Deep cyan / sky blue
+        "fill": "#e0f2fe",  # Soft cyan pastel
+        "border": "#0ea5e9",  # Cyan border
+    },
+    "T": {
+        "text": "#0369a1",  # Deep cyan / sky blue
+        "fill": "#e0f2fe",  # Soft cyan pastel
+        "border": "#0ea5e9",  # Cyan border
+    },
+    "I": {
+        "text": "#6d28d9",  # Inosine / modified: purple
+        "fill": "#f3e8ff",
+        "border": "#a855f7",
+    },
+}
+
 BLOCK_FEATURES = [
     "face",
     "edge",
@@ -423,6 +458,38 @@ class HelperFunctions:
                 return True
 
         return False
+
+    @staticmethod
+    def base_style(base, enabled=True):
+        b = str(base).strip().upper()
+        if not enabled:
+            return {
+                "text": QtGui.QColor("#0f172a"),
+                "fill": QtGui.QColor("#ffffff"),
+                "border": QtGui.QColor(30, 41, 59),
+            }
+        if b in PYMOL_BASE_COLORS:
+            spec = PYMOL_BASE_COLORS[b]
+        elif b in ("P", "PSU"):  # Pseudouridine
+            spec = PYMOL_BASE_COLORS["U"]
+        else:
+            spec = PYMOL_BASE_COLORS.get(
+                "I",
+                {
+                    "text": "#6d28d9",
+                    "fill": "#f3e8ff",
+                    "border": "#a855f7",
+                },
+            )
+        return {
+            "text": QtGui.QColor(spec["text"]),
+            "fill": QtGui.QColor(spec["fill"]),
+            "border": QtGui.QColor(spec["border"]),
+        }
+
+    @staticmethod
+    def base_text_color(base, enabled=True):
+        return HelperFunctions.base_style(base, enabled)["text"]
 
 
 class ParsingAlgos:
@@ -4995,74 +5062,6 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         self.setPath(path)
 
 
-# Classical PyMOL / DSSR nucleic acid color scheme:
-# A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
-PYMOL_BASE_COLORS = {
-    "A": {
-        "text": "#b91c1c",  # Deep crimson red (high contrast on white)
-        "fill": "#fee2e2",  # Soft red pastel
-        "border": "#ef4444",  # Red border
-    },
-    "C": {
-        "text": "#b45309",  # Deep warm amber/gold (readable on white)
-        "fill": "#fef9c3",  # Soft yellow pastel
-        "border": "#eab308",  # Amber/yellow border
-    },
-    "G": {
-        "text": "#15803d",  # Forest green
-        "fill": "#dcfce7",  # Soft green pastel
-        "border": "#22c55e",  # Green border
-    },
-    "U": {
-        "text": "#0369a1",  # Deep cyan / sky blue
-        "fill": "#e0f2fe",  # Soft cyan pastel
-        "border": "#0ea5e9",  # Cyan border
-    },
-    "T": {
-        "text": "#0369a1",  # Deep cyan / sky blue
-        "fill": "#e0f2fe",  # Soft cyan pastel
-        "border": "#0ea5e9",  # Cyan border
-    },
-    "I": {
-        "text": "#6d28d9",  # Inosine / modified: purple
-        "fill": "#f3e8ff",
-        "border": "#a855f7",
-    },
-}
-
-
-def _base_style(base, enabled=True):
-    b = str(base).strip().upper()
-    if not enabled:
-        return {
-            "text": QtGui.QColor("#0f172a"),
-            "fill": QtGui.QColor("#ffffff"),
-            "border": QtGui.QColor(30, 41, 59),
-        }
-    if b in PYMOL_BASE_COLORS:
-        spec = PYMOL_BASE_COLORS[b]
-    elif b in ("P", "PSU"):  # Pseudouridine
-        spec = PYMOL_BASE_COLORS["U"]
-    else:
-        spec = PYMOL_BASE_COLORS.get(
-            "I",
-            {
-                "text": "#6d28d9",
-                "fill": "#f3e8ff",
-                "border": "#a855f7",
-            },
-        )
-    return {
-        "text": QtGui.QColor(spec["text"]),
-        "fill": QtGui.QColor(spec["fill"]),
-        "border": QtGui.QColor(spec["border"]),
-    }
-
-
-def _base_text_color(base, enabled=True):
-    return _base_style(base, enabled)["text"]
-
-
 class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
     RADIUS = 13.5  # 27 px diameter fits NAView 44 px spacing cleanly
 
@@ -5104,7 +5103,9 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
     def _base_fill(self):
         if self.viewer.gel_style_enabled():
             return QtGui.QColor(236, 245, 252)
-        return _base_style(self.nt.get("base", ""), self.viewer.base_colors)["fill"]
+        return HelperFunctions.base_style(
+            self.nt.get("base", ""), self.viewer.base_colors
+        )["fill"]
 
     def _apply_style(self, selected):
         color = QtGui.QColor(225, 29, 72) if selected else QtGui.QColor(45, 45, 45)
@@ -5121,7 +5122,9 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
         text.setBrush(
             QtGui.QBrush(
-                _base_text_color(self.nt.get("base", ""), self.viewer.base_colors)
+                HelperFunctions.base_text_color(
+                    self.nt.get("base", ""), self.viewer.base_colors
+                )
             )
         )
         self.base_text_item = text
@@ -5387,7 +5390,9 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
                 border = QtGui.QColor(188, 235, 255, 225)
             else:
                 # Flat classical PyMOL base colors (soft pastel fill + crisp border)
-                style = _base_style(self.nt.get("base", ""), self.viewer.base_colors)
+                style = HelperFunctions.base_style(
+                    self.nt.get("base", ""), self.viewer.base_colors
+                )
                 fill = QtGui.QBrush(style["fill"])
                 border = style["border"]
 
@@ -5844,74 +5849,6 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             event.accept()
 
 
-# Classical PyMOL / DSSR nucleic acid color scheme:
-# A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
-PYMOL_BASE_COLORS = {
-    "A": {
-        "text": "#b91c1c",  # Deep crimson red (high contrast on white)
-        "fill": "#fee2e2",  # Soft red pastel
-        "border": "#ef4444",  # Red border
-    },
-    "C": {
-        "text": "#b45309",  # Deep warm amber/gold (readable on white)
-        "fill": "#fef9c3",  # Soft yellow pastel
-        "border": "#eab308",  # Amber/yellow border
-    },
-    "G": {
-        "text": "#15803d",  # Forest green
-        "fill": "#dcfce7",  # Soft green pastel
-        "border": "#22c55e",  # Green border
-    },
-    "U": {
-        "text": "#0369a1",  # Deep cyan / sky blue
-        "fill": "#e0f2fe",  # Soft cyan pastel
-        "border": "#0ea5e9",  # Cyan border
-    },
-    "T": {
-        "text": "#0369a1",  # Deep cyan / sky blue
-        "fill": "#e0f2fe",  # Soft cyan pastel
-        "border": "#0ea5e9",  # Cyan border
-    },
-    "I": {
-        "text": "#6d28d9",  # Inosine / modified: purple
-        "fill": "#f3e8ff",
-        "border": "#a855f7",
-    },
-}
-
-
-def _base_style(base, enabled=True):
-    b = str(base).strip().upper()
-    if not enabled:
-        return {
-            "text": QtGui.QColor("#0f172a"),
-            "fill": QtGui.QColor("#ffffff"),
-            "border": QtGui.QColor(30, 41, 59),
-        }
-    if b in PYMOL_BASE_COLORS:
-        spec = PYMOL_BASE_COLORS[b]
-    elif b in ("P", "PSU"):  # Pseudouridine
-        spec = PYMOL_BASE_COLORS["U"]
-    else:
-        spec = PYMOL_BASE_COLORS.get(
-            "I",
-            {
-                "text": "#6d28d9",
-                "fill": "#f3e8ff",
-                "border": "#a855f7",
-            },
-        )
-    return {
-        "text": QtGui.QColor(spec["text"]),
-        "fill": QtGui.QColor(spec["fill"]),
-        "border": QtGui.QColor(spec["border"]),
-    }
-
-
-def _base_text_color(base, enabled=True):
-    return _base_style(base, enabled)["text"]
-
-
 class DssrSequenceView(QtWidgets.QTextEdit):
     """One text document for the sequence, real residue ruler, and linked selection."""
 
@@ -6006,7 +5943,9 @@ class DssrSequenceView(QtWidgets.QTextEdit):
             cursor.setPosition(start)
             cursor.setPosition(end, QtGui.QTextCursor.KeepAnchor)
             style = QtGui.QTextCharFormat()
-            style.setForeground(_base_text_color(nt.get("base", ""), enabled))
+            style.setForeground(
+                HelperFunctions.base_text_color(nt.get("base", ""), enabled)
+            )
             style.setFontWeight(QtGui.QFont.Bold)
             cursor.setCharFormat(style)
         cursor.endEditBlock()
@@ -7141,7 +7080,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         for node in self.nodes:
             node.base_text_item.setBrush(
                 QtGui.QBrush(
-                    _base_text_color(node.nt.get("base", ""), self.base_colors)
+                    HelperFunctions.base_text_color(
+                        node.nt.get("base", ""), self.base_colors
+                    )
                 )
             )
             for child in node.childItems():
