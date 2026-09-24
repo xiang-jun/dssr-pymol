@@ -6409,19 +6409,40 @@ class Dssr2DEditor(QtWidgets.QWidget):
             raise CmdException("Qt could not save PNG file")
 
     def _export_svg(self, path):
-        rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
+        """Export the 2D RNA diagram to an SVG vector file with robust coordinate handling."""
+        # 1. Obtain scene bounds with generous margin
+        bounding_rect_f = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
+
+        # 2. Convert to integer QRect for cross-platform QtSvg compatibility
+        view_box = bounding_rect_f.toRect()
+
+        # Ensure non-zero width and height
+        if view_box.width() <= 0:
+            view_box.setWidth(100)
+        if view_box.height() <= 0:
+            view_box.setHeight(100)
+
+        # 3. Configure the SVG generator
         generator = QtSvg.QSvgGenerator()
         generator.setFileName(path)
-        generator.setSize(
-            QtCore.QSize(max(1, int(rect.width())), max(1, int(rect.height())))
-        )
-        generator.setViewBox(rect)
+        generator.setSize(view_box.size())
+        generator.setViewBox(view_box)
         generator.setTitle(self.model.title)
         generator.setDescription("RNA secondary structure derived by DSSR")
+
+        # 4. Render scene to SVG
         painter = QtGui.QPainter(generator)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        self.scene.render(painter, rect, rect, QtCore.Qt.KeepAspectRatio)
-        painter.end()
+        painter.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
+        try:
+            self.scene.render(
+                painter,
+                QtCore.QRectF(view_box),
+                bounding_rect_f,
+                QtCore.Qt.KeepAspectRatio,
+            )
+        finally:
+            painter.end()
 
     def _capture_positions(self):
         return [(float(node.pos().x()), float(node.pos().y())) for node in self.nodes]
