@@ -6409,8 +6409,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
         try:
             result = QtWidgets.QFileDialog.getSaveFileName(
                 self,
-                "Export RNA 2D image",
-                "rna_2d.png",
+                "Export 2D diagram",
+                "dssr_2d.png",
                 filters,
             )
             path = result[0] if isinstance(result, (tuple, list)) else result
@@ -6431,7 +6431,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             msg = "Export failed: %s" % str(e)
             self.status_label.setText(msg)
             try:
-                QtWidgets.QMessageBox.critical(self, "RNA 2D export", msg)
+                QtWidgets.QMessageBox.critical(self, "2D export", msg)
             except Exception:
                 pass
 
