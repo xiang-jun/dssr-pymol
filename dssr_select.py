@@ -4128,7 +4128,7 @@ class Dssr2DLayout:
                         average_direction = Dssr2DLayout._v_add(
                             average_direction, value
                         )
-                if math.hypot(*average_direction) < 0.1:
+                if math.hypot(average_direction[0], average_direction[1]) < 0.1:
                     chord = (b[0] - a[0], b[1] - a[1])
                     average_direction = (-chord[1], chord[0])
                 average_direction = Dssr2DLayout._v_norm(average_direction)
