@@ -283,8 +283,8 @@ class DssrUtils:
         return s[-n:]
 
     @staticmethod
-    def _run_dssr(args, operation="DSSR"):
-        """Run either annotation or block generation with the same error handling."""
+    def _run_dssr(args, operation="DSSR", timeout=60):
+        """Run either annotation or block generation with timeout and error handling."""
         try:
             result = subprocess.run(
                 args,
@@ -292,9 +292,16 @@ class DssrUtils:
                 stderr=subprocess.PIPE,
                 encoding="utf-8",
                 errors="replace",
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise CmdException(
+                '%s timed out after %s seconds: command "%s"'
+                % (operation, timeout, " ".join(args))
             )
         except OSError:
             raise CmdException('Cannot execute exe="%s"' % args[0])
+
         if result.returncode:
             raise CmdException(
                 "%s failed (rc=%s). stderr tail: %s"
@@ -307,9 +314,11 @@ class DssrUtils:
         return result.stdout, result.stderr
 
     @staticmethod
-    def run_dssr_json(pdb_path, exe):
+    def run_dssr_json(pdb_path, exe, timeout=60):
         out, err = DssrUtils._run_dssr(
-            [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path]
+            [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path],
+            operation="DSSR JSON",
+            timeout=timeout,
         )
         tail = DssrUtils._safe_tail(err)
         if not out.strip():
