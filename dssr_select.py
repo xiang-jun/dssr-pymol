@@ -1535,7 +1535,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._context_timer = QtCore.QTimer(self)
         self._context_timer.setInterval(750)
         self._context_timer.timeout.connect(self._check_context)
-        self.refresh_objects()
+        self._refresh_objects()
 
     def _build_widgets(self):
         root = QtWidgets.QVBoxLayout(self)
@@ -1547,7 +1547,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         self.state_combo = QtWidgets.QComboBox()
         self.state_combo.currentIndexChanged.connect(self._on_dssr_context_changed)
-        self.refresh_obj_btn = DssrUI.button("Refresh objects", self.refresh_objects)
+        self.refresh_obj_btn = DssrUI.button("Refresh objects", self._refresh_objects)
         self.analyze_btn = DssrUI.button(
             "Analyze", lambda: self._load_structure(force=True)
         )
@@ -1783,7 +1783,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.state_combo.setCurrentIndex(max(0, index))
         self.state_combo.blockSignals(False)
 
-    def refresh_objects(self):
+    def _refresh_objects(self):
         objects = self._molecule_objects()
         previous = self.obj_combo.currentText().strip()
         try:
@@ -1973,7 +1973,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if self.editor.isVisible():
             self.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
         self._update_feature_counts(data)
-        self.refresh_list()
+        self._refresh_list()
         self.report_box.setPlainText(DssrParser._format_rna_summary_text(data))
         self.data_tabs.setCurrentWidget(self.report_box)
         self.status_label.setText(
@@ -2014,9 +2014,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def _on_feature_changed(self, *_args):
         self._current_feature = str(self.feature_combo.currentData() or "pairs")
         self.details_box.clear()
-        self.refresh_list()
+        self._refresh_list()
 
-    def refresh_list(self):
+    def _refresh_list(self):
         self._items_all = []
         data = _DSSR_DATA_CACHE.get("data")
         if data is not None:
@@ -2469,7 +2469,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         host._check_context()
 
         if host.editor is None:
-            host.refresh_objects()
+            host._refresh_objects()
             if has_structure:
                 host._load_structure(force=False)
 
