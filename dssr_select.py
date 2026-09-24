@@ -5771,6 +5771,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._sync_from_pymol = False
         self._last_pymol_signature = None
         self._last_highlight_signature = None
+        self._last_sel_count = -1
+        self._last_active_names = ()
         self._closed = False
         self._view_active = True
         self._shown_once = False
@@ -6823,6 +6825,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def _reverse_sync_toggled(self, checked):
         self._last_pymol_signature = None
+        self._last_sel_count = -1
+        self._last_active_names = ()
         if checked:
             self._pull_pymol_selection()
             self._update_editor_status("bidirectional sync on")
@@ -6830,6 +6834,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._update_editor_status("3D-to-2D sync off")
 
     def _pull_pymol_selection(self):
+        """Synchronize 3D PyMOL selections to 2D nodes without unnecessary overhead."""
         if (
             self._closed
             or self._sync_pending
@@ -6839,12 +6844,16 @@ class Dssr2DEditor(QtWidgets.QWidget):
         ):
             return
 
+        # 1. Quick check: retrieve only currently enabled selection names
         try:
-            enabled_selections = cmd.get_names("selections", enabled_only=1)
+            enabled_selections = tuple(cmd.get_names("selections", enabled_only=1))
         except Exception:
-            enabled_selections = []
+            enabled_selections = ()
 
+        # 2. Fast exit if no selections exist
         if not enabled_selections:
+            self._last_active_names = ()
+            self._last_sel_count = 0
             if (
                 any(node.isSelected() for node in self.nodes)
                 and self._last_pymol_signature
@@ -6860,16 +6869,44 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 self._update_editor_status("3D selection cleared")
             return
 
-        residues = set()
+        # 3. Fast filter: check atom count before doing full iteration
         try:
             active_sel = " or ".join("(%s)" % s for s in enabled_selections)
             scoped = "((%s) and (%s))" % (self.pymol_selection, active_sel)
-            if cmd.count_atoms(scoped) > 0:
-                cmd.iterate(
-                    scoped,
-                    "_dssr_residues.add((chain, resi))",
-                    space={"_dssr_residues": residues},
-                )
+            current_count = int(cmd.count_atoms(scoped))
+        except Exception:
+            current_count = 0
+
+        # If selection names and atom count have not changed, skip iteration
+        if (
+            enabled_selections == self._last_active_names
+            and current_count == self._last_sel_count
+        ):
+            return
+
+        self._last_active_names = enabled_selections
+        self._last_sel_count = current_count
+
+        if current_count <= 0:
+            if self._last_pymol_signature:
+                self._last_pymol_signature = tuple()
+                self._sync_from_pymol = self._rebuilding = True
+                try:
+                    for node in self.nodes:
+                        node.setSelected(False)
+                finally:
+                    self._rebuilding = self._sync_from_pymol = False
+                self._update_pymol_highlight()
+            return
+
+        # 4. Only iterate when an actual selection change is verified
+        residues = set()
+        try:
+            cmd.iterate(
+                scoped,
+                "_dssr_residues.add((chain, resi))",
+                space={"_dssr_residues": residues},
+            )
         except Exception:
             residues = set()
 
@@ -6878,6 +6915,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             return
         self._last_pymol_signature = signature
 
+        # Map residues back to 2D graph nodes
         wanted = {
             index
             for index, nt in enumerate(self.model.nts)
