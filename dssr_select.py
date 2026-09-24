@@ -7171,15 +7171,15 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
 # Public PyMOL commands are registered once
 dssr_select = DssrCmd.dssr_select
-dssr_gui = DssrGuiDialog.dssr_gui
 dssr_block = DssrCmd.dssr_block
 dssr_2d = DssrCmd.dssr_2d
+dssr_gui = DssrGuiDialog.dssr_gui
 
-for _command in (dssr_select, dssr_gui, dssr_block, dssr_2d):
+for _command in (dssr_select, dssr_block, dssr_2d, dssr_gui):
     cmd.extend(_command.__name__, _command)
 
 try:
-    for _name in ("dssr_block", "dssr_2d"):
+    for _name in ("dssr_select", "dssr_block", "dssr_2d"):
         cmd.auto_arg[0][_name] = cmd.auto_arg[0]["zoom"]
     cmd.auto_arg[2]["dssr_block"] = [cmd.Shortcut(BLOCK_FEATURES), "block_file", ""]
 except (AttributeError, KeyError):
