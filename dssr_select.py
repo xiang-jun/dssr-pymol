@@ -175,8 +175,17 @@ LAYOUT_CHOICES = ["standard", "circular", "linear", "legacy radiate"]
 
 LIGHT_THEME = """
 QDialog, QWidget#dssrWorkspace { background: #f1f5f9; color: #0f172a; }
-QMenu { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; }
-QMenu::item:selected { background: #ffe4e6; color: #e11d48; font-weight: 600; }
+QMenu {
+    background: #ffffff; color: #0f172a;
+    border: 1px solid #cbd5e1; border-radius: 6px;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 4px 10px; border-radius: 4px;
+}
+QMenu::item:selected {
+    background: #ffe4e6; color: #e11d48;
+}
 QLabel, QCheckBox, QGroupBox { color: #0f172a; }
 QCheckBox { spacing: 5px; }
 QGroupBox {
@@ -235,8 +244,17 @@ QLabel#studioHint { color: #64748b; font-weight: 400; }
 
 DARK_THEME = """
 QDialog, QWidget#dssrWorkspace { background: #0f172a; color: #f8fafc; }
-QMenu { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
-QMenu::item:selected { background: #e11d48; color: #ffffff; font-weight: 600; }
+QMenu {
+    background: #1e293b; color: #f8fafc;
+    border: 1px solid #334155; border-radius: 6px;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 4px 10px; border-radius: 4px;
+}
+QMenu::item:selected {
+    background: #e11d48; color: #ffffff;
+}
 QLabel, QCheckBox, QGroupBox { color: #f8fafc; }
 QCheckBox { spacing: 5px; }
 QGroupBox {
