@@ -6407,21 +6407,35 @@ class Dssr2DEditor(QtWidgets.QWidget):
             node.setPos(float(point[0]), float(point[1]))
         self._update_scene_rect()
 
-    def _positions_changed(self, first, second):
-        if not first or not second or len(first) != len(second):
-            return False
-        return any(
-            abs(a[0] - b[0]) > 1.0e-5 or abs(a[1] - b[1]) > 1.0e-5
-            for a, b in zip(first, second)
-        )
+    def _apply_sparse_positions(self, sparse_coords):
+        """Apply coordinates only to the specific nucleotide nodes that changed."""
+        total = len(self.nodes)
+        for index, point in sparse_coords.items():
+            if 0 <= index < total:
+                self.nodes[index].setPos(float(point[0]), float(point[1]))
+        self._update_scene_rect()
 
     def _push_history(self, before, after, label="edit"):
-        if not self._positions_changed(before, after):
+        """Store a memory-efficient sparse diff of only the bases that changed position."""
+        if not before or not after or len(before) != len(after):
             return
+
+        diff_before = {}
+        diff_after = {}
+
+        for index, (b_pt, a_pt) in enumerate(zip(before, after)):
+            if abs(b_pt[0] - a_pt[0]) > 1.0e-5 or abs(b_pt[1] - a_pt[1]) > 1.0e-5:
+                diff_before[index] = (float(b_pt[0]), float(b_pt[1]))
+                diff_after[index] = (float(a_pt[0]), float(a_pt[1]))
+
+        # Nothing changed; don't add redundant undo states
+        if not diff_before:
+            return
+
         self._undo.append(
             {
-                "before": [(float(x), float(y)) for x, y in before],
-                "after": [(float(x), float(y)) for x, y in after],
+                "before": diff_before,
+                "after": diff_after,
                 "label": str(label),
             }
         )
@@ -6434,7 +6448,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not self._undo:
             return
         entry = self._undo.pop()
-        self._apply_positions(entry["before"])
+        self._apply_sparse_positions(entry["before"])
         self._redo.append(entry)
         self._update_history_buttons()
         self._update_editor_status("undo: %s" % entry["label"])
@@ -6443,7 +6457,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not self._redo:
             return
         entry = self._redo.pop()
-        self._apply_positions(entry["after"])
+        self._apply_sparse_positions(entry["after"])
         self._undo.append(entry)
         self._update_history_buttons()
         self._update_editor_status("redo: %s" % entry["label"])
