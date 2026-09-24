@@ -1913,6 +1913,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return data
 
     def _big_object_warning(self, sel):
+        """Return a warning string if the selection exceeds 20,000 atoms."""
         thresh = 20000
         try:
             n_atoms = int(cmd.count_atoms(sel))
@@ -1935,13 +1936,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             and self._analysis_context == (selection, state, exe)
         ):
             return self.editor
+
         self._loading = True
         self.analyze_btn.setEnabled(False)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+
         warn = self._big_object_warning(selection)
         self.status_label.setText(
             warn + ("Analyzing %s, state %d..." % (selection, state))
         )
         QtWidgets.QApplication.processEvents()
+
         try:
             if force:
                 self._dispose_editor()
@@ -1954,6 +1959,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         finally:
             self._loading = False
             self.analyze_btn.setEnabled(True)
+            QtWidgets.QApplication.restoreOverrideCursor()
 
     def show_analysis(
         self,
