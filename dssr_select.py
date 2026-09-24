@@ -51,7 +51,7 @@ _HEX_COLOR_CACHE = {}
 _DSSR_GUI_DIALOG = None
 _DSSR_BLOCK_OBJECTS = set()
 _DSSR_SELECTION_OBJECTS = set()
-_DSSR_CLI_CACHE = {"key": None, "data": None}
+_DSSR_DATA_CACHE = {"key": None, "data": None}
 
 FEATURE_MAP = {
     "pairs": "pairs",
@@ -345,9 +345,16 @@ class DssrUtils:
             return DssrUtils.run_dssr_json(path, exe)
 
     @staticmethod
+    def _invalidate_cache():
+        """Reset the shared DSSR analysis cache."""
+        global _DSSR_DATA_CACHE
+        _DSSR_DATA_CACHE["key"] = None
+        _DSSR_DATA_CACHE["data"] = None
+
+    @staticmethod
     def _cached_selection_json(selection, state, exe, precolor=False, force=False):
-        """Analyze a selection with DSSR, reusing parsed JSON if the context and atom count match."""
-        global _DSSR_CLI_CACHE
+        """Analyze a selection with DSSR, reusing parsed JSON if context and atom count match."""
+        global _DSSR_DATA_CACHE
 
         try:
             current_count = int(cmd.count_atoms(selection, state=state))
@@ -358,17 +365,17 @@ class DssrUtils:
 
         if (
             not force
-            and _DSSR_CLI_CACHE["key"] == cache_key
-            and _DSSR_CLI_CACHE["data"] is not None
+            and _DSSR_DATA_CACHE["key"] == cache_key
+            and _DSSR_DATA_CACHE["data"] is not None
         ):
             if precolor:
                 cmd.color("gray", selection)
-            return _DSSR_CLI_CACHE["data"]
+            return _DSSR_DATA_CACHE["data"]
 
-        # Run fresh analysis and update the cache
+        # Run fresh analysis and update the shared cache
         data = DssrUtils._selection_json(selection, state, exe, precolor=precolor)
-        _DSSR_CLI_CACHE["key"] = cache_key
-        _DSSR_CLI_CACHE["data"] = data
+        _DSSR_DATA_CACHE["key"] = cache_key
+        _DSSR_DATA_CACHE["data"] = data
         return data
 
     @staticmethod
@@ -1815,7 +1822,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             )
 
     def _invalidate_dssr_cache(self):
-        self._cache_key = self._cache_data = None
+        DssrUtils._invalidate_cache()
+
+    def _get_dssr_data(self, selection, state, exe, precolor_on):
+        if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
+            raise CmdException("No atoms in the requested object / selection.")
+        return DssrUtils._cached_selection_json(
+            selection, state, exe, precolor=bool(precolor_on)
+        )
 
     def _dispose_editor(self):
         if self.editor is not None:
@@ -1858,20 +1872,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _require_analysis(self):
         self._check_context()
-        if self._analysis_context != self._context() or self._cache_data is None:
+        data = _DSSR_DATA_CACHE.get("data")
+        if self._analysis_context != self._context() or data is None:
             raise CmdException("Click Analyze for the current object and state first.")
-        return self._cache_data
-
-    def _get_dssr_data(self, selection, state, exe, precolor_on):
-        key = (str(selection), int(state), str(exe))
-        if key == self._cache_key and self._cache_data is not None:
-            return self._cache_data
-        if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
-            raise CmdException("No atoms in the requested object / selection.")
-        data = DssrUtils._selection_json(selection, state, exe)
-        if precolor_on:
-            cmd.color("gray", selection)
-        self._cache_key, self._cache_data = key, data
         return data
 
     def _big_object_warning(self, sel):
@@ -2015,7 +2018,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def refresh_list(self):
         self._items_all = []
-        data = self._cache_data
+        data = _DSSR_DATA_CACHE.get("data")
         if data is not None:
             if self._current_feature == "pseudoknot":
                 layers = DssrParser.parse_dotbracket_pseudoknots(
