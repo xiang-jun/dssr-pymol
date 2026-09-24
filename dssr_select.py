@@ -1280,37 +1280,65 @@ class DssrCmd:
                 )
 
     @staticmethod
-    def dssr_seq(selection="all", chain="", fmt="raw", wrap=80, rc=0, quiet=1):
+    def dssr_seq(
+        selection="all",
+        chain="",
+        fmt="raw",
+        wrap=80,
+        rc=0,
+        exe="x3dna-dssr",
+        state=-1,
+        quiet=1,
+    ):
+        """
+        Extract complete nucleotide sequences (including modified bases) via DSSR.
+        """
         fmt = str(fmt).strip().lower()
         quiet = int(quiet)
         rc = int(rc)
+        state = int(state)
+        if state <= 0:
+            state = cmd.get_state()
 
         sel = selection
         ch = str(chain).strip()
         if ch and ch.lower() != "all":
             sel = "(%s) and chain %s" % (selection, ch)
 
-        try:
-            fasta = cmd.get_fastastr(sel)
-        except Exception as e:
-            raise CmdException("get_fastastr failed: %s" % e)
+        # Run DSSR to extract accurate nucleotide data including HETATM modifications
+        dssr_data = DssrUtils._selection_json(sel, state, exe, precolor=False)
 
-        blocks = DssrUtils.parse_fastastr(fasta)
-        if not blocks:
-            raise CmdException('No FASTA sequence extracted from selection="%s"' % sel)
+        # Group nucleotides by chain
+        nts = dssr_data.get("nts", [])
+        if not nts:
+            raise CmdException(
+                'No nucleotides extracted by DSSR from selection="%s"' % sel
+            )
+
+        chains_seq = {}
+        for nt in nts:
+            c = nt.get("chain_name", "A")
+            # Prefer DSSR one-letter code (preserves modified bases like 'g', 'P', 't', 'c')
+            code = nt.get("nt_code") or Dssr2DModel._base_from_nt_entry(nt)
+            chains_seq.setdefault(c, []).append(code)
 
         out_lines = []
-        for hdr, seq in blocks:
-            s = "".join([c for c in seq.upper() if c.isalpha()])
-            if rc:
-                s = DssrUtils.revcomp(s)
+        obj_name = sel.replace("(", "").replace(")", "").replace(" ", "_")
 
+        for c, seq_chars in chains_seq.items():
+            seq_str = "".join(seq_chars)
+            if rc:
+                seq_str = DssrUtils.revcomp(seq_str)
+
+            hdr = "%s_%s" % (obj_name, c)
             if fmt == "fasta":
                 out_lines.append(">" + hdr)
-                out_lines.append(DssrUtils.wrap_seq(s, wrap))
+                out_lines.append(DssrUtils.wrap_seq(seq_str, wrap))
             else:
                 out_lines.append(
-                    hdr + ": " + (DssrUtils.wrap_seq(s, wrap) if int(wrap) > 0 else s)
+                    hdr
+                    + ": "
+                    + (DssrUtils.wrap_seq(seq_str, wrap) if int(wrap) > 0 else seq_str)
                 )
 
         out = "\n".join(out_lines)
