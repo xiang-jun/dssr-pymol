@@ -210,7 +210,16 @@ QListWidget, QPlainTextEdit {
 }
 QComboBox QAbstractItemView {
     color: #0f172a; background: #ffffff;
-    selection-color: #ffffff; selection-background-color: #e11d48;
+    border: 1px solid #cbd5e1; border-radius: 6px;
+    padding: 4px; outline: 0px;
+    selection-color: #e11d48; selection-background-color: #ffe4e6;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 24px; padding: 3px 8px; border-radius: 4px;
+}
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background-color: #ffe4e6; color: #e11d48; font-weight: 600;
 }
 QTabWidget::pane { border: 1px solid #cbd5e1; border-radius: 7px; background: #ffffff; }
 QTabBar::tab {
@@ -261,7 +270,16 @@ QListWidget, QPlainTextEdit {
 }
 QComboBox QAbstractItemView {
     color: #f8fafc; background: #1e293b;
+    border: 1px solid #334155; border-radius: 6px;
+    padding: 4px; outline: 0px;
     selection-color: #ffffff; selection-background-color: #e11d48;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 24px; padding: 3px 8px; border-radius: 4px;
+}
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background-color: #e11d48; color: #ffffff; font-weight: 600;
 }
 QTabWidget::pane { border: 1px solid #334155; border-radius: 7px; background: #1e293b; }
 QTabBar::tab {
@@ -1501,6 +1519,10 @@ class DssrUI:
     @staticmethod
     def combo(items, editable=False, tip=""):
         widget = QtWidgets.QComboBox()
+        # Use an explicit QListView so macOS renders custom stylesheet padding & colors cleanly
+        view = QtWidgets.QListView(widget)
+        widget.setView(view)
+        widget.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
         widget.setEditable(editable)
         widget.addItems(items)
         widget.setToolTip(tip)
@@ -7130,6 +7152,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         root.addLayout(top)
         self.layout_combo = DssrUI.combo(LAYOUT_CHOICES)
         self.layout_combo.setCurrentText(self.algorithm)
+        self.layout_combo.setMinimumWidth(135)
         top.addWidget(self.layout_combo)
         self.fit_btn = DssrUI.button("Fit", self.fit_scene, "Fit drawing [F]")
         self.undo_btn = DssrUI.button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
@@ -7167,16 +7190,29 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         tools = QtWidgets.QHBoxLayout()
         root.addLayout(tools)
+
+        # Interaction tool combobox: wide enough for "Select / edit [P]"
         self.interaction_combo = QtWidgets.QComboBox()
+        self.interaction_combo.setView(QtWidgets.QListView(self.interaction_combo))
+        self.interaction_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        self.interaction_combo.setMinimumWidth(128)
+        self.interaction_combo.view().setMinimumWidth(128)
         self.interaction_combo.addItem("Select / edit [P]", "edit")
         self.interaction_combo.addItem("Brush select [B]", "brush")
         self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
         tools.addWidget(self.interaction_combo)
+
         self.brush_radius_spin = DssrUI.spinbox(
             8, 100, 32, suffix=" px", tip="Brush radius"
         )
         tools.addWidget(self.brush_radius_spin)
+
+        # Drag mode combobox: wide enough for "Selected bases"
         self.drag_mode_combo = QtWidgets.QComboBox()
+        self.drag_mode_combo.setView(QtWidgets.QListView(self.drag_mode_combo))
+        self.drag_mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        self.drag_mode_combo.setMinimumWidth(128)
+        self.drag_mode_combo.view().setMinimumWidth(128)
         for text, value in (
             ("Soft drag", "soft"),
             ("Single base", "base"),
@@ -7191,6 +7227,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             lambda: self._update_editor_status("drag mode changed")
         )
         tools.addWidget(self.drag_mode_combo)
+
         self.gel_style_cb = DssrUI.checkbox(
             "Gel",
             False,
