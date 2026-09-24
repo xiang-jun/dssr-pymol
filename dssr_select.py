@@ -491,6 +491,48 @@ class HelperFunctions:
     def base_text_color(base, enabled=True):
         return HelperFunctions.base_style(base, enabled)["text"]
 
+    @staticmethod
+    def wrap_seq(s, width):
+        """Wrap sequence string `s` to fixed column `width`."""
+        try:
+            width = int(width)
+        except Exception:
+            width = 80
+        if width <= 0:
+            return s
+        return "\n".join(s[i : i + width] for i in range(0, len(s), width))
+
+    @staticmethod
+    def revcomp(seq):
+        """Return the reverse complement of sequence `seq`."""
+        s = "".join([c for c in str(seq).upper() if c.isalpha()])
+        if "U" in s and "T" not in s:
+            comp = {"A": "U", "U": "A", "C": "G", "G": "C", "N": "N"}
+        else:
+            comp = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
+        return "".join(comp.get(b, "N") for b in s[::-1])
+
+    @staticmethod
+    def parse_fastastr(fasta_text):
+        """Parse raw FASTA string into a list of (header, sequence) tuples."""
+        blocks = []
+        header = None
+        seq = []
+        for line in str(fasta_text).splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if header is not None:
+                    blocks.append((header, "".join(seq)))
+                header = line[1:].strip()
+                seq = []
+            else:
+                seq.append(line.strip())
+        if header is not None:
+            blocks.append((header, "".join(seq)))
+        return blocks
+
 
 class ParsingAlgos:
     @staticmethod
@@ -1241,45 +1283,6 @@ class DssrFunctions:
                 )
 
     @staticmethod
-    def _wrap_seq(s, width):
-        try:
-            width = int(width)
-        except Exception:
-            width = 80
-        if width <= 0:
-            return s
-        return "\n".join(s[i : i + width] for i in range(0, len(s), width))
-
-    @staticmethod
-    def _revcomp(seq):
-        s = "".join([c for c in str(seq).upper() if c.isalpha()])
-        if "U" in s and "T" not in s:
-            comp = {"A": "U", "U": "A", "C": "G", "G": "C", "N": "N"}
-        else:
-            comp = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
-        return "".join(comp.get(b, "N") for b in s[::-1])
-
-    @staticmethod
-    def _parse_fastastr(fasta_text):
-        blocks = []
-        header = None
-        seq = []
-        for line in str(fasta_text).splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith(">"):
-                if header is not None:
-                    blocks.append((header, "".join(seq)))
-                header = line[1:].strip()
-                seq = []
-            else:
-                seq.append(line.strip())
-        if header is not None:
-            blocks.append((header, "".join(seq)))
-        return blocks
-
-    @staticmethod
     def dssr_seq(selection="all", chain="", fmt="raw", wrap=80, rc=0, quiet=1):
         fmt = str(fmt).strip().lower()
         quiet = int(quiet)
@@ -1295,7 +1298,7 @@ class DssrFunctions:
         except Exception as e:
             raise CmdException("get_fastastr failed: %s" % e)
 
-        blocks = DssrFunctions._parse_fastastr(fasta)
+        blocks = HelperFunctions.parse_fastastr(fasta)
         if not blocks:
             raise CmdException('No FASTA sequence extracted from selection="%s"' % sel)
 
@@ -1303,16 +1306,16 @@ class DssrFunctions:
         for hdr, seq in blocks:
             s = "".join([c for c in seq.upper() if c.isalpha()])
             if rc:
-                s = DssrFunctions._revcomp(s)
+                s = HelperFunctions.revcomp(s)
 
             if fmt == "fasta":
                 out_lines.append(">" + hdr)
-                out_lines.append(DssrFunctions._wrap_seq(s, wrap))
+                out_lines.append(HelperFunctions.wrap_seq(s, wrap))
             else:
                 out_lines.append(
                     hdr
                     + ": "
-                    + (DssrFunctions._wrap_seq(s, wrap) if int(wrap) > 0 else s)
+                    + (HelperFunctions.wrap_seq(s, wrap) if int(wrap) > 0 else s)
                 )
 
         out = "\n".join(out_lines)
