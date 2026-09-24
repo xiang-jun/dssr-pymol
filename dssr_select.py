@@ -37,6 +37,7 @@ except ImportError:
     QtSvg = None
 
 __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
+DSSR_TIMEOUT_SECONDS = 300  # Default timeout in seconds (5 minutes)
 
 _prev_dialog = globals().get("_DSSR_GUI_DIALOG")
 if _prev_dialog is not None:
@@ -283,7 +284,7 @@ class DssrUtils:
         return s[-n:]
 
     @staticmethod
-    def _run_dssr(args, operation="DSSR", timeout=60):
+    def _run_dssr(args, operation="DSSR", timeout=DSSR_TIMEOUT_SECONDS):
         """Run either annotation or block generation with timeout and error handling."""
         try:
             result = subprocess.run(
@@ -314,7 +315,7 @@ class DssrUtils:
         return result.stdout, result.stderr
 
     @staticmethod
-    def run_dssr_json(pdb_path, exe, timeout=60):
+    def run_dssr_json(pdb_path, exe, timeout=DSSR_TIMEOUT_SECONDS):
         out, err = DssrUtils._run_dssr(
             [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path],
             operation="DSSR JSON",
@@ -1297,7 +1298,9 @@ class DssrCmd:
                 if block_color:
                     args.append("--block-color=" + DssrUtils.unquote(block_color))
 
-                DssrUtils._run_dssr(args, "DSSR block")
+                DssrUtils._run_dssr(
+                    args, operation="DSSR block", timeout=DSSR_TIMEOUT_SECONDS
+                )
 
                 cmd.load(tmpfiler3d, name, max(1, st), zoom=0)
 
