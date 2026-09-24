@@ -1479,49 +1479,61 @@ class DssrFunctions:
         return editor
 
 
-def _button(text, clicked, tip=""):
-    widget = QtWidgets.QPushButton(text)
-    widget.clicked.connect(clicked)
-    widget.setToolTip(tip)
-    return widget
+class UIHelpers:
+    """Convenience factory and setup routines for Qt widgets and graphics items."""
 
+    @staticmethod
+    def button(text, clicked, tip=""):
+        widget = QtWidgets.QPushButton(text)
+        widget.clicked.connect(clicked)
+        widget.setToolTip(tip)
+        return widget
 
-def _checkbox(text, checked=False, changed=None, tip=""):
-    widget = QtWidgets.QCheckBox(text)
-    widget.setChecked(checked)
-    if changed is not None:
-        widget.toggled.connect(changed)
-    widget.setToolTip(tip)
-    return widget
+    @staticmethod
+    def checkbox(text, checked=False, changed=None, tip=""):
+        widget = QtWidgets.QCheckBox(text)
+        widget.setChecked(checked)
+        if changed is not None:
+            widget.toggled.connect(changed)
+        widget.setToolTip(tip)
+        return widget
 
+    @staticmethod
+    def combo(items, editable=False, tip=""):
+        widget = QtWidgets.QComboBox()
+        widget.setEditable(editable)
+        widget.addItems(items)
+        widget.setToolTip(tip)
+        return widget
 
-def _combo(items, editable=False, tip=""):
-    widget = QtWidgets.QComboBox()
-    widget.setEditable(editable)
-    widget.addItems(items)
-    widget.setToolTip(tip)
-    return widget
+    @staticmethod
+    def spinbox(minimum, maximum, value, decimals=False, step=1, suffix="", tip=""):
+        widget = QtWidgets.QDoubleSpinBox() if decimals else QtWidgets.QSpinBox()
+        widget.setRange(minimum, maximum)
+        widget.setSingleStep(step)
+        widget.setValue(value)
+        widget.setSuffix(suffix)
+        widget.setToolTip(tip)
+        return widget
 
+    @staticmethod
+    def menu_button(text, actions, parent):
+        button = QtWidgets.QToolButton(parent)
+        button.setText(text)
+        button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        menu = QtWidgets.QMenu(button)
+        for label, callback in actions:
+            menu.addAction(label, callback)
+        button.setMenu(menu)
+        return button
 
-def _spinbox(minimum, maximum, value, decimals=False, step=1, suffix="", tip=""):
-    widget = QtWidgets.QDoubleSpinBox() if decimals else QtWidgets.QSpinBox()
-    widget.setRange(minimum, maximum)
-    widget.setSingleStep(step)
-    widget.setValue(value)
-    widget.setSuffix(suffix)
-    widget.setToolTip(tip)
-    return widget
-
-
-def _menu_button(text, actions, parent):
-    button = QtWidgets.QToolButton(parent)
-    button.setText(text)
-    button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-    menu = QtWidgets.QMenu(button)
-    for label, callback in actions:
-        menu.addAction(label, callback)
-    button.setMenu(menu)
-    return button
+    @staticmethod
+    def no_mouse(item):
+        """Prevent item from intercepting mouse clicks, letting underlying views or parent items handle them."""
+        try:
+            item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        except Exception:
+            pass
 
 
 class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
@@ -1560,8 +1572,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         self.state_combo = QtWidgets.QComboBox()
         self.state_combo.currentIndexChanged.connect(self._on_dssr_context_changed)
-        self.refresh_obj_btn = _button("Refresh objects", self.refresh_objects)
-        self.analyze_btn = _button("Analyze", lambda: self._load_structure(force=True))
+        self.refresh_obj_btn = UIHelpers.button("Refresh objects", self.refresh_objects)
+        self.analyze_btn = UIHelpers.button(
+            "Analyze", lambda: self._load_structure(force=True)
+        )
         top.addWidget(QtWidgets.QLabel("Object / selection"))
         top.addWidget(self.obj_combo, 1)
         top.addWidget(QtWidgets.QLabel("State"))
@@ -1595,13 +1609,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         settings.setHorizontalSpacing(16)  # Generous separation between columns
         self.exe_edit = QtWidgets.QLineEdit("x3dna-dssr")
         self.exe_edit.textChanged.connect(self._on_dssr_context_changed)
-        self.precolor_cb = _checkbox("Gray precolor", checked=True)
-        self.display_cb = _checkbox("Display sticks", checked=False)
-        self.zoom_cb = _checkbox("Zoom to selection", checked=False)
+        self.precolor_cb = UIHelpers.checkbox("Gray precolor", checked=True)
+        self.display_cb = UIHelpers.checkbox("Display sticks", checked=False)
+        self.zoom_cb = UIHelpers.checkbox("Zoom to selection", checked=False)
         self.color_edit = QtWidgets.QLineEdit("auto")
-        self.block_file_combo = _combo(BLOCK_FEATURES, editable=True)
-        self.block_depth_spin = _spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
-        self.make_blocks_btn = _button("Make blocks", self._make_blocks_clicked)
+        self.block_file_combo = UIHelpers.combo(BLOCK_FEATURES, editable=True)
+        self.block_depth_spin = UIHelpers.spinbox(
+            0.01, 5.0, 0.5, decimals=True, step=0.05
+        )
+        self.make_blocks_btn = UIHelpers.button(
+            "Make blocks", self._make_blocks_clicked
+        )
 
         settings.addWidget(QtWidgets.QLabel("DSSR executable"), 0, 0)
         settings.addWidget(self.exe_edit, 0, 1, 1, 5)
@@ -1668,13 +1686,13 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addWidget(self.list_widget, 3)
 
         paging = QtWidgets.QHBoxLayout()
-        self.prev_btn = _button("Previous", lambda: self._change_page(-1))
-        self.select_all_btn = _button(
+        self.prev_btn = UIHelpers.button("Previous", lambda: self._change_page(-1))
+        self.select_all_btn = UIHelpers.button(
             "Select all",
             self._select_all_current_feature,
             "Select all items (or all filtered items) in PyMOL",
         )
-        self.next_btn = _button("Next", lambda: self._change_page(1))
+        self.next_btn = UIHelpers.button("Next", lambda: self._change_page(1))
         self.page_label = QtWidgets.QLabel()
         paging.addWidget(self.prev_btn)
         paging.addWidget(self.select_all_btn)
@@ -1698,12 +1716,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         panel_title = QtWidgets.QHBoxLayout()
         panel_title.addWidget(QtWidgets.QLabel("Sequence · RNA 2D"))
         panel_title.addStretch(1)
-        self.minimize_2d_btn = _button(
+        self.minimize_2d_btn = UIHelpers.button(
             "−",
             lambda: self.show_2d_btn.setChecked(False),
             "Collapse 2D; keep the layout and undo history",
         )
-        self.hide_2d_btn = _button(
+        self.hide_2d_btn = UIHelpers.button(
             "×",
             lambda: self.show_2d_btn.setChecked(False),
             "Hide 2D; reopen with the 2D button above",
@@ -3574,13 +3592,6 @@ class Dssr2DLayout:
         return [(point[0] - center_x, point[1] - center_y) for point in positions]
 
     @staticmethod
-    def _no_mouse(item):
-        try:
-            item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        except Exception:
-            pass
-
-    @staticmethod
     def _pair_table(model, start=0, end=None):
         """Create a 1-based NAView pair table from the planar DSSR scaffold."""
         total = len(model.nts)
@@ -5097,7 +5108,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         self.setZValue(5.0)
         self._apply_style(False)
         self._add_text()
-        Dssr2DLayout._no_mouse(self.base_text_item)
+        UIHelpers.no_mouse(self.base_text_item)
         self.setToolTip(self._tooltip())
 
     def _base_fill(self):
@@ -6465,7 +6476,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             label.setPos(best[1], best[2])
             used_label_rects.append(best[3])
             label.setZValue(8.0)
-            Dssr2DLayout._no_mouse(label)
+            UIHelpers.no_mouse(label)
 
     def _add_chain_labels(self):
         total = len(self.nodes)
@@ -6499,7 +6510,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setBrush(QtGui.QBrush(term_color))
                 label.setPos(offset[0], offset[1])
                 label.setZValue(8.0)
-                Dssr2DLayout._no_mouse(label)
+                UIHelpers.no_mouse(label)
                 br = label.boundingRect()
                 pos = self.nodes[index].pos()
                 chain_rects.append(
@@ -6522,7 +6533,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setBrush(QtGui.QBrush(term_color))
                 label.setPos(-48.0, -52.0)
                 label.setZValue(8.0)
-                Dssr2DLayout._no_mouse(label)
+                UIHelpers.no_mouse(label)
                 br = label.boundingRect()
                 pos = self.nodes[first].pos()
                 chain_rects.append(
@@ -7252,18 +7263,18 @@ class Dssr2DEditor(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         top = QtWidgets.QHBoxLayout()
         root.addLayout(top)
-        self.layout_combo = _combo(LAYOUT_CHOICES)
+        self.layout_combo = UIHelpers.combo(LAYOUT_CHOICES)
         self.layout_combo.setCurrentText(self.algorithm)
         top.addWidget(self.layout_combo)
-        self.fit_btn = _button("Fit", self.fit_scene, "Fit drawing [F]")
-        self.undo_btn = _button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
-        self.redo_btn = _button("Redo", self.redo_layout, "Redo [Ctrl+Y]")
+        self.fit_btn = UIHelpers.button("Fit", self.fit_scene, "Fit drawing [F]")
+        self.undo_btn = UIHelpers.button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
+        self.redo_btn = UIHelpers.button("Redo", self.redo_layout, "Redo [Ctrl+Y]")
         for button in (self.fit_btn, self.undo_btn, self.redo_btn):
             top.addWidget(button)
-        self.redraw_btn = _button("Reset layout", self.reset_layout)
+        self.redraw_btn = UIHelpers.button("Reset layout", self.reset_layout)
         top.addWidget(self.redraw_btn)
         top.addStretch(1)
-        self.file_menu_btn = _menu_button(
+        self.file_menu_btn = UIHelpers.menu_button(
             "File",
             (
                 ("Export image…", self.export_image),
@@ -7274,7 +7285,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self,
         )
         top.addWidget(self.file_menu_btn)
-        self.selection_menu_btn = _menu_button(
+        self.selection_menu_btn = UIHelpers.menu_button(
             "Selection",
             (
                 ("Select all [Ctrl+A]", self.select_all_bases),
@@ -7296,7 +7307,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.interaction_combo.addItem("Brush select [B]", "brush")
         self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
         tools.addWidget(self.interaction_combo)
-        self.brush_radius_spin = _spinbox(8, 100, 32, suffix=" px", tip="Brush radius")
+        self.brush_radius_spin = UIHelpers.spinbox(
+            8, 100, 32, suffix=" px", tip="Brush radius"
+        )
         tools.addWidget(self.brush_radius_spin)
         self.drag_mode_combo = QtWidgets.QComboBox()
         for text, value in (
@@ -7313,7 +7326,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             lambda: self._update_editor_status("drag mode changed")
         )
         tools.addWidget(self.drag_mode_combo)
-        self.gel_style_cb = _checkbox(
+        self.gel_style_cb = UIHelpers.checkbox(
             "Gel",
             False,
             self._gel_mode_toggled,
@@ -7324,21 +7337,25 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         self.options_panel = QtWidgets.QGroupBox("Display and 3D")
         options = QtWidgets.QGridLayout(self.options_panel)
-        self.number_spin = _spinbox(0, 10000, self.number_every)
-        self.tertiary_cb = _checkbox("Extra DSSR pairs", self.show_tertiary)
-        self.base_colors_cb = _checkbox(
+        self.number_spin = UIHelpers.spinbox(0, 10000, self.number_every)
+        self.tertiary_cb = UIHelpers.checkbox("Extra DSSR pairs", self.show_tertiary)
+        self.base_colors_cb = UIHelpers.checkbox(
             "Base colors", True, tip="Color bases using classical PyMOL/DSSR scheme"
         )
-        self.circles_cb = _checkbox(
+        self.circles_cb = UIHelpers.checkbox(
             "Circles",
             True,
             changed=self._circles_toggled,
             tip="Show or hide circular node borders around bases",
         )
-        self.follow_spin = _spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
-        self.live_3d_cb = _checkbox("3D highlight", False, self._sync_pymol_selection)
-        self.reverse_3d_cb = _checkbox("3D → 2D sync", True, self._reverse_sync_toggled)
-        self.zoom_3d_cb = _checkbox("Zoom after brush", False)
+        self.follow_spin = UIHelpers.spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
+        self.live_3d_cb = UIHelpers.checkbox(
+            "3D highlight", False, self._sync_pymol_selection
+        )
+        self.reverse_3d_cb = UIHelpers.checkbox(
+            "3D → 2D sync", True, self._reverse_sync_toggled
+        )
+        self.zoom_3d_cb = UIHelpers.checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
         options.addWidget(self.tertiary_cb, 0, 2)
