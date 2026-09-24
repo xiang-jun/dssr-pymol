@@ -38,7 +38,6 @@ except ImportError:
 
 __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
 
-# Safely tear down existing GUI dialog if reloading the script inside PyMOL
 _prev_dialog = globals().get("_DSSR_GUI_DIALOG")
 if _prev_dialog is not None:
     try:
@@ -109,7 +108,6 @@ FEATURE_LABELS = {
     "uturns": "U-turns",
 }
 
-# Classical PyMOL / DSSR nucleic acid color scheme:
 # A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
 PYMOL_BASE_COLORS = {
     "A": {
@@ -308,7 +306,6 @@ class DssrUtils:
 
     @staticmethod
     def run_dssr_json(pdb_path, exe):
-        # Jmol/EBI unit IDs and U-turn annotations match upstream DSSR output.
         out, err = DssrUtils._run_dssr(
             [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path]
         )
@@ -498,7 +495,7 @@ class DssrParser:
         """Return a normalized list for a FEATURE_MAP entry.
 
         DSSR normally emits arrays, but ``nonStack`` can be emitted as a
-        single object.  Keeping that compatibility rule here prevents the GUI,
+        single object. Keeping that compatibility rule here prevents the GUI,
         command API, query engine, and selection builder from drifting apart.
         """
         if not isinstance(dssr_data, dict):
@@ -998,7 +995,6 @@ class DssrCmd:
 
     @staticmethod
     def _create_feature_selection(name, selection, residue_selection, quiet=0):
-        # Create the selection
         cmd.select(name, "((%s) and (%s))" % (selection, residue_selection))
         if int(cmd.count_atoms(name)) <= 0:
             cmd.delete(name)
@@ -1007,7 +1003,6 @@ class DssrCmd:
             )
         _DSSR_SELECTION_OBJECTS.add(str(name))
 
-        # Clean up any leftover 'indicate' selection from previous versions
         try:
             cmd.delete("indicate")
         except Exception:
@@ -2076,7 +2071,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if cores:
                 sel_str = " or ".join("(%s)" % c for c in cores)
 
-                # 1. Update PyMOL 3D Viewer and force an immediate graphics refresh
                 cmd.select("sele", "byres ((%s) and (%s))" % (selection, sel_str))
                 cmd.enable("sele")
                 cmd.refresh()
@@ -2090,7 +2084,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     )
                     self.data_tabs.setCurrentWidget(self.details_box)
 
-                # 2. Update 2D Canvas directly (bypassing the toggle-dependent _pull_pymol_selection)
                 if self.editor is not None:
                     all_residues = set()
                     cmd.iterate(
@@ -2225,11 +2218,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             selection, state, _exe = self._analysis_context
             feature = self._current_feature
 
-            # 1. Determine whether an active filter query is present
             has_filter = bool(self.filter_edit.text().strip())
 
             if has_filter and self._items_filtered:
-                # Use only the items currently passing the boolean filter
                 indices = [item[0] for item in self._items_filtered]
             elif feature == "pseudoknot":
                 layers = DssrParser.parse_dotbracket_pseudoknots(
@@ -2244,12 +2235,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.status_label.setText("No %s items found to select." % feature)
                 return
 
-            # 2. Select only the matching items in the GUI list widget
             self.list_widget.blockSignals(True)
             self.list_widget.selectAll()
             self.list_widget.blockSignals(False)
 
-            # 3. Build the combined PyMOL selection expression
             parts = [
                 DssrParser._build_residue_sel_from_dssr(data, feature, idx)
                 for idx in indices
@@ -2259,22 +2248,18 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.status_label.setText("Could not build selection for %s." % feature)
                 return
 
-            # 4. Create named PyMOL selection: <feature>_filtered vs <feature>_all
             name = "%s_%s" % (feature.lower(), "filtered" if has_filter else "all")
             DssrCmd._create_feature_selection(name, selection, sel_str, quiet=0)
 
-            # Apply custom user color if configured
             col = self.color_edit.text().strip() or "auto"
             user_color = DssrUtils._resolve_color_spec(col)
             cmd.color(user_color if user_color else "pink", name)
 
-            # Display sticks if the option is checked
             if self.display_cb.isChecked():
                 DssrCmd._display_feature_selection(
                     name, display=1, stick_radius=0.25, do_zoom=0
                 )
 
-            # Keep 'sele' active so PyMOL displays pink indicator dots
             cmd.select("sele", name)
             cmd.enable("sele")
             cmd.refresh()
@@ -2287,7 +2272,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 % (name, len(indices), feature)
             )
 
-            # 5. Highlight the matching residues in the 2D layout canvas
             if self.editor is not None:
                 all_residues = set()
                 cmd.iterate(
@@ -2340,11 +2324,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 if index is not None
             ]
 
-            # Determine the core atom selection for block generation
             if parts:
                 core = " or ".join("(%s)" % part for part in parts)
             else:
-                # Fallbacks: feature_all, sele, or 2D canvas selection
                 feature_all_name = "%s_all" % self._current_feature.lower()
                 if (
                     feature_all_name in cmd.get_names("selections")
@@ -2405,7 +2387,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def dssr_gui():
         global _DSSR_GUI_DIALOG
 
-        # Guard check: verify if any molecular structure is loaded
         has_structure = bool(
             [
                 name
@@ -2429,7 +2410,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if has_structure:
                 host._load_structure(force=False)
 
-        # Trigger terminal warning and pop-up dialog if no structure is present
         if not has_structure:
             msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL"
             print(msg)
@@ -2512,7 +2492,6 @@ class Dssr2DModel:
             text = str(value).strip()
             if not text:
                 continue
-            # Prefer a conventional one-letter base when one is present.
             if len(text) == 1:
                 return text
             upper = text.upper()
@@ -2794,7 +2773,7 @@ class Dssr2DModel:
 
         Standard parenthesis pairs are preferred, then additional dot-bracket
         layers are admitted only when they neither reuse an endpoint nor cross
-        a pair already in the scaffold.  All excluded pairs are still rendered
+        a pair already in the scaffold. All excluded pairs are still rendered
         as pseudoknot/auxiliary edges.
         """
         candidates = sorted(
