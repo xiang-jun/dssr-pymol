@@ -1865,6 +1865,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.empty_label.show()
         self.status_label.setText(message)
 
+        # Clear temporary selection indicators in PyMOL
+        try:
+            cmd.delete("sele")
+            cmd.delete("indicate")
+            cmd.refresh()
+        except Exception:
+            pass
+
     def _check_context(self):
         if self._loading or self._analysis_context is None or not self.isVisible():
             return
