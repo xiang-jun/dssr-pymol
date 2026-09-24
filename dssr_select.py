@@ -1060,7 +1060,7 @@ class DssrCmd:
         return "all"
 
     @staticmethod
-    def dssr(
+    def _dssr(
         sel=None,
         selection=None,
         f=None,
@@ -2173,7 +2173,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         radius = 0.25
 
         try:
-            DssrCmd.dssr(
+            DssrCmd._dssr(
                 sel=sel,
                 f=feat,
                 i=idx,
