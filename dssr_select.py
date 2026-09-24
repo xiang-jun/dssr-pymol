@@ -504,13 +504,56 @@ class DssrUtils:
 
     @staticmethod
     def revcomp(seq):
-        """Return the reverse complement of sequence `seq`."""
-        s = "".join([c for c in str(seq).upper() if c.isalpha()])
-        if "U" in s and "T" not in s:
-            comp = {"A": "U", "U": "A", "C": "G", "G": "C", "N": "N"}
+        """
+        Return the reverse complement of sequence `seq`, preserving case
+        and DSSR modified base codes (e.g., g, c, u, t, a, P).
+        """
+        raw_seq = str(seq)
+
+        # Detect whether the sequence is primarily RNA or DNA
+        is_rna = "U" in raw_seq or "u" in raw_seq or "P" in raw_seq
+
+        # Comprehensive complement map preserving case and modified symbols
+        if is_rna:
+            pairs = {
+                # Standard RNA
+                "A": "U",
+                "U": "A",
+                "G": "C",
+                "C": "G",
+                "a": "u",
+                "u": "a",
+                "g": "c",
+                "c": "g",
+                # Modified bases pairing with canonical purines/pyrimidines
+                "P": "A",
+                "p": "a",  # Pseudouridine pairs with Adenine
+                "t": "a",
+                "T": "A",  # 5-methyluridine (ribothymidine)
+                "I": "C",
+                "i": "c",  # Inosine pairs with Cytosine
+                "N": "N",
+                "n": "n",
+            }
         else:
-            comp = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
-        return "".join(comp.get(b, "N") for b in s[::-1])
+            pairs = {
+                # Standard DNA
+                "A": "T",
+                "T": "A",
+                "G": "C",
+                "C": "G",
+                "a": "t",
+                "t": "a",
+                "g": "c",
+                "c": "g",
+                "I": "C",
+                "i": "c",
+                "N": "N",
+                "n": "n",
+            }
+
+        # Reverse and translate, preserving any unmapped characters as-is
+        return "".join(pairs.get(base, base) for base in reversed(raw_seq))
 
     @staticmethod
     def parse_fastastr(fasta_text):
