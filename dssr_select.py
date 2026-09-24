@@ -46,10 +46,11 @@ if _prev_dialog is not None:
     except Exception:
         pass
 
-_DSSR_GUI_DIALOG = None
 _hex_color_cache = {}
+_DSSR_GUI_DIALOG = None
 _DSSR_BLOCK_OBJECTS = set()
 _DSSR_SELECTION_OBJECTS = set()
+_DSSR_CLI_CACHE = {"key": None, "data": None}
 
 FEATURE_MAP = {
     "pairs": "pairs",
@@ -341,6 +342,33 @@ class DssrUtils:
             if precolor:
                 cmd.color("gray", selection)
             return DssrUtils.run_dssr_json(path, exe)
+
+    @staticmethod
+    def _cached_selection_json(selection, state, exe, precolor=False, force=False):
+        """Analyze a selection with DSSR, reusing parsed JSON if the context and atom count match."""
+        global _DSSR_CLI_CACHE
+
+        try:
+            current_count = int(cmd.count_atoms(selection, state=state))
+        except Exception:
+            current_count = -1
+
+        cache_key = (str(selection), int(state), str(exe), current_count)
+
+        if (
+            not force
+            and _DSSR_CLI_CACHE["key"] == cache_key
+            and _DSSR_CLI_CACHE["data"] is not None
+        ):
+            if precolor:
+                cmd.color("gray", selection)
+            return _DSSR_CLI_CACHE["data"]
+
+        # Run fresh analysis and update the cache
+        data = DssrUtils._selection_json(selection, state, exe, precolor=precolor)
+        _DSSR_CLI_CACHE["key"] = cache_key
+        _DSSR_CLI_CACHE["data"] = data
+        return data
 
     @staticmethod
     def _hex_to_rgb01(h):
@@ -1009,7 +1037,9 @@ class DssrCmd:
         if state == 0 or state < 0:
             state = cmd.get_state()
 
-        dssr_data = DssrUtils._selection_json(selection, state, exe, precolor)
+        dssr_data = DssrUtils._cached_selection_json(
+            selection, state, exe, precolor=bool(precolor)
+        )
         return DssrCmd._select_feature_data(
             dssr_data,
             selection,
