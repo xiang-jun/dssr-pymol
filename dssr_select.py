@@ -567,8 +567,58 @@ class DssrParser:
         return layers
 
     @staticmethod
+    def _sort_resi_key(resi_str):
+        """Sort residue numbers naturally (numeric when possible, fallback to string)."""
+        try:
+            return (0, int(str(resi_str)))
+        except Exception:
+            return (1, str(resi_str))
+
+    @staticmethod
+    def _compact_sel_from_residues(residues):
+        """Build a compact PyMOL selection string grouping residues by chain with '+'.
+
+        Example:
+            Input:  {('A', '10'), ('A', '11'), ('B', '5')}
+            Output: '(chain A and resi 10+11) or (chain B and resi 5)'
+        """
+        if not residues:
+            return ""
+
+        by_chain = {}
+        no_chain = set()
+
+        for item in residues:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                c = str(item[0]).strip()
+                r = str(item[1]).strip()
+            else:
+                continue
+
+            if not r:
+                continue
+
+            if c:
+                by_chain.setdefault(c, set()).add(r)
+            else:
+                no_chain.add(r)
+
+        parts = []
+        for c in sorted(by_chain.keys()):
+            resis = sorted(by_chain[c], key=DssrParser._sort_resi_key)
+            resi_expr = "+".join(resis)
+            parts.append("(chain %s and resi %s)" % (c, resi_expr))
+
+        if no_chain:
+            resis = sorted(no_chain, key=DssrParser._sort_resi_key)
+            parts.append("(resi %s)" % "+".join(resis))
+
+        return " or ".join(parts)
+
+    @staticmethod
     def _residue_selection(residues):
-        return " or ".join("(chain %s and resi %s)" % residue for residue in residues)
+        """Direct all residue selection generation through the compact generator."""
+        return DssrParser._compact_sel_from_residues(residues)
 
     @staticmethod
     def build_selection_from_layer(layer_pairs, nts_list):
@@ -647,14 +697,17 @@ class DssrParser:
 
         if nt:
             c_nt, r_nt = DssrParser.parse_nt_id(nt)
-            clauses.append("(chain %s and resi %s)" % (c_nt, r_nt))
+            clauses.append(DssrParser._compact_sel_from_residues([(c_nt, r_nt)]))
 
         if atom:
             c_a, r_a, atom_name = DssrParser.parse_a2b_atom(atom)
             atom_name = str(atom_name).replace('"', '\\"')
-            clauses.append(
-                '(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name)
-            )
+            if c_a:
+                clauses.append(
+                    '(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name)
+                )
+            else:
+                clauses.append('(resi %s and name "%s")' % (r_a, atom_name))
 
         if not clauses:
             raise CmdException("atom2bases entry missing atom and nt")
@@ -825,30 +878,6 @@ class DssrParser:
             )
             lines.append("%s: %d" % (label, count))
         return "\n".join(lines)
-
-    @staticmethod
-    def _sort_resi_key(resi_str):
-        try:
-            return (0, int(str(resi_str)))
-        except Exception:
-            return (1, str(resi_str))
-
-    @staticmethod
-    def _compact_sel_from_residues(residues):
-        if not residues:
-            return ""
-        by_chain = {}
-        for c, r in residues:
-            c = str(c)
-            r = str(r)
-            by_chain.setdefault(c, set()).add(r)
-
-        parts = []
-        for c in sorted(by_chain.keys()):
-            resis = sorted(by_chain[c], key=DssrParser._sort_resi_key)
-            resi_expr = "+".join(resis)
-            parts.append("(chain %s and resi %s)" % (c, resi_expr))
-        return " or ".join(parts)
 
     @staticmethod
     def _build_residue_sel_from_dssr(dssr_data, feature, index):
