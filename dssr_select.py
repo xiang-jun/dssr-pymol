@@ -46,7 +46,8 @@ if _prev_dialog is not None:
     except Exception:
         pass
 
-_hex_color_cache = {}
+_HEX_COLOR_CACHE = {}
+
 _DSSR_GUI_DIALOG = None
 _DSSR_BLOCK_OBJECTS = set()
 _DSSR_SELECTION_OBJECTS = set()
@@ -417,11 +418,11 @@ class DssrUtils:
         )
         if is_hexish:
             hex6, rgb = DssrUtils._hex_to_rgb01(s)
-            if hex6 in _hex_color_cache:
-                return _hex_color_cache[hex6]
+            if hex6 in _HEX_COLOR_CACHE:
+                return _HEX_COLOR_CACHE[hex6]
             cname = "dssr_hex_%s" % hex6
             cmd.set_color(cname, rgb)
-            _hex_color_cache[hex6] = cname
+            _HEX_COLOR_CACHE[hex6] = cname
             return cname
 
         name = s.lower()
