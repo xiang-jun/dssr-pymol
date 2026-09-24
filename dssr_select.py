@@ -1771,14 +1771,29 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return selection, state, exe
 
     def _molecule_objects(self):
+        """Return a list of valid molecular object names, excluding blocks and selections."""
         objects = cmd.get_object_list()
-        return [
-            name
-            for name in objects
-            if name not in _DSSR_BLOCK_OBJECTS
-            and not name.startswith("_dssr_2d_")
-            and cmd.count_atoms(name) > 0
-        ]
+        valid = []
+        for name in objects:
+            if (
+                name in _DSSR_BLOCK_OBJECTS
+                or name in _DSSR_SELECTION_OBJECTS
+                or name.startswith("_dssr_2d_")
+            ):
+                continue
+            try:
+                # Ensure the entry is a real molecule and contains atoms
+                obj_type = cmd.get_type(name)
+                if obj_type == "object:molecule" and cmd.count_atoms(name) > 0:
+                    valid.append(name)
+            except Exception:
+                # Fallback check if get_type is unavailable
+                try:
+                    if cmd.count_atoms(name) > 0:
+                        valid.append(name)
+                except Exception:
+                    pass
+        return valid
 
     def _update_state_combo(self, wanted=None):
         selected = self.state_combo.currentData() if wanted is None else wanted
