@@ -262,7 +262,7 @@ QLabel#studioHint { color: #94a3b8; font-weight: 400; }
 """
 
 
-class HelperFunctions:
+class DssrUtils:
     @staticmethod
     def unquote(s):
         s = str(s)
@@ -301,7 +301,7 @@ class HelperFunctions:
                 % (
                     operation,
                     result.returncode,
-                    HelperFunctions._safe_tail(result.stderr),
+                    DssrUtils._safe_tail(result.stderr),
                 )
             )
         return result.stdout, result.stderr
@@ -309,10 +309,10 @@ class HelperFunctions:
     @staticmethod
     def run_dssr_json(pdb_path, exe):
         # Jmol/EBI unit IDs and U-turn annotations match upstream DSSR output.
-        out, err = HelperFunctions._run_dssr(
+        out, err = DssrUtils._run_dssr(
             [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path]
         )
-        tail = HelperFunctions._safe_tail(err)
+        tail = DssrUtils._safe_tail(err)
         if not out.strip():
             raise CmdException(
                 "DSSR returned empty stdout (expected JSON). stderr tail: %s" % tail
@@ -343,7 +343,7 @@ class HelperFunctions:
             cmd.save(path, selection, state)
             if precolor:
                 cmd.color("gray", selection)
-            return HelperFunctions.run_dssr_json(path, exe)
+            return DssrUtils.run_dssr_json(path, exe)
 
     @staticmethod
     def _hex_to_rgb01(h):
@@ -391,7 +391,7 @@ class HelperFunctions:
             or (len(s) in (3, 6) and all(c in "0123456789abcdefABCDEF" for c in s))
         )
         if is_hexish:
-            hex6, rgb = HelperFunctions._hex_to_rgb01(s)
+            hex6, rgb = DssrUtils._hex_to_rgb01(s)
             if hex6 in _hex_color_cache:
                 return _hex_color_cache[hex6]
             cname = "dssr_hex_%s" % hex6
@@ -489,7 +489,7 @@ class HelperFunctions:
 
     @staticmethod
     def base_text_color(base, enabled=True):
-        return HelperFunctions.base_style(base, enabled)["text"]
+        return DssrUtils.base_style(base, enabled)["text"]
 
     @staticmethod
     def wrap_seq(s, width):
@@ -534,7 +534,7 @@ class HelperFunctions:
         return blocks
 
 
-class ParsingAlgos:
+class DssrParser:
     @staticmethod
     def feature_entries(dssr_data, feature):
         """Return a normalized list for a FEATURE_MAP entry.
@@ -621,8 +621,8 @@ class ParsingAlgos:
         for open_index, close_index in layer_pairs:
             for index in (open_index, close_index):
                 if index < len(nts_list) and nts_list[index].get("nt_id"):
-                    residues.add(ParsingAlgos.parse_nt_id(nts_list[index]["nt_id"]))
-        return ParsingAlgos._residue_selection(residues) or None
+                    residues.add(DssrParser.parse_nt_id(nts_list[index]["nt_id"]))
+        return DssrParser._residue_selection(residues) or None
 
     @staticmethod
     def build_selection_from_pair(pair_entry):
@@ -630,20 +630,20 @@ class ParsingAlgos:
         nt2 = pair_entry.get("nt2")
         if not nt1 or not nt2:
             raise CmdException("Pair entry missing nt1 or nt2")
-        residues = {ParsingAlgos.parse_nt_id(nt1), ParsingAlgos.parse_nt_id(nt2)}
-        return ParsingAlgos._residue_selection(residues)
+        residues = {DssrParser.parse_nt_id(nt1), DssrParser.parse_nt_id(nt2)}
+        return DssrParser._residue_selection(residues)
 
     @staticmethod
     def build_selection_from_nts_list(nts_list):
         if not nts_list:
             raise CmdException("Empty nucleotide list")
-        residues = {ParsingAlgos.parse_nt_id(nt) for nt in nts_list}
-        return ParsingAlgos._residue_selection(residues)
+        residues = {DssrParser.parse_nt_id(nt) for nt in nts_list}
+        return DssrParser._residue_selection(residues)
 
     @staticmethod
     def _pair_residues(pairs):
         return {
-            ParsingAlgos.parse_nt_id(pair[key])
+            DssrParser.parse_nt_id(pair[key])
             for pair in pairs
             for key in ("nt1", "nt2")
             if pair.get(key)
@@ -654,7 +654,7 @@ class ParsingAlgos:
         pairs = stem_entry.get("pairs", [])
         if not pairs:
             raise CmdException("Stem has no pairs")
-        return ParsingAlgos._residue_selection(ParsingAlgos._pair_residues(pairs))
+        return DssrParser._residue_selection(DssrParser._pair_residues(pairs))
 
     @staticmethod
     def build_selection_from_hairpin(hairpin_entry):
@@ -662,7 +662,7 @@ class ParsingAlgos:
         if not nts_long:
             raise CmdException("Hairpin missing nts_long field")
         nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
-        return ParsingAlgos.build_selection_from_nts_list(nts_list)
+        return DssrParser.build_selection_from_nts_list(nts_list)
 
     @staticmethod
     def build_selection_from_coaxstack(coax_entry, stems_list):
@@ -677,11 +677,11 @@ class ParsingAlgos:
                 continue
             if 1 <= index <= len(stems_list):
                 residues.update(
-                    ParsingAlgos._pair_residues(stems_list[index - 1].get("pairs", []))
+                    DssrParser._pair_residues(stems_list[index - 1].get("pairs", []))
                 )
         if not residues:
             raise CmdException("Could not build selection for coaxStacks entry")
-        return ParsingAlgos._residue_selection(residues)
+        return DssrParser._residue_selection(residues)
 
     @staticmethod
     def build_selection_from_atom2base(a2b_entry):
@@ -691,11 +691,11 @@ class ParsingAlgos:
         clauses = []
 
         if nt:
-            c_nt, r_nt = ParsingAlgos.parse_nt_id(nt)
+            c_nt, r_nt = DssrParser.parse_nt_id(nt)
             clauses.append("(chain %s and resi %s)" % (c_nt, r_nt))
 
         if atom:
-            c_a, r_a, atom_name = ParsingAlgos.parse_a2b_atom(atom)
+            c_a, r_a, atom_name = DssrParser.parse_a2b_atom(atom)
             atom_name = str(atom_name).replace('"', '\\"')
             clauses.append(
                 '(chain %s and resi %s and name "%s")' % (c_a, r_a, atom_name)
@@ -714,13 +714,13 @@ class ParsingAlgos:
         nts = [nt.strip() for nt in [left] + right.split(",") if nt.strip()]
         if not nts:
             raise CmdException("Aminors entry has empty residues")
-        return ParsingAlgos.build_selection_from_nts_list(nts)
+        return DssrParser.build_selection_from_nts_list(nts)
 
     @staticmethod
     def build_selection_from_gquadruplex(gquad_entry):
         nts_long = gquad_entry.get("nts_long", "")
         nts_list = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
-        return ParsingAlgos.build_selection_from_nts_list(nts_list)
+        return DssrParser.build_selection_from_nts_list(nts_list)
 
     # Both annotations store their residues in the same nts_long field.
     build_selection_from_uturns = build_selection_from_gquadruplex
@@ -772,7 +772,7 @@ class ParsingAlgos:
             "gquadruplexes",
             "uturns",
         ):
-            s = ParsingAlgos._shorten_nts_long(entry.get("nts_long", ""))
+            s = DssrParser._shorten_nts_long(entry.get("nts_long", ""))
             return "%d: %s" % (i, s if s else "(missing nts_long)")
 
         if feature == "coaxstacks":
@@ -826,7 +826,7 @@ class ParsingAlgos:
         if isinstance(nts, list):
             for nt in nts:
                 try:
-                    chain, _ = ParsingAlgos.parse_nt_id(nt.get("nt_id", ""))
+                    chain, _ = DssrParser.parse_nt_id(nt.get("nt_id", ""))
                     if chain:
                         chains.add(chain)
                 except (AttributeError, CmdException):
@@ -836,15 +836,15 @@ class ParsingAlgos:
     @staticmethod
     def _count_pseudoknot_layers(dssr_data):
         try:
-            dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
-            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
+            dotbracket = DssrParser._extract_dotbracket(dssr_data)
+            layers = DssrParser.parse_dotbracket_pseudoknots(dotbracket)
             return len(layers) if layers else 0
         except Exception:
             return 0
 
     @staticmethod
     def _format_rna_summary_text(dssr_data):
-        chains = ParsingAlgos._extract_chain_names(dssr_data)
+        chains = DssrParser._extract_chain_names(dssr_data)
         lines = [
             "RNA Structure Summary",
             "---------------------",
@@ -866,7 +866,7 @@ class ParsingAlgos:
             count = (
                 (len(entries) if isinstance(entries, list) else 0)
                 if key
-                else (ParsingAlgos._count_pseudoknot_layers(dssr_data))
+                else (DssrParser._count_pseudoknot_layers(dssr_data))
             )
             lines.append("%s: %d" % (label, count))
         return "\n".join(lines)
@@ -890,7 +890,7 @@ class ParsingAlgos:
 
         parts = []
         for c in sorted(by_chain.keys()):
-            resis = sorted(by_chain[c], key=ParsingAlgos._sort_resi_key)
+            resis = sorted(by_chain[c], key=DssrParser._sort_resi_key)
             resi_expr = "+".join(resis)
             parts.append("(chain %s and resi %s)" % (c, resi_expr))
         return " or ".join(parts)
@@ -901,12 +901,12 @@ class ParsingAlgos:
         idx = int(index)
 
         if feature == "pseudoknot":
-            dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
+            dotbracket = DssrParser._extract_dotbracket(dssr_data)
             nts_list = dssr_data.get("nts", None)
             if nts_list is None:
                 raise CmdException("No nts found in DSSR output")
 
-            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
+            layers = DssrParser.parse_dotbracket_pseudoknots(dotbracket)
             if not layers:
                 raise CmdException("No pseudoknot layers found")
 
@@ -918,7 +918,7 @@ class ParsingAlgos:
                 )
 
             pairs = layers[layer_keys[idx - 1]]
-            sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
+            sel_str = DssrParser.build_selection_from_layer(pairs, nts_list)
             if not sel_str:
                 raise CmdException(
                     "Could not build selection for pseudoknot layer %d" % idx
@@ -929,7 +929,7 @@ class ParsingAlgos:
             raise CmdException('Unknown feature "%s"' % feature)
 
         json_key = FEATURE_MAP[feature]
-        feature_list = ParsingAlgos.feature_entries(dssr_data, feature)
+        feature_list = DssrParser.feature_entries(dssr_data, feature)
         if not feature_list:
             raise CmdException('No "%s" found in DSSR output' % json_key)
 
@@ -941,14 +941,14 @@ class ParsingAlgos:
         entry = feature_list[idx - 1]
 
         builders = {
-            "pairs": ParsingAlgos.build_selection_from_pair,
-            "stems": ParsingAlgos.build_selection_from_stem,
-            "helices": ParsingAlgos.build_selection_from_stem,
-            "hairpins": ParsingAlgos.build_selection_from_hairpin,
-            "atom2bases": ParsingAlgos.build_selection_from_atom2base,
-            "aminors": ParsingAlgos.build_selection_from_aminor,
-            "gquadruplexes": ParsingAlgos.build_selection_from_gquadruplex,
-            "uturns": ParsingAlgos.build_selection_from_uturns,
+            "pairs": DssrParser.build_selection_from_pair,
+            "stems": DssrParser.build_selection_from_stem,
+            "helices": DssrParser.build_selection_from_stem,
+            "hairpins": DssrParser.build_selection_from_hairpin,
+            "atom2bases": DssrParser.build_selection_from_atom2base,
+            "aminors": DssrParser.build_selection_from_aminor,
+            "gquadruplexes": DssrParser.build_selection_from_gquadruplex,
+            "uturns": DssrParser.build_selection_from_uturns,
         }
         if feature in builders:
             return builders[feature](entry)
@@ -970,25 +970,25 @@ class ParsingAlgos:
             if not nts_long:
                 raise CmdException("%s entry missing nts_long field" % feature)
             nts_list_parsed = [nt.strip() for nt in nts_long.split(",") if nt.strip()]
-            return ParsingAlgos.build_selection_from_nts_list(nts_list_parsed)
+            return DssrParser.build_selection_from_nts_list(nts_list_parsed)
 
         if feature == "coaxstacks":
             stems_list = dssr_data.get("stems", [])
             if not stems_list:
                 raise CmdException("No stems found, required for coaxStacks")
-            return ParsingAlgos.build_selection_from_coaxstack(entry, stems_list)
+            return DssrParser.build_selection_from_coaxstack(entry, stems_list)
 
         if feature == "nts":
             nt_id = entry.get("nt_id")
             if not nt_id:
                 raise CmdException("Nucleotide entry missing nt_id field")
-            c, r = ParsingAlgos.parse_nt_id(nt_id)
+            c, r = DssrParser.parse_nt_id(nt_id)
             return "(chain %s and resi %s)" % (c, r)
 
         raise CmdException('Feature "%s" not supported for residue selection' % feature)
 
 
-class DssrFunctions:
+class DssrCmd:
     @staticmethod
     def dssr_select(
         selection="all",
@@ -1008,11 +1008,9 @@ class DssrFunctions:
         show_info = int(show_info)
         quiet = int(quiet)
         precolor = int(precolor)
-        feature = HelperFunctions.unquote(feature).lower().strip()
+        feature = DssrUtils.unquote(feature).lower().strip()
 
-        user_color = HelperFunctions._resolve_color_spec(
-            HelperFunctions.unquote(color).strip()
-        )
+        user_color = DssrUtils._resolve_color_spec(DssrUtils.unquote(color).strip())
 
         if feature in ("features", "help"):
             keys = sorted(FEATURE_MAP.keys())
@@ -1027,8 +1025,8 @@ class DssrFunctions:
         if state == 0 or state < 0:
             state = cmd.get_state()
 
-        dssr_data = HelperFunctions._selection_json(selection, state, exe, precolor)
-        return DssrFunctions._select_feature_data(
+        dssr_data = DssrUtils._selection_json(selection, state, exe, precolor)
+        return DssrCmd._select_feature_data(
             dssr_data,
             selection,
             state,
@@ -1069,8 +1067,7 @@ class DssrFunctions:
                 space={"_sel_residues": _sel_residues},
             )
             print(
-                "dssr_select: %s"
-                % ParsingAlgos._compact_sel_from_residues(_sel_residues)
+                "dssr_select: %s" % DssrParser._compact_sel_from_residues(_sel_residues)
             )
 
     @staticmethod
@@ -1104,13 +1101,13 @@ class DssrFunctions:
         pc=None,
         precolor=1,
     ):
-        selection = selection or sel or DssrFunctions._dssr_default_selection()
+        selection = selection or sel or DssrCmd._dssr_default_selection()
 
         feature_in = f if f is not None else feature
-        feature_in = HelperFunctions.unquote(feature_in).strip()
+        feature_in = DssrUtils.unquote(feature_in).strip()
 
         if feature_in.lower() in ("features", "help"):
-            DssrFunctions.dssr_select(
+            DssrCmd.dssr_select(
                 selection=selection,
                 state=state,
                 feature="features",
@@ -1137,7 +1134,7 @@ class DssrFunctions:
         if not nm:
             nm = "%s%d" % (feature_in.lower(), idx)
 
-        DssrFunctions.dssr_select(
+        DssrCmd.dssr_select(
             selection=selection,
             state=st2,
             feature=feature_in,
@@ -1149,7 +1146,7 @@ class DssrFunctions:
             color=color,
             precolor=precolor,
         )
-        DssrFunctions._display_feature_selection(nm, display, stick_radius, do_zoom)
+        DssrCmd._display_feature_selection(nm, display, stick_radius, do_zoom)
 
     @staticmethod
     def _unused_name(prefix):
@@ -1242,7 +1239,7 @@ class DssrFunctions:
                 state = 1
 
         if not name:
-            name = DssrFunctions._unused_name("dssr_block")
+            name = DssrCmd._unused_name("dssr_block")
 
         with tempfile.TemporaryDirectory(prefix="dssr_block_") as directory:
             tmpfilepdb = os.path.join(directory, "input.pdb")
@@ -1261,7 +1258,7 @@ class DssrFunctions:
 
                 args = [
                     exe,
-                    "--block-file=" + HelperFunctions.unquote(block_file),
+                    "--block-file=" + DssrUtils.unquote(block_file),
                     "--block-depth=" + str(block_depth),
                     "-i=" + tmpfilepdb,
                     "-o=" + tmpfiler3d,
@@ -1269,9 +1266,9 @@ class DssrFunctions:
 
                 # Incorporate block_color argument
                 if block_color:
-                    args.append("--block-color=" + HelperFunctions.unquote(block_color))
+                    args.append("--block-color=" + DssrUtils.unquote(block_color))
 
-                HelperFunctions._run_dssr(args, "DSSR block")
+                DssrUtils._run_dssr(args, "DSSR block")
 
                 cmd.load(tmpfiler3d, name, max(1, st), zoom=0)
 
@@ -1298,7 +1295,7 @@ class DssrFunctions:
         except Exception as e:
             raise CmdException("get_fastastr failed: %s" % e)
 
-        blocks = HelperFunctions.parse_fastastr(fasta)
+        blocks = DssrUtils.parse_fastastr(fasta)
         if not blocks:
             raise CmdException('No FASTA sequence extracted from selection="%s"' % sel)
 
@@ -1306,16 +1303,14 @@ class DssrFunctions:
         for hdr, seq in blocks:
             s = "".join([c for c in seq.upper() if c.isalpha()])
             if rc:
-                s = HelperFunctions.revcomp(s)
+                s = DssrUtils.revcomp(s)
 
             if fmt == "fasta":
                 out_lines.append(">" + hdr)
-                out_lines.append(HelperFunctions.wrap_seq(s, wrap))
+                out_lines.append(DssrUtils.wrap_seq(s, wrap))
             else:
                 out_lines.append(
-                    hdr
-                    + ": "
-                    + (HelperFunctions.wrap_seq(s, wrap) if int(wrap) > 0 else s)
+                    hdr + ": " + (DssrUtils.wrap_seq(s, wrap) if int(wrap) > 0 else s)
                 )
 
         out = "\n".join(out_lines)
@@ -1340,12 +1335,12 @@ class DssrFunctions:
         if feature == "pseudoknot":
             layer_colors = ["blue", "pink", "green", "yellow", "orange"]
 
-            dotbracket = ParsingAlgos._extract_dotbracket(dssr_data)
+            dotbracket = DssrParser._extract_dotbracket(dssr_data)
             nts_list = dssr_data.get("nts", None)
             if nts_list is None:
                 raise CmdException("No nts found in DSSR output")
 
-            layers = ParsingAlgos.parse_dotbracket_pseudoknots(dotbracket)
+            layers = DssrParser.parse_dotbracket_pseudoknots(dotbracket)
             if not layers:
                 raise CmdException("No pseudoknot layers found in structure")
 
@@ -1370,13 +1365,11 @@ class DssrFunctions:
             pairs = layers[layer_key]
             layer_color = layer_colors[(index - 1) % len(layer_colors)]
 
-            sel_str = ParsingAlgos.build_selection_from_layer(pairs, nts_list)
+            sel_str = DssrParser.build_selection_from_layer(pairs, nts_list)
             if sel_str is None:
                 raise CmdException("Could not build selection for layer %d" % index)
 
-            DssrFunctions._create_feature_selection(
-                name, selection, sel_str, quiet=quiet
-            )
+            DssrCmd._create_feature_selection(name, selection, sel_str, quiet=quiet)
             cmd.color(user_color if user_color else layer_color, name)
 
             if not quiet:
@@ -1386,7 +1379,7 @@ class DssrFunctions:
                 )
             return
 
-        feature_list = ParsingAlgos.feature_entries(dssr_data, feature)
+        feature_list = DssrParser.feature_entries(dssr_data, feature)
         if not feature_list:
             raise CmdException('No "%s" found in DSSR output' % json_key)
 
@@ -1396,9 +1389,7 @@ class DssrFunctions:
             show_n = 20 if not quiet else 10
             show_n = min(show_n, total)
             for i in range(show_n):
-                print(
-                    "  " + ParsingAlgos._preview_entry(feature, feature_list[i], i + 1)
-                )
+                print("  " + DssrParser._preview_entry(feature, feature_list[i], i + 1))
             if total > show_n:
                 print("  ... (%d more)" % (total - show_n))
             return
@@ -1408,12 +1399,12 @@ class DssrFunctions:
                 "%s index %d out of range (1..%d)" % (feature, index, len(feature_list))
             )
 
-        sel_str = ParsingAlgos._build_residue_sel_from_dssr(dssr_data, feature, index)
+        sel_str = DssrParser._build_residue_sel_from_dssr(dssr_data, feature, index)
         if not sel_str:
             raise CmdException(
                 "Could not build selection for %s index %d" % (feature, index)
             )
-        DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=quiet)
+        DssrCmd._create_feature_selection(name, selection, sel_str, quiet=quiet)
         cmd.color(user_color if user_color else "pink", name)
 
         if not quiet:
@@ -1445,10 +1436,10 @@ class DssrFunctions:
         quiet=1,
     ):
         global _DSSR_GUI_DIALOG
-        selection = HelperFunctions.unquote(selection)
-        exe = HelperFunctions.unquote(exe)
-        layout = HelperFunctions.unquote(layout)
-        title = HelperFunctions.unquote(title)
+        selection = DssrUtils.unquote(selection)
+        exe = DssrUtils.unquote(exe)
+        layout = DssrUtils.unquote(layout)
+        title = DssrUtils.unquote(title)
         state, number_every = int(state), int(number_every)
         if state <= 0:
             state = int(cmd.get_state())
@@ -1482,7 +1473,7 @@ class DssrFunctions:
         return editor
 
 
-class UIHelpers:
+class DssrUI:
     """Convenience factory and setup routines for Qt widgets and graphics items."""
 
     @staticmethod
@@ -1575,8 +1566,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         self.state_combo = QtWidgets.QComboBox()
         self.state_combo.currentIndexChanged.connect(self._on_dssr_context_changed)
-        self.refresh_obj_btn = UIHelpers.button("Refresh objects", self.refresh_objects)
-        self.analyze_btn = UIHelpers.button(
+        self.refresh_obj_btn = DssrUI.button("Refresh objects", self.refresh_objects)
+        self.analyze_btn = DssrUI.button(
             "Analyze", lambda: self._load_structure(force=True)
         )
         top.addWidget(QtWidgets.QLabel("Object / selection"))
@@ -1612,17 +1603,13 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         settings.setHorizontalSpacing(16)  # Generous separation between columns
         self.exe_edit = QtWidgets.QLineEdit("x3dna-dssr")
         self.exe_edit.textChanged.connect(self._on_dssr_context_changed)
-        self.precolor_cb = UIHelpers.checkbox("Gray precolor", checked=True)
-        self.display_cb = UIHelpers.checkbox("Display sticks", checked=False)
-        self.zoom_cb = UIHelpers.checkbox("Zoom to selection", checked=False)
+        self.precolor_cb = DssrUI.checkbox("Gray precolor", checked=True)
+        self.display_cb = DssrUI.checkbox("Display sticks", checked=False)
+        self.zoom_cb = DssrUI.checkbox("Zoom to selection", checked=False)
         self.color_edit = QtWidgets.QLineEdit("auto")
-        self.block_file_combo = UIHelpers.combo(BLOCK_FEATURES, editable=True)
-        self.block_depth_spin = UIHelpers.spinbox(
-            0.01, 5.0, 0.5, decimals=True, step=0.05
-        )
-        self.make_blocks_btn = UIHelpers.button(
-            "Make blocks", self._make_blocks_clicked
-        )
+        self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
+        self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
+        self.make_blocks_btn = DssrUI.button("Make blocks", self._make_blocks_clicked)
 
         settings.addWidget(QtWidgets.QLabel("DSSR executable"), 0, 0)
         settings.addWidget(self.exe_edit, 0, 1, 1, 5)
@@ -1689,13 +1676,13 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addWidget(self.list_widget, 3)
 
         paging = QtWidgets.QHBoxLayout()
-        self.prev_btn = UIHelpers.button("Previous", lambda: self._change_page(-1))
-        self.select_all_btn = UIHelpers.button(
+        self.prev_btn = DssrUI.button("Previous", lambda: self._change_page(-1))
+        self.select_all_btn = DssrUI.button(
             "Select all",
             self._select_all_current_feature,
             "Select all items (or all filtered items) in PyMOL",
         )
-        self.next_btn = UIHelpers.button("Next", lambda: self._change_page(1))
+        self.next_btn = DssrUI.button("Next", lambda: self._change_page(1))
         self.page_label = QtWidgets.QLabel()
         paging.addWidget(self.prev_btn)
         paging.addWidget(self.select_all_btn)
@@ -1719,12 +1706,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         panel_title = QtWidgets.QHBoxLayout()
         panel_title.addWidget(QtWidgets.QLabel("Sequence · RNA 2D"))
         panel_title.addStretch(1)
-        self.minimize_2d_btn = UIHelpers.button(
+        self.minimize_2d_btn = DssrUI.button(
             "−",
             lambda: self.show_2d_btn.setChecked(False),
             "Collapse 2D; keep the layout and undo history",
         )
-        self.hide_2d_btn = UIHelpers.button(
+        self.hide_2d_btn = DssrUI.button(
             "×",
             lambda: self.show_2d_btn.setChecked(False),
             "Hide 2D; reopen with the 2D button above",
@@ -1907,7 +1894,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             return self._cache_data
         if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
             raise CmdException("No atoms in the requested object / selection.")
-        data = HelperFunctions._selection_json(selection, state, exe)
+        data = DssrUtils._selection_json(selection, state, exe)
         if precolor_on:
             cmd.color("gray", selection)
         self._cache_key, self._cache_data = key, data
@@ -2010,7 +1997,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.editor.view.setFocus(QtCore.Qt.OtherFocusReason)
         self._update_feature_counts(data)
         self.refresh_list()
-        self.report_box.setPlainText(ParsingAlgos._format_rna_summary_text(data))
+        self.report_box.setPlainText(DssrParser._format_rna_summary_text(data))
         self.data_tabs.setCurrentWidget(self.report_box)
         self.status_label.setText(
             "%s | state %d | %s" % (selection, state, model.summary())
@@ -2026,9 +2013,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if data is not None:
             for feature in FEATURE_ORDER:
                 count = (
-                    ParsingAlgos._count_pseudoknot_layers(data)
+                    DssrParser._count_pseudoknot_layers(data)
                     if feature == "pseudoknot"
-                    else len(ParsingAlgos.feature_entries(data, feature))
+                    else len(DssrParser.feature_entries(data, feature))
                 )
                 if count > 0:
                     label = "%s (%d)" % (FEATURE_LABELS.get(feature, feature), count)
@@ -2057,8 +2044,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         data = self._cache_data
         if data is not None:
             if self._current_feature == "pseudoknot":
-                layers = ParsingAlgos.parse_dotbracket_pseudoknots(
-                    ParsingAlgos._extract_dotbracket(data)
+                layers = DssrParser.parse_dotbracket_pseudoknots(
+                    DssrParser._extract_dotbracket(data)
                 )
                 self._items_all = [
                     (i, "%d: layer %s, %d pairs" % (i, key, len(layers[key])))
@@ -2068,7 +2055,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self._items_all = [
                     (i, self._entry_label(self._current_feature, entry, i))
                     for i, entry in enumerate(
-                        ParsingAlgos.feature_entries(data, self._current_feature), 1
+                        DssrParser.feature_entries(data, self._current_feature), 1
                     )
                 ]
         self._page = 0
@@ -2081,14 +2068,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         def short_id(match):
             identifier = match.group(0)
             try:
-                chain, resi = ParsingAlgos.parse_nt_id(identifier)
+                chain, resi = DssrParser.parse_nt_id(identifier)
                 parts = identifier.split("|")
                 atom = "/" + parts[5] if len(parts) > 5 and parts[5] else ""
                 return "%s:%s%s%s" % (chain or "–", parts[3], resi, atom)
             except (CmdException, IndexError):
                 return identifier
 
-        text = ParsingAlgos._preview_entry(feature, entry, index)
+        text = DssrParser._preview_entry(feature, entry, index)
         return re.sub(r"[^\s,;()]+\|[^\s,;()]*", short_id, text)
 
     def _on_filter_changed(self, *_args):
@@ -2104,7 +2091,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._items_filtered = [
             item
             for item in self._items_all
-            if HelperFunctions.matches_boolean_query(item[1], query)
+            if DssrUtils.matches_boolean_query(item[1], query)
         ]
         count = len(self._items_filtered)
         pages = max(1, (count + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
@@ -2121,12 +2108,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _entry_for_feature_index(self, data, feature, index):
         if feature == "pseudoknot":
-            layers = ParsingAlgos.parse_dotbracket_pseudoknots(
-                ParsingAlgos._extract_dotbracket(data)
+            layers = DssrParser.parse_dotbracket_pseudoknots(
+                DssrParser._extract_dotbracket(data)
             )
             key = sorted(layers)[index - 1]
             return {"layer": key, "pair_count": len(layers[key]), "pairs": layers[key]}
-        return ParsingAlgos.feature_entries(data, feature)[index - 1]
+        return DssrParser.feature_entries(data, feature)[index - 1]
 
     def _show_item_details(self, data, feature, index):
         entry = self._entry_for_feature_index(data, feature, index)
@@ -2161,7 +2148,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             for item in items:
                 index = item.data(QtCore.Qt.UserRole)
                 if index is not None:
-                    core = ParsingAlgos._build_residue_sel_from_dssr(
+                    core = DssrParser._build_residue_sel_from_dssr(
                         data, self._current_feature, int(index)
                     )
                     if core:
@@ -2245,7 +2232,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         radius = 0.25
 
         try:
-            DssrFunctions.dssr(
+            DssrCmd.dssr(
                 sel=sel,
                 f=feat,
                 i=idx,
@@ -2326,12 +2313,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 # Use only the items currently passing the boolean filter
                 indices = [item[0] for item in self._items_filtered]
             elif feature == "pseudoknot":
-                layers = ParsingAlgos.parse_dotbracket_pseudoknots(
-                    ParsingAlgos._extract_dotbracket(data)
+                layers = DssrParser.parse_dotbracket_pseudoknots(
+                    DssrParser._extract_dotbracket(data)
                 )
                 indices = list(range(1, len(layers) + 1))
             else:
-                entries = ParsingAlgos.feature_entries(data, feature)
+                entries = DssrParser.feature_entries(data, feature)
                 indices = list(range(1, len(entries) + 1))
 
             if not indices:
@@ -2345,7 +2332,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
             # 3. Build the combined PyMOL selection expression
             parts = [
-                ParsingAlgos._build_residue_sel_from_dssr(data, feature, idx)
+                DssrParser._build_residue_sel_from_dssr(data, feature, idx)
                 for idx in indices
             ]
             sel_str = " or ".join("(%s)" % part for part in parts if part)
@@ -2355,16 +2342,16 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
             # 4. Create named PyMOL selection: <feature>_filtered vs <feature>_all
             name = "%s_%s" % (feature.lower(), "filtered" if has_filter else "all")
-            DssrFunctions._create_feature_selection(name, selection, sel_str, quiet=0)
+            DssrCmd._create_feature_selection(name, selection, sel_str, quiet=0)
 
             # Apply custom user color if configured
             col = self.color_edit.text().strip() or "auto"
-            user_color = HelperFunctions._resolve_color_spec(col)
+            user_color = DssrUtils._resolve_color_spec(col)
             cmd.color(user_color if user_color else "pink", name)
 
             # Display sticks if the option is checked
             if self.display_cb.isChecked():
-                DssrFunctions._display_feature_selection(
+                DssrCmd._display_feature_selection(
                     name, display=1, stick_radius=0.25, do_zoom=0
                 )
 
@@ -2427,7 +2414,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 for item in self.list_widget.selectedItems()
             ]
             parts = [
-                ParsingAlgos._build_residue_sel_from_dssr(
+                DssrParser._build_residue_sel_from_dssr(
                     data, self._current_feature, int(index)
                 )
                 for index in indices
@@ -2454,7 +2441,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     n.isSelected() for n in self.editor.nodes
                 ):
                     sig = self.editor._node_residue_signature()
-                    res_parts = ParsingAlgos._compact_sel_from_residues(
+                    res_parts = DssrParser._compact_sel_from_residues(
                         {(c, r) for c, r in sig if c}
                     )
                     core = res_parts if res_parts else "all"
@@ -2465,8 +2452,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if cmd.count_atoms(scope, state=state) <= 0:
                 raise CmdException("Select a feature or some bases first.")
 
-            name = DssrFunctions._unused_name("dssr_blocks")
-            DssrFunctions.dssr_block(
+            name = DssrCmd._unused_name("dssr_blocks")
+            DssrCmd.dssr_block(
                 selection=scope,
                 state=state,
                 block_file=self.block_file_combo.currentText().strip() or "face",
@@ -2619,7 +2606,7 @@ class Dssr2DModel:
     @staticmethod
     def _safe_parse_nt_id(nt_id):
         try:
-            chain, resi = ParsingAlgos.parse_nt_id(nt_id)
+            chain, resi = DssrParser.parse_nt_id(nt_id)
             return str(chain), str(resi)
         except Exception:
             return "", ""
@@ -2650,7 +2637,7 @@ class Dssr2DModel:
         if not sstr_raw:
             try:
                 sstr_raw = cls._clean_dbn_text(
-                    ParsingAlgos._extract_dotbracket(dssr_data),
+                    DssrParser._extract_dotbracket(dssr_data),
                     keep_ampersand=True,
                 )
             except Exception:
@@ -3168,7 +3155,7 @@ __DSSR_FORNAC_APACHE_LICENSE__ = r"""
 # ---------------------------------------------------------------------------
 
 
-class _DSSRNaviewRegion:
+class DssrNaviewRegion:
     __slots__ = ("start1", "end1", "start2", "end2")
 
     def __init__(self):
@@ -3178,7 +3165,7 @@ class _DSSRNaviewRegion:
         self.end2 = 0
 
 
-class _DSSRNaviewBase:
+class DssrNaviewBase:
     __slots__ = ("mate", "x", "y", "extracted", "region")
 
     def __init__(self):
@@ -3189,7 +3176,7 @@ class _DSSRNaviewBase:
         self.region = None
 
 
-class _DSSRNaviewConnection:
+class DssrNaviewConnection:
     __slots__ = (
         "loop",
         "region",
@@ -3212,7 +3199,7 @@ class _DSSRNaviewConnection:
         self.extruded = False
 
 
-class _DSSRNaviewLoop:
+class DssrNaviewLoop:
     __slots__ = (
         "connections",
         "depth",
@@ -3235,7 +3222,7 @@ class _DSSRNaviewLoop:
         return len(self.connections)
 
 
-class _DSSRNaview:
+class DssrNaview:
     """Dependency-free Python NAView coordinates for a planar RNA scaffold."""
 
     ANUM = 9999.0
@@ -3267,12 +3254,12 @@ class _DSSRNaview:
                 % (len(pair_table), self.nbase)
             )
 
-        self.bases = [_DSSRNaviewBase() for _ in range(self.nbase + 1)]
-        self.regions = [_DSSRNaviewRegion() for _ in range(self.nbase + 1)]
+        self.bases = [DssrNaviewBase() for _ in range(self.nbase + 1)]
+        self.regions = [DssrNaviewRegion() for _ in range(self.nbase + 1)]
         self._read_in_bases(pair_table)
         self._find_regions()
 
-        self.loops = [_DSSRNaviewLoop() for _ in range(self.nbase + 1)]
+        self.loops = [DssrNaviewLoop() for _ in range(self.nbase + 1)]
         self.loop_count = 0
         self._construct_loop(0)
         self._find_central_loop()
@@ -3382,7 +3369,7 @@ class _DSSRNaview:
                     else:
                         raise RuntimeError("NAView loop construction invariant failed")
 
-                    connection = _DSSRNaviewConnection()
+                    connection = DssrNaviewConnection()
                     connection.loop = child_loop
                     connection.region = region
                     if index == region.start1:
@@ -3393,7 +3380,7 @@ class _DSSRNaview:
                         connection.end = region.end1
                     result.connections.append(connection)
 
-                    reverse = _DSSRNaviewConnection()
+                    reverse = DssrNaviewConnection()
                     reverse.loop = result
                     reverse.region = region
                     if index == region.start1:
@@ -4859,7 +4846,7 @@ class Dssr2DLayout:
 
         table = Dssr2DLayout._pair_table(model)
         try:
-            points = _DSSRNaview().coordinates(table)
+            points = DssrNaview().coordinates(table)
         except Exception as error:
             try:
                 model.warnings.append("NAView fallback: %s" % str(error))
@@ -5111,15 +5098,15 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         self.setZValue(5.0)
         self._apply_style(False)
         self._add_text()
-        UIHelpers.no_mouse(self.base_text_item)
+        DssrUI.no_mouse(self.base_text_item)
         self.setToolTip(self._tooltip())
 
     def _base_fill(self):
         if self.viewer.gel_style_enabled():
             return QtGui.QColor(236, 245, 252)
-        return HelperFunctions.base_style(
-            self.nt.get("base", ""), self.viewer.base_colors
-        )["fill"]
+        return DssrUtils.base_style(self.nt.get("base", ""), self.viewer.base_colors)[
+            "fill"
+        ]
 
     def _apply_style(self, selected):
         color = QtGui.QColor(225, 29, 72) if selected else QtGui.QColor(45, 45, 45)
@@ -5136,7 +5123,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         text.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
         text.setBrush(
             QtGui.QBrush(
-                HelperFunctions.base_text_color(
+                DssrUtils.base_text_color(
                     self.nt.get("base", ""), self.viewer.base_colors
                 )
             )
@@ -5404,7 +5391,7 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
                 border = QtGui.QColor(188, 235, 255, 225)
             else:
                 # Flat classical PyMOL base colors (soft pastel fill + crisp border)
-                style = HelperFunctions.base_style(
+                style = DssrUtils.base_style(
                     self.nt.get("base", ""), self.viewer.base_colors
                 )
                 fill = QtGui.QBrush(style["fill"])
@@ -5863,7 +5850,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             event.accept()
 
 
-class DssrSequenceView(QtWidgets.QTextEdit):
+class Dssr2DSequenceView(QtWidgets.QTextEdit):
     """One text document for the sequence, real residue ruler, and linked selection."""
 
     def __init__(self, editor):
@@ -5957,9 +5944,7 @@ class DssrSequenceView(QtWidgets.QTextEdit):
             cursor.setPosition(start)
             cursor.setPosition(end, QtGui.QTextCursor.KeepAnchor)
             style = QtGui.QTextCharFormat()
-            style.setForeground(
-                HelperFunctions.base_text_color(nt.get("base", ""), enabled)
-            )
+            style.setForeground(DssrUtils.base_text_color(nt.get("base", ""), enabled))
             style.setFontWeight(QtGui.QFont.Bold)
             cursor.setCharFormat(style)
         cursor.endEditBlock()
@@ -6479,7 +6464,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             label.setPos(best[1], best[2])
             used_label_rects.append(best[3])
             label.setZValue(8.0)
-            UIHelpers.no_mouse(label)
+            DssrUI.no_mouse(label)
 
     def _add_chain_labels(self):
         total = len(self.nodes)
@@ -6513,7 +6498,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setBrush(QtGui.QBrush(term_color))
                 label.setPos(offset[0], offset[1])
                 label.setZValue(8.0)
-                UIHelpers.no_mouse(label)
+                DssrUI.no_mouse(label)
                 br = label.boundingRect()
                 pos = self.nodes[index].pos()
                 chain_rects.append(
@@ -6536,7 +6521,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setBrush(QtGui.QBrush(term_color))
                 label.setPos(-48.0, -52.0)
                 label.setZValue(8.0)
-                UIHelpers.no_mouse(label)
+                DssrUI.no_mouse(label)
                 br = label.boundingRect()
                 pos = self.nodes[first].pos()
                 chain_rects.append(
@@ -7094,9 +7079,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         for node in self.nodes:
             node.base_text_item.setBrush(
                 QtGui.QBrush(
-                    HelperFunctions.base_text_color(
-                        node.nt.get("base", ""), self.base_colors
-                    )
+                    DssrUtils.base_text_color(node.nt.get("base", ""), self.base_colors)
                 )
             )
             for child in node.childItems():
@@ -7245,7 +7228,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 pass
             return
 
-        core = ParsingAlgos._compact_sel_from_residues(
+        core = DssrParser._compact_sel_from_residues(
             {(chain, resi) for chain, resi in signature if chain}
         )
         pieces = ["(%s)" % core] if core else []
@@ -7266,18 +7249,18 @@ class Dssr2DEditor(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         top = QtWidgets.QHBoxLayout()
         root.addLayout(top)
-        self.layout_combo = UIHelpers.combo(LAYOUT_CHOICES)
+        self.layout_combo = DssrUI.combo(LAYOUT_CHOICES)
         self.layout_combo.setCurrentText(self.algorithm)
         top.addWidget(self.layout_combo)
-        self.fit_btn = UIHelpers.button("Fit", self.fit_scene, "Fit drawing [F]")
-        self.undo_btn = UIHelpers.button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
-        self.redo_btn = UIHelpers.button("Redo", self.redo_layout, "Redo [Ctrl+Y]")
+        self.fit_btn = DssrUI.button("Fit", self.fit_scene, "Fit drawing [F]")
+        self.undo_btn = DssrUI.button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
+        self.redo_btn = DssrUI.button("Redo", self.redo_layout, "Redo [Ctrl+Y]")
         for button in (self.fit_btn, self.undo_btn, self.redo_btn):
             top.addWidget(button)
-        self.redraw_btn = UIHelpers.button("Reset layout", self.reset_layout)
+        self.redraw_btn = DssrUI.button("Reset layout", self.reset_layout)
         top.addWidget(self.redraw_btn)
         top.addStretch(1)
-        self.file_menu_btn = UIHelpers.menu_button(
+        self.file_menu_btn = DssrUI.menu_button(
             "File",
             (
                 ("Export image…", self.export_image),
@@ -7288,7 +7271,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self,
         )
         top.addWidget(self.file_menu_btn)
-        self.selection_menu_btn = UIHelpers.menu_button(
+        self.selection_menu_btn = DssrUI.menu_button(
             "Selection",
             (
                 ("Select all [Ctrl+A]", self.select_all_bases),
@@ -7310,7 +7293,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.interaction_combo.addItem("Brush select [B]", "brush")
         self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
         tools.addWidget(self.interaction_combo)
-        self.brush_radius_spin = UIHelpers.spinbox(
+        self.brush_radius_spin = DssrUI.spinbox(
             8, 100, 32, suffix=" px", tip="Brush radius"
         )
         tools.addWidget(self.brush_radius_spin)
@@ -7329,7 +7312,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             lambda: self._update_editor_status("drag mode changed")
         )
         tools.addWidget(self.drag_mode_combo)
-        self.gel_style_cb = UIHelpers.checkbox(
+        self.gel_style_cb = DssrUI.checkbox(
             "Gel",
             False,
             self._gel_mode_toggled,
@@ -7340,25 +7323,25 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         self.options_panel = QtWidgets.QGroupBox("Display and 3D")
         options = QtWidgets.QGridLayout(self.options_panel)
-        self.number_spin = UIHelpers.spinbox(0, 10000, self.number_every)
-        self.tertiary_cb = UIHelpers.checkbox("Extra DSSR pairs", self.show_tertiary)
-        self.base_colors_cb = UIHelpers.checkbox(
+        self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
+        self.tertiary_cb = DssrUI.checkbox("Extra DSSR pairs", self.show_tertiary)
+        self.base_colors_cb = DssrUI.checkbox(
             "Base colors", True, tip="Color bases using classical PyMOL/DSSR scheme"
         )
-        self.circles_cb = UIHelpers.checkbox(
+        self.circles_cb = DssrUI.checkbox(
             "Circles",
             True,
             changed=self._circles_toggled,
             tip="Show or hide circular node borders around bases",
         )
-        self.follow_spin = UIHelpers.spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
-        self.live_3d_cb = UIHelpers.checkbox(
+        self.follow_spin = DssrUI.spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
+        self.live_3d_cb = DssrUI.checkbox(
             "3D highlight", False, self._sync_pymol_selection
         )
-        self.reverse_3d_cb = UIHelpers.checkbox(
+        self.reverse_3d_cb = DssrUI.checkbox(
             "3D → 2D sync", True, self._reverse_sync_toggled
         )
-        self.zoom_3d_cb = UIHelpers.checkbox("Zoom after brush", False)
+        self.zoom_3d_cb = DssrUI.checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
         options.addWidget(self.tertiary_cb, 0, 2)
@@ -7373,7 +7356,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.options_panel.hide()
         self.options_btn.toggled.connect(self.options_panel.setVisible)
 
-        self.sequence_view = DssrSequenceView(self)
+        self.sequence_view = Dssr2DSequenceView(self)
         root.addWidget(self.sequence_view)
         self.scene = QtWidgets.QGraphicsScene(self)
         self.view = Dssr2DGraphicsView(self.scene, self)
@@ -7431,11 +7414,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
 
 # Public PyMOL commands are registered once
-dssr_select = DssrFunctions.dssr_select
+dssr_select = DssrCmd.dssr_select
 dssr_gui = DssrGuiDialog.dssr_gui
-dssr_block = DssrFunctions.dssr_block
-dssr_seq = DssrFunctions.dssr_seq
-dssr_2d = DssrFunctions.dssr_2d
+dssr_block = DssrCmd.dssr_block
+dssr_seq = DssrCmd.dssr_seq
+dssr_2d = DssrCmd.dssr_2d
 
 for _command in (dssr_select, dssr_gui, dssr_block, dssr_seq, dssr_2d):
     cmd.extend(_command.__name__, _command)
