@@ -2856,15 +2856,12 @@ class Dssr2DModel:
         )
 
 
-__DSSR_FORNAC_NOTICE__ = (
-    "Python adaptation of ViennaRNA/fornac src/naview/naview.js; "
-    "fornac authors Peter Kerpedjiev, Stefan Hammer, and Ronny Lorenz; "
-    "licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)."
-)
-
-
 # ---------------------------------------------------------------------------
 # Bundled NAView geometry engine (1-based internal indexing, planar scaffold)
+# ---------------------------------------------------------------------------
+# Python adaptation of ViennaRNA/fornac src/naview/naview.js
+# Fornac authors: Peter Kerpedjiev, Stefan Hammer, and Ronny Lorenz
+# Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 # ---------------------------------------------------------------------------
 
 
