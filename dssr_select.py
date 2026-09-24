@@ -1,21 +1,21 @@
 # dssr_select.py
-# DSSR-based selection of RNA structural features in PyMOL
+# DSSR-based selection and 2D visualization of RNA structural features in PyMOL
 #
-# (c) 2026 Bener Dulger, Eric Chen, and Xiang-Jun Lu
+# (c) 2026 Eric Chen, Bener Dulger, and Xiang-Jun Lu
 #
-# This project was initiated and coordinated by Xiang-Jun Lu.
+# Project conceived, directed, and actively co-developed by Xiang-Jun Lu, including
+#       core architecture, ongoing refactoring, bug fixes, and feature integration.
 #
 # CONTRIBUTIONS:
-# - Bener Dulger: Initial implementation of structural feature selection and JSON parsing;
-#                 engineered the modular, class-based architectural refactor for v1.1.0-dev.
-# - Eric Chen: Developed the Qt-based GUI, incorporated dssr_block functionality,
-#              enhanced feature parsing, and performed code consolidation of v1.0.0.
+# - Eric Chen: Developed the Qt GUI ('dssr_gui'), integrated 'dssr_block', and
+#              built the interactive RNA 2D layout studio ('dssr_2d').
+# - Bener Dulger: Initial structural feature selection and JSON parsing; ongoing
+#                 feature development, architectural refactoring, and documentation.
 # - Thomas Holder: Original 'dssr_block' logic (c) Schrodinger LLC.
 #
 # LICENSE: BSD 2-Clause
 #
-# This plugin incorporates code from 'dssr_block'.
-# Redistributions must retain the original copyright notice and this license.
+# Incorporates code from 'dssr_block' and the ViennaRNA/fornac NAView engine.
 
 from pymol import cmd, CmdException
 from pymol.Qt import QtWidgets, QtCore
