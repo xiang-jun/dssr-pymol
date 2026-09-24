@@ -2950,824 +2950,6 @@ class Dssr2DModel:
         )
 
 
-# RNA layout algorithms
-class Dssr2DLayout:
-    """Dependency-free layout algorithms for RNA graphs."""
-
-    @staticmethod
-    def circular(model):
-        n = len(model.nts)
-        if n <= 0:
-            return []
-        break_gap = 0.40
-        total_gap = break_gap * len(model.chain_breaks)
-        step = (2.0 * math.pi - total_gap) / max(1, n)
-        radius = max(150.0, (n * 38.0) / (2.0 * math.pi))
-        theta = -math.pi / 2.0
-        out = []
-        for i in range(n):
-            out.append((radius * math.cos(theta), radius * math.sin(theta)))
-            theta += step
-            if i in model.chain_breaks:
-                theta += break_gap
-        return out
-
-    @staticmethod
-    def linear(model):
-        out = []
-        x = 0.0
-        for i in range(len(model.nts)):
-            out.append((x, 0.0))
-            x += 42.0
-            if i in model.chain_breaks:
-                x += 70.0
-        if out:
-            mid = (out[0][0] + out[-1][0]) / 2.0
-            out = [(x - mid, y) for x, y in out]
-        return out
-
-    @staticmethod
-    def _v_add(a, b):
-        return (a[0] + b[0], a[1] + b[1])
-
-    @staticmethod
-    def _v_mul(a, scalar):
-        return (a[0] * scalar, a[1] * scalar)
-
-    @staticmethod
-    def _v_norm(a):
-        length = math.hypot(a[0], a[1])
-        if length <= 1.0e-12:
-            return (0.0, 1.0)
-        return (a[0] / length, a[1] / length)
-
-    @staticmethod
-    def _v_rotate(a, angle):
-        c = math.cos(angle)
-        s = math.sin(angle)
-        return (a[0] * c - a[1] * s, a[0] * s + a[1] * c)
-
-    @staticmethod
-    def _planar_pair_table(model):
-        n = len(model.nts)
-        table = [-1] * n
-        for pair in model.planar_secondary_pairs():
-            i = int(pair.get("i", -1))
-            j = int(pair.get("j", -1))
-            if i > j:
-                i, j = j, i
-            if i < 0 or j >= n or i == j:
-                continue
-            if table[i] == -1 and table[j] == -1:
-                table[i] = j
-                table[j] = i
-        return table
-
-    @staticmethod
-    def _stem_tree(pair_table, chain_breaks):
-        stems = []
-        n = len(pair_table)
-        breaks = set(chain_breaks)
-
-        for i in range(n):
-            j = pair_table[i]
-            if j <= i:
-                continue
-
-            previous_is_same_stem = (
-                i > 0
-                and (i - 1) not in breaks
-                and j < n - 1
-                and j not in breaks
-                and pair_table[i - 1] == j + 1
-            )
-            if previous_is_same_stem:
-                continue
-
-            pairs = []
-            a, b = i, j
-            while a < b and pair_table[a] == b:
-                pairs.append((a, b))
-                if a in breaks or (b - 1) in breaks:
-                    break
-                a += 1
-                b -= 1
-
-            if not pairs:
-                continue
-            stems.append(
-                {
-                    "outer_i": pairs[0][0],
-                    "outer_j": pairs[0][1],
-                    "inner_i": pairs[-1][0],
-                    "inner_j": pairs[-1][1],
-                    "pairs": pairs,
-                    "parent": None,
-                    "children": [],
-                }
-            )
-
-        # The smallest containing stem is the direct parent.
-        for stem in stems:
-            containers = [
-                other
-                for other in stems
-                if other is not stem
-                and other["inner_i"] < stem["outer_i"]
-                and stem["outer_j"] < other["inner_j"]
-            ]
-            if containers:
-                parent = min(
-                    containers,
-                    key=lambda other: other["inner_j"] - other["inner_i"],
-                )
-                stem["parent"] = parent
-                parent["children"].append(stem)
-
-        for stem in stems:
-            stem["children"].sort(key=lambda child: child["outer_i"])
-        return stems
-
-    @staticmethod
-    def _radiate_general(model):
-        """Draw a planar stem/loop scaffold and overlay pseudoknots later."""
-        n = len(model.nts)
-        if n <= 0:
-            return []
-
-        pair_table = Dssr2DLayout._planar_pair_table(model)
-        stems = Dssr2DLayout._stem_tree(pair_table, model.chain_breaks)
-        if not stems:
-            return Dssr2DLayout.circular(model)
-
-        positions = [None] * n
-        directions = [None] * n
-        rise = 40.0
-        half_width = 18.0
-        placed_stems = set()
-
-        def place_stem(stem, outer_center, direction):
-            marker = id(stem)
-            if marker in placed_stems:
-                return
-            placed_stems.add(marker)
-
-            direction = Dssr2DLayout._v_norm(direction)
-            normal = (-direction[1], direction[0])
-            pairs = stem["pairs"]
-
-            for k, (i, j) in enumerate(pairs):
-                center = Dssr2DLayout._v_add(
-                    outer_center,
-                    Dssr2DLayout._v_mul(direction, k * rise),
-                )
-                positions[i] = Dssr2DLayout._v_add(
-                    center,
-                    Dssr2DLayout._v_mul(normal, half_width),
-                )
-                positions[j] = Dssr2DLayout._v_add(
-                    center,
-                    Dssr2DLayout._v_mul(normal, -half_width),
-                )
-                directions[i] = direction
-                directions[j] = direction
-
-            inner_center = Dssr2DLayout._v_add(
-                outer_center,
-                Dssr2DLayout._v_mul(direction, (len(pairs) - 1) * rise),
-            )
-            children = list(stem["children"])
-            count = len(children)
-            if count <= 0:
-                return
-
-            if count == 1:
-                angles = [0.0]
-            else:
-                max_angle = math.radians(min(78.0, 35.0 + 15.0 * (count - 1)))
-                angles = [
-                    -max_angle + (2.0 * max_angle * k / float(count - 1))
-                    for k in range(count)
-                ]
-
-            branch_distance = 85.0 + 10.0 * max(0, count - 2)
-            for child, angle in zip(children, angles):
-                child_direction = Dssr2DLayout._v_rotate(direction, angle)
-                child_center = Dssr2DLayout._v_add(
-                    inner_center,
-                    Dssr2DLayout._v_mul(child_direction, branch_distance),
-                )
-                place_stem(child, child_center, child_direction)
-
-        top_level = [stem for stem in stems if stem["parent"] is None]
-        top_level.sort(key=lambda stem: stem["outer_i"])
-        top_count = len(top_level)
-
-        if top_count == 1:
-            place_stem(top_level[0], (0.0, 0.0), (0.0, 1.0))
-        elif top_count <= 4:
-            max_angle = math.radians(70.0)
-            angles = [
-                -max_angle + (2.0 * max_angle * k / float(top_count - 1))
-                for k in range(top_count)
-            ]
-            for stem, angle in zip(top_level, angles):
-                direction = Dssr2DLayout._v_rotate((0.0, 1.0), angle)
-                center = Dssr2DLayout._v_mul(direction, 80.0)
-                place_stem(stem, center, direction)
-        else:
-            for k, stem in enumerate(top_level):
-                angle = -math.pi / 2.0 + 2.0 * math.pi * k / float(top_count)
-                direction = (math.cos(angle), math.sin(angle))
-                center = Dssr2DLayout._v_mul(direction, 120.0)
-                place_stem(stem, center, direction)
-
-        def fill_unknown_run(start, end, segment_start, segment_end):
-            count = end - start + 1
-            previous = start - 1 if start > segment_start else None
-            following = end + 1 if end < segment_end else None
-
-            if previous is not None and following is not None:
-                a = positions[previous]
-                b = positions[following]
-                if a is None or b is None:
-                    return
-
-                average_direction = (0.0, 0.0)
-                for value in (directions[previous], directions[following]):
-                    if value is not None:
-                        average_direction = Dssr2DLayout._v_add(
-                            average_direction, value
-                        )
-                if math.hypot(*average_direction) < 0.1:
-                    chord = (b[0] - a[0], b[1] - a[1])
-                    average_direction = (-chord[1], chord[0])
-                average_direction = Dssr2DLayout._v_norm(average_direction)
-
-                if pair_table[previous] == following:
-                    midpoint = ((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)
-                    chord_length = math.hypot(b[0] - a[0], b[1] - a[1])
-                    half_chord = chord_length * 0.5
-                    radius = max(
-                        half_chord + 1.0,
-                        ((count + 1) * 34.0 + chord_length) / (2.0 * math.pi),
-                    )
-                    center_distance = math.sqrt(
-                        max(1.0, radius * radius - half_chord * half_chord)
-                    )
-                    circle_center = Dssr2DLayout._v_add(
-                        midpoint,
-                        Dssr2DLayout._v_mul(average_direction, center_distance),
-                    )
-                    theta_a = math.atan2(
-                        a[1] - circle_center[1], a[0] - circle_center[0]
-                    )
-                    theta_b = math.atan2(
-                        b[1] - circle_center[1], b[0] - circle_center[0]
-                    )
-                    minor_sweep = (theta_b - theta_a) % (2.0 * math.pi)
-                    long_sweep = 2.0 * math.pi - minor_sweep
-                    for offset, index in enumerate(range(start, end + 1), 1):
-                        t = offset / float(count + 1)
-                        theta = theta_a - long_sweep * t
-                        positions[index] = (
-                            circle_center[0] + radius * math.cos(theta),
-                            circle_center[1] + radius * math.sin(theta),
-                        )
-                        directions[index] = average_direction
-                    return
-
-                height = max(35.0, min(150.0, 18.0 * count + 10.0))
-                midpoint = ((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)
-                control = Dssr2DLayout._v_add(
-                    midpoint,
-                    Dssr2DLayout._v_mul(average_direction, height),
-                )
-                for offset, index in enumerate(range(start, end + 1), 1):
-                    t = offset / float(count + 1)
-                    one_minus = 1.0 - t
-                    positions[index] = (
-                        one_minus * one_minus * a[0]
-                        + 2.0 * one_minus * t * control[0]
-                        + t * t * b[0],
-                        one_minus * one_minus * a[1]
-                        + 2.0 * one_minus * t * control[1]
-                        + t * t * b[1],
-                    )
-                    directions[index] = average_direction
-                return
-
-            if following is not None and positions[following] is not None:
-                anchor = positions[following]
-                direction = directions[following] or (0.0, 1.0)
-                normal = (-direction[1], direction[0])
-                for offset, index in enumerate(range(end, start - 1, -1), 1):
-                    positions[index] = Dssr2DLayout._v_add(
-                        anchor,
-                        Dssr2DLayout._v_add(
-                            Dssr2DLayout._v_mul(direction, -36.0 * offset),
-                            Dssr2DLayout._v_mul(normal, -10.0 * offset),
-                        ),
-                    )
-                    directions[index] = direction
-                return
-
-            if previous is not None and positions[previous] is not None:
-                anchor = positions[previous]
-                direction = directions[previous] or (0.0, 1.0)
-                normal = (-direction[1], direction[0])
-                for offset, index in enumerate(range(start, end + 1), 1):
-                    positions[index] = Dssr2DLayout._v_add(
-                        anchor,
-                        Dssr2DLayout._v_add(
-                            Dssr2DLayout._v_mul(direction, -36.0 * offset),
-                            Dssr2DLayout._v_mul(normal, 10.0 * offset),
-                        ),
-                    )
-                    directions[index] = direction
-                return
-
-            for offset, index in enumerate(range(start, end + 1)):
-                positions[index] = (offset * 40.0, 0.0)
-                directions[index] = (1.0, 0.0)
-
-        segments = []
-        segment_start = 0
-        for break_after in sorted(model.chain_breaks):
-            if break_after >= segment_start:
-                segments.append((segment_start, min(n - 1, break_after)))
-                segment_start = break_after + 1
-        if segment_start < n:
-            segments.append((segment_start, n - 1))
-
-        for segment_start, segment_end in segments:
-            index = segment_start
-            while index <= segment_end:
-                if positions[index] is not None:
-                    index += 1
-                    continue
-                run_start = index
-                while index <= segment_end and positions[index] is None:
-                    index += 1
-                fill_unknown_run(
-                    run_start,
-                    index - 1,
-                    segment_start,
-                    segment_end,
-                )
-
-        fallback = Dssr2DLayout.circular(model)
-        for i in range(n):
-            if positions[i] is None:
-                positions[i] = fallback[i]
-
-        center_x = sum(point[0] for point in positions) / float(n)
-        center_y = sum(point[1] for point in positions) / float(n)
-        return [(point[0] - center_x, point[1] - center_y) for point in positions]
-
-    @staticmethod
-    def _solve_circle(edge_lengths):
-        """Solve a circle whose successive chord lengths close one revolution."""
-        lengths = [max(1.0, float(value)) for value in edge_lengths]
-        if not lengths:
-            return 30.0, []
-
-        lower = max(lengths) * 0.5 + 1.0e-7
-
-        def angles_at(radius):
-            return [
-                2.0 * math.asin(min(1.0, length / (2.0 * radius))) for length in lengths
-            ]
-
-        lower_angles = angles_at(lower)
-        lower_total = sum(lower_angles)
-        if lower_total < 2.0 * math.pi:
-            scale = (2.0 * math.pi) / max(1.0e-12, lower_total)
-            return lower, [angle * scale for angle in lower_angles]
-
-        upper = max(sum(lengths), lower * 2.0)
-        while sum(angles_at(upper)) > 2.0 * math.pi:
-            upper *= 2.0
-
-        for _ in range(80):
-            middle = 0.5 * (lower + upper)
-            if sum(angles_at(middle)) > 2.0 * math.pi:
-                lower = middle
-            else:
-                upper = middle
-
-        radius = 0.5 * (lower + upper)
-        return radius, angles_at(radius)
-
-    @staticmethod
-    def _normalize(vector, fallback=(0.0, 1.0)):
-        length = math.hypot(float(vector[0]), float(vector[1]))
-        if length <= 1.0e-12:
-            return fallback
-        return (float(vector[0]) / length, float(vector[1]) / length)
-
-    @staticmethod
-    def _quadratic_equal(indices, start, stop, control, positions):
-        """Place indices at near-equal arc-length intervals on a quadratic curve."""
-        indices = list(indices)
-        if not indices:
-            return
-
-        samples = max(160, 28 * (len(indices) + 1))
-        points = []
-        for sample in range(samples + 1):
-            t = sample / float(samples)
-            u = 1.0 - t
-            points.append(
-                (
-                    u * u * start[0] + 2.0 * u * t * control[0] + t * t * stop[0],
-                    u * u * start[1] + 2.0 * u * t * control[1] + t * t * stop[1],
-                )
-            )
-
-        cumulative = [0.0]
-        for first, second in zip(points, points[1:]):
-            cumulative.append(
-                cumulative[-1] + math.hypot(second[0] - first[0], second[1] - first[1])
-            )
-        total = cumulative[-1]
-        if total <= 1.0e-12:
-            return
-
-        for offset, index in enumerate(indices, 1):
-            target = total * offset / float(len(indices) + 1)
-            right = bisect.bisect_left(cumulative, target)
-            right = min(max(1, right), len(points) - 1)
-            left = right - 1
-            span = cumulative[right] - cumulative[left]
-            fraction = 0.0 if span <= 1.0e-12 else (target - cumulative[left]) / span
-            positions[index] = (
-                points[left][0] + fraction * (points[right][0] - points[left][0]),
-                points[left][1] + fraction * (points[right][1] - points[left][1]),
-            )
-
-    @staticmethod
-    def _place_loop_circle(
-        indices,
-        start,
-        stop,
-        outward_direction,
-        positions,
-        backbone_distance=34.0,
-        pair_distance=42.0,
-    ):
-        """Place a hairpin on the long arc opposite its supporting base pair."""
-        indices = list(indices)
-        if not indices:
-            return
-
-        outward = Dssr2DLayout._normalize(outward_direction)
-        radius, angles = Dssr2DLayout._solve_circle(
-            [float(backbone_distance)] * (len(indices) + 1) + [float(pair_distance)]
-        )
-
-        midpoint = (
-            0.5 * (start[0] + stop[0]),
-            0.5 * (start[1] + stop[1]),
-        )
-        half_chord = 0.5 * math.hypot(stop[0] - start[0], stop[1] - start[1])
-        center_distance = math.sqrt(max(0.0, radius * radius - half_chord * half_chord))
-        center = (
-            midpoint[0] + outward[0] * center_distance,
-            midpoint[1] + outward[1] * center_distance,
-        )
-        theta_start = math.atan2(start[1] - center[1], start[0] - center[0])
-
-        candidates = []
-        for sign in (-1.0, 1.0):
-            theta = theta_start
-            candidate = []
-            for offset, index in enumerate(indices):
-                theta += sign * angles[offset]
-                candidate.append(
-                    (
-                        center[0] + radius * math.cos(theta),
-                        center[1] + radius * math.sin(theta),
-                    )
-                )
-            score = sum(
-                (point[0] - midpoint[0]) * outward[0]
-                + (point[1] - midpoint[1]) * outward[1]
-                for point in candidate
-            ) / float(max(1, len(candidate)))
-            candidates.append((score, candidate))
-
-        chosen = max(candidates, key=lambda item: item[0])[1]
-        for index, point in zip(indices, chosen):
-            positions[index] = point
-
-    @staticmethod
-    def _detect_trna_topology(model):
-        """Detect a tRNA-like cloverleaf from topology, never from a PDB name."""
-        total = len(model.nts)
-        if total < 55 or total > 110 or model.chain_count() != 1:
-            return None
-
-        pair_table = Dssr2DLayout._planar_pair_table(model)
-        stems = Dssr2DLayout._stem_tree(pair_table, model.chain_breaks)
-        candidates = []
-        for stem in stems:
-            children = list(stem.get("children", []))
-            if len(stem.get("pairs", [])) < 5 or len(children) != 3:
-                continue
-            if any(len(child.get("pairs", [])) < 3 for child in children):
-                continue
-            if stem.get("outer_i", 999999) > 5:
-                continue
-            if (total - 1) - stem.get("outer_j", -1) > 10:
-                continue
-            ordered = sorted(children, key=lambda child: child["outer_i"])
-            if any(child["inner_j"] - child["inner_i"] < 4 for child in ordered):
-                continue
-            score = (
-                20 * len(stem.get("pairs", []))
-                + sum(len(child.get("pairs", [])) for child in ordered)
-                - stem["outer_i"]
-                - ((total - 1) - stem["outer_j"])
-            )
-            candidates.append((score, stem, ordered))
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        _score, root, arms = candidates[0]
-        return {
-            "root": root,
-            "arms": arms,
-            "pair_table": pair_table,
-            "stems": stems,
-        }
-
-    @staticmethod
-    def _trna_cloverleaf(model, topology):
-        """Generate a clean, conventional four-arm tRNA cloverleaf."""
-        total = len(model.nts)
-        root = topology["root"]
-        arms = topology["arms"]
-        positions = [None] * total
-
-        pair_distance = 42.0
-        helix_rise = 38.0
-        backbone_distance = 34.0
-
-        def place_stem(stem, outer_center, direction):
-            direction = Dssr2DLayout._normalize(direction)
-            normal = (-direction[1], direction[0])
-            for offset, (left, right) in enumerate(stem["pairs"]):
-                center = (
-                    outer_center[0] + direction[0] * helix_rise * offset,
-                    outer_center[1] + direction[1] * helix_rise * offset,
-                )
-                positions[left] = (
-                    center[0] + normal[0] * pair_distance * 0.5,
-                    center[1] + normal[1] * pair_distance * 0.5,
-                )
-                positions[right] = (
-                    center[0] - normal[0] * pair_distance * 0.5,
-                    center[1] - normal[1] * pair_distance * 0.5,
-                )
-
-        root_inner_center = (0.0, -88.0)
-        root_direction = (0.0, 1.0)
-        root_outer_center = (
-            root_inner_center[0],
-            root_inner_center[1] - helix_rise * (len(root["pairs"]) - 1),
-        )
-        place_stem(root, root_outer_center, root_direction)
-
-        arm_centers = [(-150.0, -4.0), (0.0, 160.0), (150.0, -4.0)]
-        arm_directions = [(-1.0, 0.0), (0.0, 1.0), (1.0, 0.0)]
-
-        for arm, center, direction in zip(arms, arm_centers, arm_directions):
-            place_stem(arm, center, direction)
-            loop_indices = range(arm["inner_i"] + 1, arm["inner_j"])
-            Dssr2DLayout._place_loop_circle(
-                loop_indices,
-                positions[arm["inner_i"]],
-                positions[arm["inner_j"]],
-                direction,
-                positions,
-                backbone_distance=backbone_distance,
-                pair_distance=pair_distance,
-            )
-
-        junctions = [
-            (root["inner_i"], arms[0]["outer_i"], (-106.0, -106.0)),
-            (arms[0]["outer_j"], arms[1]["outer_i"], (-122.0, 96.0)),
-            (arms[1]["outer_j"], arms[2]["outer_i"], (122.0, 96.0)),
-            (arms[2]["outer_j"], root["inner_j"], (106.0, -106.0)),
-        ]
-        for first, last, control in junctions:
-            Dssr2DLayout._quadratic_equal(
-                range(first + 1, last),
-                positions[first],
-                positions[last],
-                control,
-                positions,
-            )
-
-        for offset, index in enumerate(range(root["outer_i"] - 1, -1, -1), 1):
-            anchor = positions[root["outer_i"]]
-            positions[index] = (
-                anchor[0] - backbone_distance * offset,
-                anchor[1] - 8.0 * offset,
-            )
-        for offset, index in enumerate(range(root["outer_j"] + 1, total), 1):
-            anchor = positions[root["outer_j"]]
-            positions[index] = (
-                anchor[0] + backbone_distance * offset,
-                anchor[1] - 8.0 * offset,
-            )
-
-        fallback = Dssr2DLayout._radiate_general(model)
-        for index in range(total):
-            if positions[index] is None:
-                positions[index] = fallback[index]
-
-        center_x = sum(point[0] for point in positions) / float(total)
-        center_y = sum(point[1] for point in positions) / float(total)
-        model._dssr2d_layout_variant = "tRNA cloverleaf"
-        return [(point[0] - center_x, point[1] - center_y) for point in positions]
-
-    @staticmethod
-    def _pair_table(model, start=0, end=None):
-        """Create a 1-based NAView pair table from the planar DSSR scaffold."""
-        total = len(model.nts)
-        if end is None:
-            end = total - 1
-        start = max(0, int(start))
-        end = min(total - 1, int(end))
-        count = max(0, end - start + 1)
-        table = [count] + [0] * count
-        for pair in model.planar_secondary_pairs():
-            first = int(pair.get("i", -1))
-            second = int(pair.get("j", -1))
-            if first > second:
-                first, second = second, first
-            if first < start or second > end:
-                continue
-            local_first = first - start + 1
-            local_second = second - start + 1
-            if table[local_first] == 0 and table[local_second] == 0:
-                table[local_first] = local_second
-                table[local_second] = local_first
-        return table
-
-    @staticmethod
-    def _center(points):
-        if not points:
-            return []
-        center_x = sum(point[0] for point in points) / float(len(points))
-        center_y = sum(point[1] for point in points) / float(len(points))
-        return [(point[0] - center_x, point[1] - center_y) for point in points]
-
-    @staticmethod
-    def _rotate(points, angle):
-        cosine = math.cos(angle)
-        sine = math.sin(angle)
-        return [
-            (
-                point[0] * cosine - point[1] * sine,
-                point[0] * sine + point[1] * cosine,
-            )
-            for point in points
-        ]
-
-    @staticmethod
-    def _standardize_trna_orientation(model, points):
-        """Orient tRNA with acceptor stem down, anticodon arm up."""
-        try:
-            topology = Dssr2DLayout._detect_trna_topology(model)
-        except Exception:
-            topology = None
-        if not topology or len(points) != len(model.nts):
-            return points, False
-
-        root = topology["root"]
-        arms = topology["arms"]
-        outer_first, outer_second = root["pairs"][0]
-        inner_first, inner_second = root["pairs"][-1]
-        outer_center = (
-            0.5 * (points[outer_first][0] + points[outer_second][0]),
-            0.5 * (points[outer_first][1] + points[outer_second][1]),
-        )
-        inner_center = (
-            0.5 * (points[inner_first][0] + points[inner_second][0]),
-            0.5 * (points[inner_first][1] + points[inner_second][1]),
-        )
-        vector_x = outer_center[0] - inner_center[0]
-        vector_y = outer_center[1] - inner_center[1]
-        if math.hypot(vector_x, vector_y) > 1.0e-8:
-            current_angle = math.atan2(vector_y, vector_x)
-            points = Dssr2DLayout._rotate(points, math.pi / 2.0 - current_angle)
-
-        if len(arms) >= 3:
-            d_indices = list(
-                range(int(arms[0]["outer_i"]), int(arms[0]["outer_j"]) + 1)
-            )
-            t_indices = list(
-                range(int(arms[2]["outer_i"]), int(arms[2]["outer_j"]) + 1)
-            )
-            d_x = sum(points[index][0] for index in d_indices) / float(
-                max(1, len(d_indices))
-            )
-            t_x = sum(points[index][0] for index in t_indices) / float(
-                max(1, len(t_indices))
-            )
-            if d_x > t_x:
-                points = [(-point[0], point[1]) for point in points]
-
-            v_start, v_end = int(arms[1]["outer_j"]) + 1, int(arms[2]["outer_i"])
-            if 3 <= v_end - v_start <= 7:
-                p1, p2 = points[v_start - 1], points[v_end]
-                ctrl = (max(p1[0], p2[0]) + 48.0, min(p1[1], p2[1]) - 68.0)
-                Dssr2DLayout._quadratic_equal(
-                    range(v_start, v_end), p1, p2, ctrl, points
-                )
-
-        return Dssr2DLayout._center(points), True
-
-    @staticmethod
-    def _naview_layout(model):
-        """Return one coherent NAView-style scientific layout."""
-        total = len(model.nts)
-        if total <= 0:
-            return []
-
-        scaffold_pair_count = len(model.planar_secondary_pairs())
-        if scaffold_pair_count <= 0:
-            model._dssr2d_layout_variant = "unpaired circular"
-            return Dssr2DLayout.circular(model)
-
-        if model.chain_count() != 1:
-            model._dssr2d_layout_variant = "multi-chain radiate fallback"
-            return Dssr2DLayout.radiate(model)
-
-        table = Dssr2DLayout._pair_table(model)
-        try:
-            points = _DSSRNaview().coordinates(table)
-        except Exception as error:
-            try:
-                model.warnings.append("NAView fallback: %s" % str(error))
-            except Exception:
-                pass
-            model._dssr2d_layout_variant = "radiate fallback"
-            return Dssr2DLayout.radiate(model)
-
-        scale = 1.65
-        points = [(scale * point[0], scale * point[1]) for point in points]
-        points, is_trna = Dssr2DLayout._standardize_trna_orientation(model, points)
-        model._dssr2d_layout_variant = (
-            "NAView standard tRNA cloverleaf" if is_trna else "NAView standard"
-        )
-        return Dssr2DLayout._center(points)
-
-    @staticmethod
-    def compute(model, algorithm):
-        name = str(algorithm or "standard").strip().lower()
-        if name in (
-            "standard",
-            "naview",
-            "varna",
-            "classic",
-            "publication",
-            "smart",
-            "auto",
-        ):
-            return Dssr2DLayout._naview_layout(model)
-        if name in ("legacy radiate", "legacy", "radiate", "radial"):
-            model._dssr2d_layout_variant = "legacy radiate"
-            return Dssr2DLayout.radiate(model)
-        if name in ("circular", "circle"):
-            model._dssr2d_layout_variant = "circular"
-            return Dssr2DLayout.circular(model)
-        if name in ("linear", "line"):
-            model._dssr2d_layout_variant = "linear"
-            return Dssr2DLayout.linear(model)
-        return Dssr2DLayout._naview_layout(model)
-
-    @staticmethod
-    def radiate(model):
-        topology = Dssr2DLayout._detect_trna_topology(model)
-        if topology is not None:
-            return Dssr2DLayout._trna_cloverleaf(model, topology)
-        model._dssr2d_layout_variant = "general radiate"
-        return Dssr2DLayout._radiate_general(model)
-
-    smart = radiate
-
-    @staticmethod
-    def naview(model):
-        return Dssr2DLayout._naview_layout(model)
-
-    standard = naview
-
-
 __DSSR_FORNAC_NOTICE__ = (
     "Python adaptation of ViennaRNA/fornac src/naview/naview.js; "
     "fornac authors Peter Kerpedjiev, Stefan Hammer, and Ronny Lorenz; "
@@ -4915,6 +4097,824 @@ class _DSSRNaview:
 
         self._h = height
         self.angleinc = theta
+
+
+# RNA layout algorithms
+class Dssr2DLayout:
+    """Dependency-free layout algorithms for RNA graphs."""
+
+    @staticmethod
+    def circular(model):
+        n = len(model.nts)
+        if n <= 0:
+            return []
+        break_gap = 0.40
+        total_gap = break_gap * len(model.chain_breaks)
+        step = (2.0 * math.pi - total_gap) / max(1, n)
+        radius = max(150.0, (n * 38.0) / (2.0 * math.pi))
+        theta = -math.pi / 2.0
+        out = []
+        for i in range(n):
+            out.append((radius * math.cos(theta), radius * math.sin(theta)))
+            theta += step
+            if i in model.chain_breaks:
+                theta += break_gap
+        return out
+
+    @staticmethod
+    def linear(model):
+        out = []
+        x = 0.0
+        for i in range(len(model.nts)):
+            out.append((x, 0.0))
+            x += 42.0
+            if i in model.chain_breaks:
+                x += 70.0
+        if out:
+            mid = (out[0][0] + out[-1][0]) / 2.0
+            out = [(x - mid, y) for x, y in out]
+        return out
+
+    @staticmethod
+    def _v_add(a, b):
+        return (a[0] + b[0], a[1] + b[1])
+
+    @staticmethod
+    def _v_mul(a, scalar):
+        return (a[0] * scalar, a[1] * scalar)
+
+    @staticmethod
+    def _v_norm(a):
+        length = math.hypot(a[0], a[1])
+        if length <= 1.0e-12:
+            return (0.0, 1.0)
+        return (a[0] / length, a[1] / length)
+
+    @staticmethod
+    def _v_rotate(a, angle):
+        c = math.cos(angle)
+        s = math.sin(angle)
+        return (a[0] * c - a[1] * s, a[0] * s + a[1] * c)
+
+    @staticmethod
+    def _planar_pair_table(model):
+        n = len(model.nts)
+        table = [-1] * n
+        for pair in model.planar_secondary_pairs():
+            i = int(pair.get("i", -1))
+            j = int(pair.get("j", -1))
+            if i > j:
+                i, j = j, i
+            if i < 0 or j >= n or i == j:
+                continue
+            if table[i] == -1 and table[j] == -1:
+                table[i] = j
+                table[j] = i
+        return table
+
+    @staticmethod
+    def _stem_tree(pair_table, chain_breaks):
+        stems = []
+        n = len(pair_table)
+        breaks = set(chain_breaks)
+
+        for i in range(n):
+            j = pair_table[i]
+            if j <= i:
+                continue
+
+            previous_is_same_stem = (
+                i > 0
+                and (i - 1) not in breaks
+                and j < n - 1
+                and j not in breaks
+                and pair_table[i - 1] == j + 1
+            )
+            if previous_is_same_stem:
+                continue
+
+            pairs = []
+            a, b = i, j
+            while a < b and pair_table[a] == b:
+                pairs.append((a, b))
+                if a in breaks or (b - 1) in breaks:
+                    break
+                a += 1
+                b -= 1
+
+            if not pairs:
+                continue
+            stems.append(
+                {
+                    "outer_i": pairs[0][0],
+                    "outer_j": pairs[0][1],
+                    "inner_i": pairs[-1][0],
+                    "inner_j": pairs[-1][1],
+                    "pairs": pairs,
+                    "parent": None,
+                    "children": [],
+                }
+            )
+
+        # The smallest containing stem is the direct parent.
+        for stem in stems:
+            containers = [
+                other
+                for other in stems
+                if other is not stem
+                and other["inner_i"] < stem["outer_i"]
+                and stem["outer_j"] < other["inner_j"]
+            ]
+            if containers:
+                parent = min(
+                    containers,
+                    key=lambda other: other["inner_j"] - other["inner_i"],
+                )
+                stem["parent"] = parent
+                parent["children"].append(stem)
+
+        for stem in stems:
+            stem["children"].sort(key=lambda child: child["outer_i"])
+        return stems
+
+    @staticmethod
+    def _radiate_general(model):
+        """Draw a planar stem/loop scaffold and overlay pseudoknots later."""
+        n = len(model.nts)
+        if n <= 0:
+            return []
+
+        pair_table = Dssr2DLayout._planar_pair_table(model)
+        stems = Dssr2DLayout._stem_tree(pair_table, model.chain_breaks)
+        if not stems:
+            return Dssr2DLayout.circular(model)
+
+        positions = [None] * n
+        directions = [None] * n
+        rise = 40.0
+        half_width = 18.0
+        placed_stems = set()
+
+        def place_stem(stem, outer_center, direction):
+            marker = id(stem)
+            if marker in placed_stems:
+                return
+            placed_stems.add(marker)
+
+            direction = Dssr2DLayout._v_norm(direction)
+            normal = (-direction[1], direction[0])
+            pairs = stem["pairs"]
+
+            for k, (i, j) in enumerate(pairs):
+                center = Dssr2DLayout._v_add(
+                    outer_center,
+                    Dssr2DLayout._v_mul(direction, k * rise),
+                )
+                positions[i] = Dssr2DLayout._v_add(
+                    center,
+                    Dssr2DLayout._v_mul(normal, half_width),
+                )
+                positions[j] = Dssr2DLayout._v_add(
+                    center,
+                    Dssr2DLayout._v_mul(normal, -half_width),
+                )
+                directions[i] = direction
+                directions[j] = direction
+
+            inner_center = Dssr2DLayout._v_add(
+                outer_center,
+                Dssr2DLayout._v_mul(direction, (len(pairs) - 1) * rise),
+            )
+            children = list(stem["children"])
+            count = len(children)
+            if count <= 0:
+                return
+
+            if count == 1:
+                angles = [0.0]
+            else:
+                max_angle = math.radians(min(78.0, 35.0 + 15.0 * (count - 1)))
+                angles = [
+                    -max_angle + (2.0 * max_angle * k / float(count - 1))
+                    for k in range(count)
+                ]
+
+            branch_distance = 85.0 + 10.0 * max(0, count - 2)
+            for child, angle in zip(children, angles):
+                child_direction = Dssr2DLayout._v_rotate(direction, angle)
+                child_center = Dssr2DLayout._v_add(
+                    inner_center,
+                    Dssr2DLayout._v_mul(child_direction, branch_distance),
+                )
+                place_stem(child, child_center, child_direction)
+
+        top_level = [stem for stem in stems if stem["parent"] is None]
+        top_level.sort(key=lambda stem: stem["outer_i"])
+        top_count = len(top_level)
+
+        if top_count == 1:
+            place_stem(top_level[0], (0.0, 0.0), (0.0, 1.0))
+        elif top_count <= 4:
+            max_angle = math.radians(70.0)
+            angles = [
+                -max_angle + (2.0 * max_angle * k / float(top_count - 1))
+                for k in range(top_count)
+            ]
+            for stem, angle in zip(top_level, angles):
+                direction = Dssr2DLayout._v_rotate((0.0, 1.0), angle)
+                center = Dssr2DLayout._v_mul(direction, 80.0)
+                place_stem(stem, center, direction)
+        else:
+            for k, stem in enumerate(top_level):
+                angle = -math.pi / 2.0 + 2.0 * math.pi * k / float(top_count)
+                direction = (math.cos(angle), math.sin(angle))
+                center = Dssr2DLayout._v_mul(direction, 120.0)
+                place_stem(stem, center, direction)
+
+        def fill_unknown_run(start, end, segment_start, segment_end):
+            count = end - start + 1
+            previous = start - 1 if start > segment_start else None
+            following = end + 1 if end < segment_end else None
+
+            if previous is not None and following is not None:
+                a = positions[previous]
+                b = positions[following]
+                if a is None or b is None:
+                    return
+
+                average_direction = (0.0, 0.0)
+                for value in (directions[previous], directions[following]):
+                    if value is not None:
+                        average_direction = Dssr2DLayout._v_add(
+                            average_direction, value
+                        )
+                if math.hypot(*average_direction) < 0.1:
+                    chord = (b[0] - a[0], b[1] - a[1])
+                    average_direction = (-chord[1], chord[0])
+                average_direction = Dssr2DLayout._v_norm(average_direction)
+
+                if pair_table[previous] == following:
+                    midpoint = ((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)
+                    chord_length = math.hypot(b[0] - a[0], b[1] - a[1])
+                    half_chord = chord_length * 0.5
+                    radius = max(
+                        half_chord + 1.0,
+                        ((count + 1) * 34.0 + chord_length) / (2.0 * math.pi),
+                    )
+                    center_distance = math.sqrt(
+                        max(1.0, radius * radius - half_chord * half_chord)
+                    )
+                    circle_center = Dssr2DLayout._v_add(
+                        midpoint,
+                        Dssr2DLayout._v_mul(average_direction, center_distance),
+                    )
+                    theta_a = math.atan2(
+                        a[1] - circle_center[1], a[0] - circle_center[0]
+                    )
+                    theta_b = math.atan2(
+                        b[1] - circle_center[1], b[0] - circle_center[0]
+                    )
+                    minor_sweep = (theta_b - theta_a) % (2.0 * math.pi)
+                    long_sweep = 2.0 * math.pi - minor_sweep
+                    for offset, index in enumerate(range(start, end + 1), 1):
+                        t = offset / float(count + 1)
+                        theta = theta_a - long_sweep * t
+                        positions[index] = (
+                            circle_center[0] + radius * math.cos(theta),
+                            circle_center[1] + radius * math.sin(theta),
+                        )
+                        directions[index] = average_direction
+                    return
+
+                height = max(35.0, min(150.0, 18.0 * count + 10.0))
+                midpoint = ((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)
+                control = Dssr2DLayout._v_add(
+                    midpoint,
+                    Dssr2DLayout._v_mul(average_direction, height),
+                )
+                for offset, index in enumerate(range(start, end + 1), 1):
+                    t = offset / float(count + 1)
+                    one_minus = 1.0 - t
+                    positions[index] = (
+                        one_minus * one_minus * a[0]
+                        + 2.0 * one_minus * t * control[0]
+                        + t * t * b[0],
+                        one_minus * one_minus * a[1]
+                        + 2.0 * one_minus * t * control[1]
+                        + t * t * b[1],
+                    )
+                    directions[index] = average_direction
+                return
+
+            if following is not None and positions[following] is not None:
+                anchor = positions[following]
+                direction = directions[following] or (0.0, 1.0)
+                normal = (-direction[1], direction[0])
+                for offset, index in enumerate(range(end, start - 1, -1), 1):
+                    positions[index] = Dssr2DLayout._v_add(
+                        anchor,
+                        Dssr2DLayout._v_add(
+                            Dssr2DLayout._v_mul(direction, -36.0 * offset),
+                            Dssr2DLayout._v_mul(normal, -10.0 * offset),
+                        ),
+                    )
+                    directions[index] = direction
+                return
+
+            if previous is not None and positions[previous] is not None:
+                anchor = positions[previous]
+                direction = directions[previous] or (0.0, 1.0)
+                normal = (-direction[1], direction[0])
+                for offset, index in enumerate(range(start, end + 1), 1):
+                    positions[index] = Dssr2DLayout._v_add(
+                        anchor,
+                        Dssr2DLayout._v_add(
+                            Dssr2DLayout._v_mul(direction, -36.0 * offset),
+                            Dssr2DLayout._v_mul(normal, 10.0 * offset),
+                        ),
+                    )
+                    directions[index] = direction
+                return
+
+            for offset, index in enumerate(range(start, end + 1)):
+                positions[index] = (offset * 40.0, 0.0)
+                directions[index] = (1.0, 0.0)
+
+        segments = []
+        segment_start = 0
+        for break_after in sorted(model.chain_breaks):
+            if break_after >= segment_start:
+                segments.append((segment_start, min(n - 1, break_after)))
+                segment_start = break_after + 1
+        if segment_start < n:
+            segments.append((segment_start, n - 1))
+
+        for segment_start, segment_end in segments:
+            index = segment_start
+            while index <= segment_end:
+                if positions[index] is not None:
+                    index += 1
+                    continue
+                run_start = index
+                while index <= segment_end and positions[index] is None:
+                    index += 1
+                fill_unknown_run(
+                    run_start,
+                    index - 1,
+                    segment_start,
+                    segment_end,
+                )
+
+        fallback = Dssr2DLayout.circular(model)
+        for i in range(n):
+            if positions[i] is None:
+                positions[i] = fallback[i]
+
+        center_x = sum(point[0] for point in positions) / float(n)
+        center_y = sum(point[1] for point in positions) / float(n)
+        return [(point[0] - center_x, point[1] - center_y) for point in positions]
+
+    @staticmethod
+    def _solve_circle(edge_lengths):
+        """Solve a circle whose successive chord lengths close one revolution."""
+        lengths = [max(1.0, float(value)) for value in edge_lengths]
+        if not lengths:
+            return 30.0, []
+
+        lower = max(lengths) * 0.5 + 1.0e-7
+
+        def angles_at(radius):
+            return [
+                2.0 * math.asin(min(1.0, length / (2.0 * radius))) for length in lengths
+            ]
+
+        lower_angles = angles_at(lower)
+        lower_total = sum(lower_angles)
+        if lower_total < 2.0 * math.pi:
+            scale = (2.0 * math.pi) / max(1.0e-12, lower_total)
+            return lower, [angle * scale for angle in lower_angles]
+
+        upper = max(sum(lengths), lower * 2.0)
+        while sum(angles_at(upper)) > 2.0 * math.pi:
+            upper *= 2.0
+
+        for _ in range(80):
+            middle = 0.5 * (lower + upper)
+            if sum(angles_at(middle)) > 2.0 * math.pi:
+                lower = middle
+            else:
+                upper = middle
+
+        radius = 0.5 * (lower + upper)
+        return radius, angles_at(radius)
+
+    @staticmethod
+    def _normalize(vector, fallback=(0.0, 1.0)):
+        length = math.hypot(float(vector[0]), float(vector[1]))
+        if length <= 1.0e-12:
+            return fallback
+        return (float(vector[0]) / length, float(vector[1]) / length)
+
+    @staticmethod
+    def _quadratic_equal(indices, start, stop, control, positions):
+        """Place indices at near-equal arc-length intervals on a quadratic curve."""
+        indices = list(indices)
+        if not indices:
+            return
+
+        samples = max(160, 28 * (len(indices) + 1))
+        points = []
+        for sample in range(samples + 1):
+            t = sample / float(samples)
+            u = 1.0 - t
+            points.append(
+                (
+                    u * u * start[0] + 2.0 * u * t * control[0] + t * t * stop[0],
+                    u * u * start[1] + 2.0 * u * t * control[1] + t * t * stop[1],
+                )
+            )
+
+        cumulative = [0.0]
+        for first, second in zip(points, points[1:]):
+            cumulative.append(
+                cumulative[-1] + math.hypot(second[0] - first[0], second[1] - first[1])
+            )
+        total = cumulative[-1]
+        if total <= 1.0e-12:
+            return
+
+        for offset, index in enumerate(indices, 1):
+            target = total * offset / float(len(indices) + 1)
+            right = bisect.bisect_left(cumulative, target)
+            right = min(max(1, right), len(points) - 1)
+            left = right - 1
+            span = cumulative[right] - cumulative[left]
+            fraction = 0.0 if span <= 1.0e-12 else (target - cumulative[left]) / span
+            positions[index] = (
+                points[left][0] + fraction * (points[right][0] - points[left][0]),
+                points[left][1] + fraction * (points[right][1] - points[left][1]),
+            )
+
+    @staticmethod
+    def _place_loop_circle(
+        indices,
+        start,
+        stop,
+        outward_direction,
+        positions,
+        backbone_distance=34.0,
+        pair_distance=42.0,
+    ):
+        """Place a hairpin on the long arc opposite its supporting base pair."""
+        indices = list(indices)
+        if not indices:
+            return
+
+        outward = Dssr2DLayout._normalize(outward_direction)
+        radius, angles = Dssr2DLayout._solve_circle(
+            [float(backbone_distance)] * (len(indices) + 1) + [float(pair_distance)]
+        )
+
+        midpoint = (
+            0.5 * (start[0] + stop[0]),
+            0.5 * (start[1] + stop[1]),
+        )
+        half_chord = 0.5 * math.hypot(stop[0] - start[0], stop[1] - start[1])
+        center_distance = math.sqrt(max(0.0, radius * radius - half_chord * half_chord))
+        center = (
+            midpoint[0] + outward[0] * center_distance,
+            midpoint[1] + outward[1] * center_distance,
+        )
+        theta_start = math.atan2(start[1] - center[1], start[0] - center[0])
+
+        candidates = []
+        for sign in (-1.0, 1.0):
+            theta = theta_start
+            candidate = []
+            for offset, index in enumerate(indices):
+                theta += sign * angles[offset]
+                candidate.append(
+                    (
+                        center[0] + radius * math.cos(theta),
+                        center[1] + radius * math.sin(theta),
+                    )
+                )
+            score = sum(
+                (point[0] - midpoint[0]) * outward[0]
+                + (point[1] - midpoint[1]) * outward[1]
+                for point in candidate
+            ) / float(max(1, len(candidate)))
+            candidates.append((score, candidate))
+
+        chosen = max(candidates, key=lambda item: item[0])[1]
+        for index, point in zip(indices, chosen):
+            positions[index] = point
+
+    @staticmethod
+    def _detect_trna_topology(model):
+        """Detect a tRNA-like cloverleaf from topology, never from a PDB name."""
+        total = len(model.nts)
+        if total < 55 or total > 110 or model.chain_count() != 1:
+            return None
+
+        pair_table = Dssr2DLayout._planar_pair_table(model)
+        stems = Dssr2DLayout._stem_tree(pair_table, model.chain_breaks)
+        candidates = []
+        for stem in stems:
+            children = list(stem.get("children", []))
+            if len(stem.get("pairs", [])) < 5 or len(children) != 3:
+                continue
+            if any(len(child.get("pairs", [])) < 3 for child in children):
+                continue
+            if stem.get("outer_i", 999999) > 5:
+                continue
+            if (total - 1) - stem.get("outer_j", -1) > 10:
+                continue
+            ordered = sorted(children, key=lambda child: child["outer_i"])
+            if any(child["inner_j"] - child["inner_i"] < 4 for child in ordered):
+                continue
+            score = (
+                20 * len(stem.get("pairs", []))
+                + sum(len(child.get("pairs", [])) for child in ordered)
+                - stem["outer_i"]
+                - ((total - 1) - stem["outer_j"])
+            )
+            candidates.append((score, stem, ordered))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        _score, root, arms = candidates[0]
+        return {
+            "root": root,
+            "arms": arms,
+            "pair_table": pair_table,
+            "stems": stems,
+        }
+
+    @staticmethod
+    def _trna_cloverleaf(model, topology):
+        """Generate a clean, conventional four-arm tRNA cloverleaf."""
+        total = len(model.nts)
+        root = topology["root"]
+        arms = topology["arms"]
+        positions = [None] * total
+
+        pair_distance = 42.0
+        helix_rise = 38.0
+        backbone_distance = 34.0
+
+        def place_stem(stem, outer_center, direction):
+            direction = Dssr2DLayout._normalize(direction)
+            normal = (-direction[1], direction[0])
+            for offset, (left, right) in enumerate(stem["pairs"]):
+                center = (
+                    outer_center[0] + direction[0] * helix_rise * offset,
+                    outer_center[1] + direction[1] * helix_rise * offset,
+                )
+                positions[left] = (
+                    center[0] + normal[0] * pair_distance * 0.5,
+                    center[1] + normal[1] * pair_distance * 0.5,
+                )
+                positions[right] = (
+                    center[0] - normal[0] * pair_distance * 0.5,
+                    center[1] - normal[1] * pair_distance * 0.5,
+                )
+
+        root_inner_center = (0.0, -88.0)
+        root_direction = (0.0, 1.0)
+        root_outer_center = (
+            root_inner_center[0],
+            root_inner_center[1] - helix_rise * (len(root["pairs"]) - 1),
+        )
+        place_stem(root, root_outer_center, root_direction)
+
+        arm_centers = [(-150.0, -4.0), (0.0, 160.0), (150.0, -4.0)]
+        arm_directions = [(-1.0, 0.0), (0.0, 1.0), (1.0, 0.0)]
+
+        for arm, center, direction in zip(arms, arm_centers, arm_directions):
+            place_stem(arm, center, direction)
+            loop_indices = range(arm["inner_i"] + 1, arm["inner_j"])
+            Dssr2DLayout._place_loop_circle(
+                loop_indices,
+                positions[arm["inner_i"]],
+                positions[arm["inner_j"]],
+                direction,
+                positions,
+                backbone_distance=backbone_distance,
+                pair_distance=pair_distance,
+            )
+
+        junctions = [
+            (root["inner_i"], arms[0]["outer_i"], (-106.0, -106.0)),
+            (arms[0]["outer_j"], arms[1]["outer_i"], (-122.0, 96.0)),
+            (arms[1]["outer_j"], arms[2]["outer_i"], (122.0, 96.0)),
+            (arms[2]["outer_j"], root["inner_j"], (106.0, -106.0)),
+        ]
+        for first, last, control in junctions:
+            Dssr2DLayout._quadratic_equal(
+                range(first + 1, last),
+                positions[first],
+                positions[last],
+                control,
+                positions,
+            )
+
+        for offset, index in enumerate(range(root["outer_i"] - 1, -1, -1), 1):
+            anchor = positions[root["outer_i"]]
+            positions[index] = (
+                anchor[0] - backbone_distance * offset,
+                anchor[1] - 8.0 * offset,
+            )
+        for offset, index in enumerate(range(root["outer_j"] + 1, total), 1):
+            anchor = positions[root["outer_j"]]
+            positions[index] = (
+                anchor[0] + backbone_distance * offset,
+                anchor[1] - 8.0 * offset,
+            )
+
+        fallback = Dssr2DLayout._radiate_general(model)
+        for index in range(total):
+            if positions[index] is None:
+                positions[index] = fallback[index]
+
+        center_x = sum(point[0] for point in positions) / float(total)
+        center_y = sum(point[1] for point in positions) / float(total)
+        model._dssr2d_layout_variant = "tRNA cloverleaf"
+        return [(point[0] - center_x, point[1] - center_y) for point in positions]
+
+    @staticmethod
+    def _pair_table(model, start=0, end=None):
+        """Create a 1-based NAView pair table from the planar DSSR scaffold."""
+        total = len(model.nts)
+        if end is None:
+            end = total - 1
+        start = max(0, int(start))
+        end = min(total - 1, int(end))
+        count = max(0, end - start + 1)
+        table = [count] + [0] * count
+        for pair in model.planar_secondary_pairs():
+            first = int(pair.get("i", -1))
+            second = int(pair.get("j", -1))
+            if first > second:
+                first, second = second, first
+            if first < start or second > end:
+                continue
+            local_first = first - start + 1
+            local_second = second - start + 1
+            if table[local_first] == 0 and table[local_second] == 0:
+                table[local_first] = local_second
+                table[local_second] = local_first
+        return table
+
+    @staticmethod
+    def _center(points):
+        if not points:
+            return []
+        center_x = sum(point[0] for point in points) / float(len(points))
+        center_y = sum(point[1] for point in points) / float(len(points))
+        return [(point[0] - center_x, point[1] - center_y) for point in points]
+
+    @staticmethod
+    def _rotate(points, angle):
+        cosine = math.cos(angle)
+        sine = math.sin(angle)
+        return [
+            (
+                point[0] * cosine - point[1] * sine,
+                point[0] * sine + point[1] * cosine,
+            )
+            for point in points
+        ]
+
+    @staticmethod
+    def _standardize_trna_orientation(model, points):
+        """Orient tRNA with acceptor stem down, anticodon arm up."""
+        try:
+            topology = Dssr2DLayout._detect_trna_topology(model)
+        except Exception:
+            topology = None
+        if not topology or len(points) != len(model.nts):
+            return points, False
+
+        root = topology["root"]
+        arms = topology["arms"]
+        outer_first, outer_second = root["pairs"][0]
+        inner_first, inner_second = root["pairs"][-1]
+        outer_center = (
+            0.5 * (points[outer_first][0] + points[outer_second][0]),
+            0.5 * (points[outer_first][1] + points[outer_second][1]),
+        )
+        inner_center = (
+            0.5 * (points[inner_first][0] + points[inner_second][0]),
+            0.5 * (points[inner_first][1] + points[inner_second][1]),
+        )
+        vector_x = outer_center[0] - inner_center[0]
+        vector_y = outer_center[1] - inner_center[1]
+        if math.hypot(vector_x, vector_y) > 1.0e-8:
+            current_angle = math.atan2(vector_y, vector_x)
+            points = Dssr2DLayout._rotate(points, math.pi / 2.0 - current_angle)
+
+        if len(arms) >= 3:
+            d_indices = list(
+                range(int(arms[0]["outer_i"]), int(arms[0]["outer_j"]) + 1)
+            )
+            t_indices = list(
+                range(int(arms[2]["outer_i"]), int(arms[2]["outer_j"]) + 1)
+            )
+            d_x = sum(points[index][0] for index in d_indices) / float(
+                max(1, len(d_indices))
+            )
+            t_x = sum(points[index][0] for index in t_indices) / float(
+                max(1, len(t_indices))
+            )
+            if d_x > t_x:
+                points = [(-point[0], point[1]) for point in points]
+
+            v_start, v_end = int(arms[1]["outer_j"]) + 1, int(arms[2]["outer_i"])
+            if 3 <= v_end - v_start <= 7:
+                p1, p2 = points[v_start - 1], points[v_end]
+                ctrl = (max(p1[0], p2[0]) + 48.0, min(p1[1], p2[1]) - 68.0)
+                Dssr2DLayout._quadratic_equal(
+                    range(v_start, v_end), p1, p2, ctrl, points
+                )
+
+        return Dssr2DLayout._center(points), True
+
+    @staticmethod
+    def _naview_layout(model):
+        """Return one coherent NAView-style scientific layout."""
+        total = len(model.nts)
+        if total <= 0:
+            return []
+
+        scaffold_pair_count = len(model.planar_secondary_pairs())
+        if scaffold_pair_count <= 0:
+            model._dssr2d_layout_variant = "unpaired circular"
+            return Dssr2DLayout.circular(model)
+
+        if model.chain_count() != 1:
+            model._dssr2d_layout_variant = "multi-chain radiate fallback"
+            return Dssr2DLayout.radiate(model)
+
+        table = Dssr2DLayout._pair_table(model)
+        try:
+            points = _DSSRNaview().coordinates(table)
+        except Exception as error:
+            try:
+                model.warnings.append("NAView fallback: %s" % str(error))
+            except Exception:
+                pass
+            model._dssr2d_layout_variant = "radiate fallback"
+            return Dssr2DLayout.radiate(model)
+
+        scale = 1.65
+        points = [(scale * point[0], scale * point[1]) for point in points]
+        points, is_trna = Dssr2DLayout._standardize_trna_orientation(model, points)
+        model._dssr2d_layout_variant = (
+            "NAView standard tRNA cloverleaf" if is_trna else "NAView standard"
+        )
+        return Dssr2DLayout._center(points)
+
+    @staticmethod
+    def compute(model, algorithm):
+        name = str(algorithm or "standard").strip().lower()
+        if name in (
+            "standard",
+            "naview",
+            "varna",
+            "classic",
+            "publication",
+            "smart",
+            "auto",
+        ):
+            return Dssr2DLayout._naview_layout(model)
+        if name in ("legacy radiate", "legacy", "radiate", "radial"):
+            model._dssr2d_layout_variant = "legacy radiate"
+            return Dssr2DLayout.radiate(model)
+        if name in ("circular", "circle"):
+            model._dssr2d_layout_variant = "circular"
+            return Dssr2DLayout.circular(model)
+        if name in ("linear", "line"):
+            model._dssr2d_layout_variant = "linear"
+            return Dssr2DLayout.linear(model)
+        return Dssr2DLayout._naview_layout(model)
+
+    @staticmethod
+    def radiate(model):
+        topology = Dssr2DLayout._detect_trna_topology(model)
+        if topology is not None:
+            return Dssr2DLayout._trna_cloverleaf(model, topology)
+        model._dssr2d_layout_variant = "general radiate"
+        return Dssr2DLayout._radiate_general(model)
+
+    smart = radiate
+
+    @staticmethod
+    def naview(model):
+        return Dssr2DLayout._naview_layout(model)
+
+    standard = naview
 
 
 # ---------------------------------------------------------------------------
