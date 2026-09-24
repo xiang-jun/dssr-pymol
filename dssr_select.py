@@ -491,91 +491,6 @@ class DssrUtils:
     def base_text_color(base, enabled=True):
         return DssrUtils.base_style(base, enabled)["text"]
 
-    @staticmethod
-    def wrap_seq(s, width):
-        """Wrap sequence string `s` to fixed column `width`."""
-        try:
-            width = int(width)
-        except Exception:
-            width = 80
-        if width <= 0:
-            return s
-        return "\n".join(s[i : i + width] for i in range(0, len(s), width))
-
-    @staticmethod
-    def revcomp(seq):
-        """
-        Return the reverse complement of sequence `seq`, preserving case
-        and DSSR modified base codes (e.g., g, c, u, t, a, P).
-        """
-        raw_seq = str(seq)
-
-        # Detect whether the sequence is primarily RNA or DNA
-        is_rna = "U" in raw_seq or "u" in raw_seq or "P" in raw_seq
-
-        # Comprehensive complement map preserving case and modified symbols
-        if is_rna:
-            pairs = {
-                # Standard RNA
-                "A": "U",
-                "U": "A",
-                "G": "C",
-                "C": "G",
-                "a": "u",
-                "u": "a",
-                "g": "c",
-                "c": "g",
-                # Modified bases pairing with canonical purines/pyrimidines
-                "P": "A",
-                "p": "a",  # Pseudouridine pairs with Adenine
-                "t": "a",
-                "T": "A",  # 5-methyluridine (ribothymidine)
-                "I": "C",
-                "i": "c",  # Inosine pairs with Cytosine
-                "N": "N",
-                "n": "n",
-            }
-        else:
-            pairs = {
-                # Standard DNA
-                "A": "T",
-                "T": "A",
-                "G": "C",
-                "C": "G",
-                "a": "t",
-                "t": "a",
-                "g": "c",
-                "c": "g",
-                "I": "C",
-                "i": "c",
-                "N": "N",
-                "n": "n",
-            }
-
-        # Reverse and translate, preserving any unmapped characters as-is
-        return "".join(pairs.get(base, base) for base in reversed(raw_seq))
-
-    @staticmethod
-    def parse_fastastr(fasta_text):
-        """Parse raw FASTA string into a list of (header, sequence) tuples."""
-        blocks = []
-        header = None
-        seq = []
-        for line in str(fasta_text).splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith(">"):
-                if header is not None:
-                    blocks.append((header, "".join(seq)))
-                header = line[1:].strip()
-                seq = []
-            else:
-                seq.append(line.strip())
-        if header is not None:
-            blocks.append((header, "".join(seq)))
-        return blocks
-
 
 class DssrParser:
     @staticmethod
@@ -1321,73 +1236,6 @@ class DssrCmd:
                     'dssr_block: loaded "%s" (block_file=%s, block_depth=%s)'
                     % (name, str(block_file), str(block_depth))
                 )
-
-    @staticmethod
-    def dssr_seq(
-        selection="all",
-        chain="",
-        fmt="raw",
-        wrap=80,
-        rc=0,
-        exe="x3dna-dssr",
-        state=-1,
-        quiet=1,
-    ):
-        """
-        Extract complete nucleotide sequences (including modified bases) via DSSR.
-        """
-        fmt = str(fmt).strip().lower()
-        quiet = int(quiet)
-        rc = int(rc)
-        state = int(state)
-        if state <= 0:
-            state = cmd.get_state()
-
-        sel = selection
-        ch = str(chain).strip()
-        if ch and ch.lower() != "all":
-            sel = "(%s) and chain %s" % (selection, ch)
-
-        # Run DSSR to extract accurate nucleotide data including HETATM modifications
-        dssr_data = DssrUtils._selection_json(sel, state, exe, precolor=False)
-
-        # Group nucleotides by chain
-        nts = dssr_data.get("nts", [])
-        if not nts:
-            raise CmdException(
-                'No nucleotides extracted by DSSR from selection="%s"' % sel
-            )
-
-        chains_seq = {}
-        for nt in nts:
-            c = nt.get("chain_name", "A")
-            # Prefer DSSR one-letter code (preserves modified bases like 'g', 'P', 't', 'c')
-            code = nt.get("nt_code") or Dssr2DModel._base_from_nt_entry(nt)
-            chains_seq.setdefault(c, []).append(code)
-
-        out_lines = []
-        obj_name = sel.replace("(", "").replace(")", "").replace(" ", "_")
-
-        for c, seq_chars in chains_seq.items():
-            seq_str = "".join(seq_chars)
-            if rc:
-                seq_str = DssrUtils.revcomp(seq_str)
-
-            hdr = "%s_%s" % (obj_name, c)
-            if fmt == "fasta":
-                out_lines.append(">" + hdr)
-                out_lines.append(DssrUtils.wrap_seq(seq_str, wrap))
-            else:
-                out_lines.append(
-                    hdr
-                    + ": "
-                    + (DssrUtils.wrap_seq(seq_str, wrap) if int(wrap) > 0 else seq_str)
-                )
-
-        out = "\n".join(out_lines)
-        if not quiet:
-            print(out)
-        return out
 
     @staticmethod
     def _select_feature_data(
@@ -7488,10 +7336,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
 dssr_select = DssrCmd.dssr_select
 dssr_gui = DssrGuiDialog.dssr_gui
 dssr_block = DssrCmd.dssr_block
-dssr_seq = DssrCmd.dssr_seq
 dssr_2d = DssrCmd.dssr_2d
 
-for _command in (dssr_select, dssr_gui, dssr_block, dssr_seq, dssr_2d):
+for _command in (dssr_select, dssr_gui, dssr_block, dssr_2d):
     cmd.extend(_command.__name__, _command)
 
 try:
