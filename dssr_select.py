@@ -36,7 +36,7 @@ import importlib
 QtSvg = None
 for mod in ("pymol.Qt", "PyQt5", "PyQt6"):
     try:
-        QtSvg = importlib.import_module(f"{mod}.QtSvg")
+        QtSvg = importlib.import_module("%s.QtSvg" % mod)
         break
     except ImportError:
         pass
