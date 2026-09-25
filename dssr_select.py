@@ -119,32 +119,32 @@ FEATURE_LABELS = {
 # A = Red, C = Yellow/Amber, G = Green, U/T = Cyan
 PYMOL_BASE_COLORS = {
     "A": {
-        "text": "#b91c1c",  # Deep crimson red (high contrast on white)
-        "fill": "#fee2e2",  # Soft red pastel
-        "border": "#ef4444",  # Red border
+        "text": "#b91c1c",
+        "fill": "#fee2e2",
+        "border": "#ef4444",
     },
     "C": {
-        "text": "#b45309",  # Deep warm amber/gold (readable on white)
-        "fill": "#fef9c3",  # Soft yellow pastel
-        "border": "#eab308",  # Amber/yellow border
+        "text": "#b45309",
+        "fill": "#fef9c3",
+        "border": "#eab308",
     },
     "G": {
-        "text": "#15803d",  # Forest green
-        "fill": "#dcfce7",  # Soft green pastel
-        "border": "#22c55e",  # Green border
+        "text": "#15803d",
+        "fill": "#dcfce7",
+        "border": "#22c55e",
     },
     "U": {
-        "text": "#0369a1",  # Deep cyan / sky blue
-        "fill": "#e0f2fe",  # Soft cyan pastel
-        "border": "#0ea5e9",  # Cyan border
+        "text": "#0369a1",
+        "fill": "#e0f2fe",
+        "border": "#0ea5e9",
     },
     "T": {
-        "text": "#0369a1",  # Deep cyan / sky blue
-        "fill": "#e0f2fe",  # Soft cyan pastel
-        "border": "#0ea5e9",  # Cyan border
+        "text": "#0369a1",
+        "fill": "#e0f2fe",
+        "border": "#0ea5e9",
     },
     "I": {
-        "text": "#6d28d9",  # Inosine / modified: purple
+        "text": "#6d28d9",
         "fill": "#f3e8ff",
         "border": "#a855f7",
     },
@@ -423,7 +423,6 @@ class DssrUtils:
                 cmd.color("gray", selection)
             return _DSSR_DATA_CACHE["data"]
 
-        # Run fresh analysis and update the shared cache
         data = DssrUtils._selection_json(selection, state, exe, precolor=precolor)
         _DSSR_DATA_CACHE["key"] = cache_key
         _DSSR_DATA_CACHE["data"] = data
@@ -838,7 +837,6 @@ class DssrParser:
             lw = entry.get("LW", entry.get("bp", ""))
             name = entry.get("name", "").strip()
 
-            # Combine LW classification and pair name (e.g., "cWW, WC")
             tags = [t for t in (lw, name) if t]
             tag_str = (" (%s)" % ", ".join(tags)) if tags else ""
             return "%d: %s - %s%s" % (i, nt1, nt2, tag_str)
@@ -1335,7 +1333,6 @@ class DssrCmd:
                     "-o=" + tmpfiler3d,
                 ]
 
-                # Incorporate block_color argument
                 if block_color:
                     args.append("--block-color=" + DssrUtils.unquote(block_color))
 
@@ -1656,7 +1653,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         settings.addWidget(self.display_cb, 1, 1)
         settings.addWidget(self.zoom_cb, 1, 2)
 
-        # Color label + edit paired cleanly
         color_box = QtWidgets.QHBoxLayout()
         color_box.setContentsMargins(0, 0, 0, 0)
         color_box.setSpacing(6)
@@ -1664,7 +1660,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         color_box.addWidget(self.color_edit, 1)
         settings.addLayout(color_box, 1, 3, 1, 3)
 
-        # Block style: keep the label and dropdown tight together
         block_box = QtWidgets.QHBoxLayout()
         block_box.setContentsMargins(0, 0, 0, 0)
         block_box.setSpacing(6)
@@ -1672,7 +1667,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         block_box.addWidget(self.block_file_combo, 1)
         settings.addLayout(block_box, 2, 0, 1, 2)
 
-        # Depth: keep the label and spinbox tight together
         depth_box = QtWidgets.QHBoxLayout()
         depth_box.setContentsMargins(0, 0, 0, 0)
         depth_box.setSpacing(6)
@@ -2282,7 +2276,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         exe = self.exe_edit.text().strip() or "x3dna-dssr"
         st = self._get_state_value()
 
-        # Build standard selection name (e.g., junctions1, stems2, uturns1)
         nm = "%s%d" % (feat.lower(), idx)
 
         col = self.color_edit.text().strip() or "auto"
@@ -2309,18 +2302,15 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 pc=precolor_on,
             )
 
-            # Drop temporary (sele) without deselecting the named object
             try:
                 cmd.delete("sele")
                 cmd.delete("indicate")
             except Exception:
                 pass
 
-            # Force state transition so PyMOL paints selection markers
             cmd.disable(nm)
             cmd.enable(nm)
 
-            # Update the 2D layout canvas nodes silently
             if self.editor is not None:
                 all_residues = set()
                 cmd.iterate(
@@ -6454,20 +6444,15 @@ class Dssr2DEditor(QtWidgets.QWidget):
             raise CmdException("Qt could not save PNG file")
 
     def _export_svg(self, path):
-        """Export the 2D RNA diagram to an SVG vector file with robust coordinate handling."""
-        # 1. Obtain scene bounds with generous margin
+        """Export the 2D RNA diagram to an SVG vector file."""
         bounding_rect_f = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
-
-        # 2. Convert to integer QRect for cross-platform QtSvg compatibility
         view_box = bounding_rect_f.toRect()
 
-        # Ensure non-zero width and height
         if view_box.width() <= 0:
             view_box.setWidth(100)
         if view_box.height() <= 0:
             view_box.setHeight(100)
 
-        # 3. Configure the SVG generator
         generator = QtSvg.QSvgGenerator()
         generator.setFileName(path)
         generator.setSize(view_box.size())
@@ -6475,7 +6460,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         generator.setTitle(self.model.title)
         generator.setDescription("RNA secondary structure derived by DSSR")
 
-        # 4. Render scene to SVG
         painter = QtGui.QPainter(generator)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         painter.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
@@ -6523,7 +6507,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 diff_before[index] = (float(b_pt[0]), float(b_pt[1]))
                 diff_after[index] = (float(a_pt[0]), float(a_pt[1]))
 
-        # Nothing changed; don't add redundant undo states
         if not diff_before:
             return
 
@@ -7028,13 +7011,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         ):
             return
 
-        # 1. Quick check: retrieve only currently enabled selection names
         try:
             enabled_selections = tuple(cmd.get_names("selections", enabled_only=1))
         except Exception:
             enabled_selections = ()
 
-        # 2. Fast exit if no selections exist
         if not enabled_selections:
             self._last_active_names = ()
             self._last_sel_count = 0
@@ -7053,7 +7034,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 self._update_editor_status("3D selection cleared")
             return
 
-        # 3. Fast filter: check atom count before doing full iteration
         try:
             active_sel = " or ".join("(%s)" % s for s in enabled_selections)
             scoped = "((%s) and (%s))" % (self.pymol_selection, active_sel)
@@ -7061,7 +7041,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         except Exception:
             current_count = 0
 
-        # If selection names and atom count have not changed, skip iteration
         if (
             enabled_selections == self._last_active_names
             and current_count == self._last_sel_count
@@ -7083,7 +7062,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 self._update_pymol_highlight()
             return
 
-        # 4. Only iterate when an actual selection change is verified
         residues = set()
         try:
             cmd.iterate(
@@ -7099,7 +7077,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             return
         self._last_pymol_signature = signature
 
-        # Map residues back to 2D graph nodes
         wanted = {
             index
             for index, nt in enumerate(self.model.nts)
@@ -7201,7 +7178,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         tools = QtWidgets.QHBoxLayout()
         root.addLayout(tools)
 
-        # Interaction tool combobox: wide enough for "Select / edit [P]"
         self.interaction_combo = QtWidgets.QComboBox()
         self.interaction_combo.setView(QtWidgets.QListView(self.interaction_combo))
         self.interaction_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
@@ -7217,7 +7193,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         )
         tools.addWidget(self.brush_radius_spin)
 
-        # Drag mode combobox: wide enough for "Selected bases"
         self.drag_mode_combo = QtWidgets.QComboBox()
         self.drag_mode_combo.setView(QtWidgets.QListView(self.drag_mode_combo))
         self.drag_mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
