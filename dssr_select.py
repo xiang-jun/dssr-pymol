@@ -31,23 +31,15 @@ import time
 from collections import deque
 from pymol.Qt import QtGui
 
-# Comprehensive QtSvg import: checks PyMOL's wrapper first, then standard bindings
-try:
-    from pymol.Qt import QtSvg
-except ImportError:
+import importlib
+
+QtSvg = None
+for mod in ("pymol.Qt", "PyQt5", "PyQt6"):
     try:
-        from PyQt5 import QtSvg
+        QtSvg = importlib.import_module(f"{mod}.QtSvg")
+        break
     except ImportError:
-        try:
-            from PyQt6 import QtSvg
-        except ImportError:
-            try:
-                from PySide2 import QtSvg
-            except ImportError:
-                try:
-                    from PySide6 import QtSvg
-                except ImportError:
-                    QtSvg = None
+        pass
 
 __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
 DSSR_TIMEOUT_SECONDS = 300  # Default timeout in seconds (5 minutes)
