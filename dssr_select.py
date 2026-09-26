@@ -7066,12 +7066,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             return
         self._sync_pending = False
         self._sync_pymol_selection()
-        if final:
-            try:
-                if self.zoom_3d_cb.isChecked() and cmd.count_atoms("sele"):
-                    cmd.zoom("sele", buffer=4.0)
-            except Exception:
-                pass
 
     def _node_residue_signature(self):
         return tuple(
@@ -7318,7 +7312,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             tip="Show or hide circular node borders around bases",
         )
         self.follow_spin = DssrUI.spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
-        self.zoom_3d_cb = DssrUI.checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
         options.addWidget(self.noncanonical_cb, 0, 2)
@@ -7326,7 +7319,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options.addWidget(self.circles_cb, 0, 4)
         options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
         options.addWidget(self.follow_spin, 1, 1)
-        options.addWidget(self.zoom_3d_cb, 1, 2)
         root.addWidget(self.options_panel)
         self.options_panel.hide()
         self.options_btn.toggled.connect(self.options_panel.setVisible)
