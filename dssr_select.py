@@ -1691,6 +1691,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left = QtWidgets.QVBoxLayout(sidebar)
         left.setContentsMargins(0, 0, 4, 0)
         self.feature_combo = QtWidgets.QComboBox()
+        self.feature_combo.setView(QtWidgets.QListView(self.feature_combo))
+        self.feature_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
         for feature in FEATURE_ORDER:
             self.feature_combo.addItem(FEATURE_LABELS.get(feature, feature), feature)
         self.feature_combo.currentIndexChanged.connect(self._on_feature_changed)
