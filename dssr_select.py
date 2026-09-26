@@ -4870,44 +4870,8 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             painter.drawPath(self.path())
 
     def paint(self, painter, option, widget=None):
-        """Paint lines for backbone and base pairs."""
-        try:
-            gel = self.node_a.viewer.gel_style_enabled()
-        except Exception:
-            gel = False
-
-        if not gel:
-            return self._paint_flat(painter, option, widget)
-
-        # Multi-pass gel mode line rendering
-        if self.kind == "backbone":
-            rgba, width = (112, 154, 186, 225), 1.65
-        elif self.kind == "noncanonical":
-            rgba, width = (235, 111, 255, 220), 1.55
-        elif self.layer > 0:
-            palette = ((183, 123, 255, 240), (255, 112, 176, 240), (255, 190, 82, 240))
-            rgba, width = palette[(self.layer - 1) % len(palette)], 2.05
-        else:
-            rgba, width = (78, 200, 255, 245), 2.15
-
-        color = QtGui.QColor(*rgba)
-        saved = False
-        try:
-            painter.save()
-            saved = True
-            glow = QtGui.QColor(color)
-            glow.setAlpha(48)
-            self._draw_paths(
-                painter, (self._pen(glow, width + 4.2), self._pen(color, width))
-            )
-            painter.restore()
-        except Exception:
-            if saved:
-                try:
-                    painter.restore()
-                except Exception:
-                    pass
-            return self._paint_flat(painter, option, widget)
+        """Paint clean lines for backbone and base pairs."""
+        return self._paint_flat(painter, option, widget)
 
     def _paint_flat(self, painter, option, widget=None):
         try:
@@ -5003,8 +4967,6 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
         self.setToolTip(self._tooltip())
 
     def _base_fill(self):
-        if self.viewer.gel_style_enabled():
-            return QtGui.QColor(236, 245, 252)
         return DssrUtils.base_style(self.nt.get("base", ""), self.viewer.base_colors)[
             "fill"
         ]
@@ -5233,7 +5195,6 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
 
     def paint(self, painter, option, widget=None):
         radius = float(self.RADIUS)
-        gel = self.viewer.gel_style_enabled()
         saved = False
         try:
             painter.save()
@@ -5242,20 +5203,6 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             selected = bool(self.isSelected())
             hovered = bool(getattr(self, "_hover", False))
             pressed = bool(getattr(self, "_pressed", False))
-
-            # Drop shadow strictly in Gel mode; keep non-Gel completely flat and crisp
-            if gel:
-                shadow = QtGui.QColor(2, 8, 23, 105)
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(shadow))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -radius + 2.2,
-                        -radius + 3.4,
-                        2.0 * radius,
-                        2.0 * radius,
-                    )
-                )
 
             # Selection aura: PyMOL hot pink glow
             if selected or hovered:
@@ -5278,28 +5225,14 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
 
             show_circle = getattr(self.viewer, "show_circles", True)
 
-            if gel:
-                base = QtGui.QColor(self._base_fill())
-                gradient = QtGui.QRadialGradient(
-                    QtCore.QPointF(-radius * 0.38, -radius * 0.48),
-                    radius * 1.58,
-                )
-                gradient.setColorAt(0.00, QtGui.QColor(255, 255, 255, 252))
-                gradient.setColorAt(0.18, base.lighter(148))
-                gradient.setColorAt(0.62, base.lighter(106))
-                gradient.setColorAt(1.00, base.darker(132))
-                fill = QtGui.QBrush(gradient)
-                border = QtGui.QColor(188, 235, 255, 225)
-            else:
-                # Flat classical PyMOL base colors (soft pastel fill + crisp border)
-                style = DssrUtils.base_style(
-                    self.nt.get("base", ""), self.viewer.base_colors
-                )
-                fill = QtGui.QBrush(style["fill"])
-                border = style["border"]
+            # Flat classical PyMOL base colors (soft pastel fill + crisp border)
+            style = DssrUtils.base_style(
+                self.nt.get("base", ""), self.viewer.base_colors
+            )
+            fill = QtGui.QBrush(style["fill"])
+            border = style["border"]
 
             if selected:
-                # Signature PyMOL selection pink/crimson (#e11d48) with soft rose fill
                 border = QtGui.QColor(225, 29, 72, 255)
                 fill = QtGui.QBrush(QtGui.QColor(255, 228, 230))
             elif hovered:
@@ -5311,29 +5244,17 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             if pressed:
                 border = QtGui.QColor(15, 23, 42, 255)
 
-            # Draw the circle if circles are enabled, or if the node is currently selected/hovered
-            if show_circle or selected or hovered or gel:
+            if show_circle or selected or hovered:
                 pen = QtGui.QPen(border)
                 pen.setWidthF(2.4 if selected else (1.8 if hovered else 1.4))
                 painter.setPen(pen)
                 painter.setBrush(
-                    fill if (show_circle or selected or gel) else QtCore.Qt.NoBrush
+                    fill if (show_circle or selected) else QtCore.Qt.NoBrush
                 )
                 painter.drawEllipse(
                     QtCore.QRectF(-radius, -radius, 2.0 * radius, 2.0 * radius)
                 )
 
-            if gel:
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 110)))
-                painter.drawEllipse(
-                    QtCore.QRectF(
-                        -radius * 0.58,
-                        -radius * 0.68,
-                        radius * 0.82,
-                        radius * 0.38,
-                    )
-                )
             painter.restore()
         except Exception:
             if saved:
@@ -7014,12 +6935,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.view.setCursor(cursor)
 
     def gel_style_enabled(self):
-        return self.gel_style_cb.isChecked()
-
-    def _gel_mode_toggled(self, checked):
-        self._refresh_scene_style()
-        self._ensure_animation()
-        self._update_editor_status("gel mode on" if checked else "gel mode off")
+        return False
 
     def _circles_toggled(self, checked):
         self.show_circles = bool(checked)
@@ -7245,13 +7161,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         )
         top.addWidget(self.selection_menu_btn)
 
-        # Row 2: Interaction tools, Drag modes, and Display Options
         tools = QtWidgets.QHBoxLayout()
         tools.setContentsMargins(0, 2, 0, 4)
         tools.setSpacing(10)
         root.addLayout(tools)
 
-        # 1. Interaction & Drag mode selectors
         self.interaction_combo = QtWidgets.QComboBox()
         self.interaction_combo.setView(QtWidgets.QListView(self.interaction_combo))
         self.interaction_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
@@ -7280,21 +7194,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         )
         tools.addWidget(self.drag_mode_combo)
 
-        self.gel_style_cb = DssrUI.checkbox(
-            "Gel",
-            False,
-            self._gel_mode_toggled,
-            "Glass-like rendering and elastic motion",
-        )
-        tools.addWidget(self.gel_style_cb)
-
-        # 2. Numbering input
         tools.addSpacing(12)
         tools.addWidget(QtWidgets.QLabel("Number every"))
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
         tools.addWidget(self.number_spin)
 
-        # 3. Display toggles distributed across remaining space
         self.noncanonical_cb = DssrUI.checkbox(
             "Non-canonical pairs",
             self.show_noncanonical,
