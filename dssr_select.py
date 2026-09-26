@@ -341,8 +341,11 @@ class DssrUtils:
                 '%s timed out after %s seconds: command "%s"'
                 % (operation, timeout, " ".join(args))
             )
-        except OSError:
-            raise CmdException('Cannot execute exe="%s"' % args[0])
+        except OSError as exc:
+            err_msg = exc.strerror if getattr(exc, "strerror", None) else str(exc)
+            raise CmdException(
+                'Cannot execute %s with exe="%s": %s' % (operation, args[0], err_msg)
+            )
 
         if result.returncode:
             raise CmdException(
