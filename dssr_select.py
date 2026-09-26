@@ -2575,7 +2575,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return host
 
 
-# RNA data model
 class Dssr2DModel:
     """Normalized sequence, dot-bracket, residue, and pairing information."""
 
@@ -2594,6 +2593,7 @@ class Dssr2DModel:
         self.noncanonical_pairs = []
         self.warnings = []
         self.title = "RNA secondary structure"
+        self.resi_to_index = {}
 
     @staticmethod
     def _clean_dbn_text(value, keep_ampersand=True):
@@ -2786,6 +2786,14 @@ class Dssr2DModel:
                 model.chain_breaks.add(i - 1)
             if chain:
                 previous_chain = chain
+
+        for nt in model.nts:
+            chain = str(nt.get("chain", "")).strip()
+            resi = str(nt.get("resi", "")).strip()
+            if resi:
+                model.resi_to_index[(chain, resi)] = nt["index"]
+                if ("", resi) not in model.resi_to_index:
+                    model.resi_to_index[("", resi)] = nt["index"]
 
         model.secondary_pairs = model._parse_dotbracket_pairs(model.structure)
         model._merge_dssr_pairs(dssr_data)
@@ -7115,13 +7123,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
             return
         self._last_pymol_signature = signature
 
-        wanted = {
-            index
-            for index, nt in enumerate(self.model.nts)
-            if str(nt.get("resi", "")).strip()
-            and (str(nt.get("chain", "")).strip(), str(nt.get("resi", "")).strip())
-            in residues
-        }
+        wanted = set()
+        resi_map = self.model.resi_to_index
+        for chain, resi in residues:
+            c = str(chain).strip()
+            r = str(resi).strip()
+            idx = resi_map.get((c, r))
+            if idx is None and ("", r) in resi_map:
+                idx = resi_map.get(("", r))
+            if idx is not None:
+                wanted.add(idx)
+
         if wanted == {node.nt_index for node in self.nodes if node.isSelected()}:
             return
 
