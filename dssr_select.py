@@ -4855,12 +4855,6 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         if tip:
             self.setToolTip(tip)
 
-    def _pen(self, color, width):
-        style = (
-            QtCore.Qt.DashLine if self.kind == "noncanonical" else QtCore.Qt.SolidLine
-        )
-        return QtGui.QPen(color, width, style, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-
     def _draw_paths(self, painter, pens):
         """Share painter setup across plain lines and gel passes."""
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
@@ -5688,7 +5682,7 @@ class Dssr2DSequenceView(QtWidgets.QTextEdit):
         self.document().setDocumentMargin(8)
         self.setFixedHeight(
             self.fontMetrics().height() * 2
-            + 24
+            + 16
             + self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent)
         )
         self.setStyleSheet(
