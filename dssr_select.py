@@ -5951,6 +5951,7 @@ class Dssr2DSequenceView(QtWidgets.QTextEdit):
 
 class Dssr2DEditor(QtWidgets.QWidget):
     HISTORY_LIMIT = 100
+    DEFAULT_ELASTICITY = 0.62
 
     def __init__(
         self,
@@ -6912,7 +6913,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not anchors:
             return {}
         adjacency = self._adjacency or self._build_adjacency()
-        strength = float(self.follow_spin.value())
+        strength = self.DEFAULT_ELASTICITY
         max_depth = 3
         distance = {index: 0 for index in anchors}
         queue = deque(anchors)
@@ -7311,14 +7312,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
             changed=self._circles_toggled,
             tip="Show or hide circular node borders around bases",
         )
-        self.follow_spin = DssrUI.spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
         options.addWidget(self.noncanonical_cb, 0, 2)
         options.addWidget(self.base_colors_cb, 0, 3)
         options.addWidget(self.circles_cb, 0, 4)
-        options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
-        options.addWidget(self.follow_spin, 1, 1)
         root.addWidget(self.options_panel)
         self.options_panel.hide()
         self.options_btn.toggled.connect(self.options_panel.setVisible)
