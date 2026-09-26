@@ -6198,6 +6198,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         is_dark = getattr(self, "is_dark", False)
         num_color = QtGui.QColor(248, 250, 252) if is_dark else QtGui.QColor(15, 23, 42)
 
+        # Maximum reach of any label candidate from the nucleotide center
+        MAX_LABEL_REACH = 75.0
+
         for index in sorted(indices):
             node = self.nodes[index]
             nt = self.model.nts[index]
@@ -6210,14 +6213,15 @@ class Dssr2DEditor(QtWidgets.QWidget):
             label.setBrush(QtGui.QBrush(num_color))
 
             pos = node.pos()
+            px, py = pos.x(), pos.y()
             partner_idx = self._pair_partner(index)
 
             # 1. Determine strict OUTWARD vector
             if 0 <= partner_idx < total:
                 # Paired base: points strictly away from base-pair partner
                 p_pos = self.nodes[partner_idx].pos()
-                vx = pos.x() - p_pos.x()
-                vy = pos.y() - p_pos.y()
+                vx = px - p_pos.x()
+                vy = py - p_pos.y()
                 vlen = math.hypot(vx, vy)
                 outward_x, outward_y = (
                     (vx / vlen, vy / vlen) if vlen > 1e-6 else (1.0, 0.0)
@@ -6236,8 +6240,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 )
 
                 if previous is not None and following is not None:
-                    kx = 2.0 * pos.x() - previous.x() - following.x()
-                    ky = 2.0 * pos.y() - previous.y() - following.y()
+                    kx = 2.0 * px - previous.x() - following.x()
+                    ky = 2.0 * py - previous.y() - following.y()
                     klen = math.hypot(kx, ky)
                     if klen > 0.5:
                         outward_x, outward_y = kx / klen, ky / klen
@@ -6249,35 +6253,66 @@ class Dssr2DEditor(QtWidgets.QWidget):
                         if nlen > 1e-6:
                             nx /= nlen
                             ny /= nlen
-                            if (
-                                nx * (pos.x() - center_x) + ny * (pos.y() - center_y)
-                                < 0.0
-                            ):
+                            if nx * (px - center_x) + ny * (py - center_y) < 0.0:
                                 nx, ny = -nx, -ny
                             outward_x, outward_y = nx, ny
                         else:
                             outward_x, outward_y = 1.0, 0.0
                 elif previous is not None:
-                    tx = pos.x() - previous.x()
-                    ty = pos.y() - previous.y()
+                    tx = px - previous.x()
+                    ty = py - previous.y()
                     outward_x, outward_y = (
                         tx / max(1e-6, math.hypot(tx, ty)),
                         ty / max(1e-6, math.hypot(tx, ty)),
                     )
                 elif following is not None:
-                    tx = following.x() - pos.x()
-                    ty = following.y() - pos.y()
+                    tx = following.x() - px
+                    ty = following.y() - py
                     outward_x, outward_y = (
                         -tx / max(1e-6, math.hypot(tx, ty)),
                         -ty / max(1e-6, math.hypot(tx, ty)),
                     )
                 else:
-                    cx = pos.x() - center_x
-                    cy = pos.y() - center_y
+                    cx = px - center_x
+                    cy = py - center_y
                     clen = math.hypot(cx, cy)
                     outward_x, outward_y = (
                         (cx / clen, cy / clen) if clen > 1e-6 else (1.0, 0.0)
                     )
+
+            # Spatial pre-filtering: isolate items strictly within neighborhood
+            local_min_x, local_max_x = px - MAX_LABEL_REACH, px + MAX_LABEL_REACH
+            local_min_y, local_max_y = py - MAX_LABEL_REACH, py + MAX_LABEL_REACH
+
+            local_node_rects = [
+                n_rect
+                for n_idx, n_rect in enumerate(node_rects)
+                if n_idx != index
+                and local_min_x <= n_rect.right()
+                and n_rect.left() <= local_max_x
+                and local_min_y <= n_rect.bottom()
+                and n_rect.top() <= local_max_y
+            ]
+
+            local_used_labels = [
+                u_rect
+                for u_rect in used_label_rects
+                if local_min_x <= u_rect.right()
+                and u_rect.left() <= local_max_x
+                and local_min_y <= u_rect.bottom()
+                and u_rect.top() <= local_max_y
+            ]
+
+            local_edges = [
+                (p1, p2)
+                for p1, p2 in edge_segments
+                if not (
+                    max(p1[0], p2[0]) < local_min_x
+                    or min(p1[0], p2[0]) > local_max_x
+                    or max(p1[1], p2[1]) < local_min_y
+                    or min(p1[1], p2[1]) > local_max_y
+                )
+            ]
 
             # 2. Candidate directions: only outward hemisphere (within +/- 60 deg of outward)
             candidate_angles = [0.0, 0.35, -0.35, 0.70, -0.70, 1.05, -1.05]
@@ -6294,28 +6329,24 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 for dist_rank, dist in enumerate(candidate_distances):
                     lx = dx * dist - 0.5 * rect.width()
                     ly = dy * dist - 0.5 * rect.height()
-                    srect = QtCore.QRectF(
-                        pos.x() + lx, pos.y() + ly, rect.width(), rect.height()
-                    )
+                    srect = QtCore.QRectF(px + lx, py + ly, rect.width(), rect.height())
 
                     score = 0.05 * dist_rank + 0.02 * dir_rank
 
-                    # Avoid other node bubbles
-                    for n_idx, n_rect in enumerate(node_rects):
-                        if n_idx == index:
-                            continue
+                    # Avoid nearby node bubbles
+                    for n_rect in local_node_rects:
                         area = _intersection_area(srect, n_rect)
                         if area > 0:
                             score += 25.0 * area
 
-                    # Avoid previously placed text
-                    for u_rect in used_label_rects:
+                    # Avoid nearby previously placed text
+                    for u_rect in local_used_labels:
                         area = _intersection_area(srect, u_rect)
                         if area > 0:
                             score += 50.0 * area
 
-                    # Avoid backbone and base-pair linkages (3 px buffer)
-                    for p1, p2 in edge_segments:
+                    # Avoid nearby backbone and base-pair linkages (3 px buffer)
+                    for p1, p2 in local_edges:
                         if self._segment_intersects_box(
                             p1,
                             p2,
