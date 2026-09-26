@@ -5982,7 +5982,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._sync_pending = False
         self._sync_from_pymol = False
         self._last_pymol_signature = None
-        self._last_highlight_signature = None
         self._last_sel_count = -1
         self._last_active_names = ()
         self._closed = False
@@ -7363,7 +7362,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._sync_pending = False
             for timer in (self._timer, self._sync_timer, self._reverse_timer):
                 timer.stop()
-            self._last_highlight_signature = None
 
     def showEvent(self, event):
         super().showEvent(event)
