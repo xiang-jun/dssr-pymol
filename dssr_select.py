@@ -5400,6 +5400,8 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
 class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
     """Empty-canvas rectangle selection, base editing, and keyboard-only pan."""
 
+    DEFAULT_BRUSH_RADIUS = 32.0
+
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
         self.editor = parent
@@ -5666,9 +5668,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         return self.editor.interaction_tool()
 
     def _scene_radius(self):
-        return self.editor.brush_radius_spin.value() / max(
-            0.08, abs(self.transform().m11())
-        )
+        return self.DEFAULT_BRUSH_RADIUS / max(0.08, abs(self.transform().m11()))
 
     @staticmethod
     def _distance_to_segment(point, first, second):
@@ -7257,11 +7257,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.interaction_combo.addItem("Brush select [B]", "brush")
         self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
         tools.addWidget(self.interaction_combo)
-
-        self.brush_radius_spin = DssrUI.spinbox(
-            8, 100, 32, suffix=" px", tip="Brush radius"
-        )
-        tools.addWidget(self.brush_radius_spin)
 
         self.drag_mode_combo = QtWidgets.QComboBox()
         self.drag_mode_combo.setView(QtWidgets.QListView(self.drag_mode_combo))
