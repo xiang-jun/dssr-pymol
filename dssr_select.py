@@ -1462,7 +1462,7 @@ class DssrCmd:
         exe="x3dna-dssr",
         layout="standard",
         number_every=10,
-        show_tertiary=0,
+        show_noncanonical=0,
         title="",
         quiet=1,
     ):
@@ -1488,7 +1488,7 @@ class DssrCmd:
                 exe,
                 algorithm=layout,
                 number_every=number_every,
-                show_tertiary=int(show_tertiary),
+                show_noncanonical=int(show_noncanonical),
                 title=title,
             )
         except Exception as error:
@@ -2010,7 +2010,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         exe,
         algorithm="standard",
         number_every=10,
-        show_tertiary=0,
+        show_noncanonical=0,
         title="",
         force=False,
     ):
@@ -2023,7 +2023,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if self.editor.layout_combo.currentText() != requested:
                 self.editor.layout_combo.setCurrentText(requested)
             self.editor.number_spin.setValue(max(0, int(number_every)))
-            self.editor.tertiary_cb.setChecked(bool(int(show_tertiary)))
+            self.editor.noncanonical_cb.setChecked(bool(int(show_noncanonical)))
             if title:
                 self.editor.model.title = str(title)
             return self.editor
@@ -2042,7 +2042,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._analysis_context = self._cache_key = context
         self._cache_data = data
         self.editor = Dssr2DEditor(
-            model, selection, algorithm, number_every, show_tertiary, parent=self
+            model, selection, algorithm, number_every, show_noncanonical, parent=self
         )
         self.editor.pymol_state = int(state)
         self.editor.set_theme(self.dark_btn.isChecked())
@@ -2578,7 +2578,7 @@ class Dssr2DModel:
         self.nts = []
         self.chain_breaks = set()
         self.secondary_pairs = []
-        self.tertiary_pairs = []
+        self.noncanonical_pairs = []
         self.warnings = []
         self.title = "RNA secondary structure"
 
@@ -2868,7 +2868,7 @@ class Dssr2DModel:
             key = tuple(sorted((int(pair["i"]), int(pair["j"]))))
             secondary_by_key[key] = pair
 
-        tertiary_by_key = {}
+        noncanonical_by_key = {}
         entries = dssr_data.get("pairs", [])
         if not isinstance(entries, list):
             entries = []
@@ -2898,19 +2898,19 @@ class Dssr2DModel:
             if pair_name in ("WC", "WOBBLE"):
                 continue
 
-            if key not in tertiary_by_key:
-                tertiary_by_key[key] = {
+            if key not in noncanonical_by_key:
+                noncanonical_by_key[key] = {
                     "i": key[0],
                     "j": key[1],
                     "layer": -1,
                     "symbol": "",
                     "lw": lw,
-                    "kind": "tertiary",
+                    "kind": "noncanonical",
                     "dssr": entry,
                 }
 
-        self.tertiary_pairs = sorted(
-            tertiary_by_key.values(), key=lambda p: (p["i"], p["j"])
+        self.noncanonical_pairs = sorted(
+            noncanonical_by_key.values(), key=lambda p: (p["i"], p["j"])
         )
 
     def planar_secondary_pairs(self):
@@ -2970,12 +2970,12 @@ class Dssr2DModel:
 
     def summary(self):
         return (
-            "%d nt | %d chain(s) | %d secondary pair(s) | %d additional DSSR pair(s)"
+            "%d nt | %d chain(s) | %d secondary pair(s) | %d non-canonical pair(s)"
             % (
                 len(self.nts),
                 self.chain_count(),
                 len(self.secondary_pairs),
-                len(self.tertiary_pairs),
+                len(self.noncanonical_pairs),
             )
         )
 
@@ -4764,7 +4764,8 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             )
             width = 1.0
             style = QtCore.Qt.SolidLine
-        elif self.kind == "tertiary":
+        elif self.kind == "noncanonical":
+            # Non-canonical pairs: subtle, thin dashed violet line
             color = (
                 QtGui.QColor(192, 132, 252, 180)
                 if is_dark
@@ -4792,7 +4793,9 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             self.setToolTip("Base pair: %s" % self.lw)
 
     def _pen(self, color, width):
-        style = QtCore.Qt.DashLine if self.kind == "tertiary" else QtCore.Qt.SolidLine
+        style = (
+            QtCore.Qt.DashLine if self.kind == "noncanonical" else QtCore.Qt.SolidLine
+        )
         return QtGui.QPen(color, width, style, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
 
     def _draw_paths(self, painter, pens):
@@ -4816,7 +4819,7 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         # Multi-pass gel mode line rendering
         if self.kind == "backbone":
             rgba, width = (112, 154, 186, 225), 1.65
-        elif self.kind == "tertiary":
+        elif self.kind == "noncanonical":
             rgba, width = (235, 111, 255, 220), 1.55
         elif self.layer > 0:
             palette = ((183, 123, 255, 240), (255, 112, 176, 240), (255, 190, 82, 240))
@@ -4865,14 +4868,14 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             span = abs(int(self.node_a.nt_index) - int(self.node_b.nt_index))
             height = min(330.0, 25.0 + 6.0 * span)
             sign = -1.0 if int(self.layer) % 2 else 1.0
-            if self.kind == "tertiary":
+            if self.kind == "noncanonical":
                 sign *= -1.0
             path.quadTo(
                 QtCore.QPointF(0.5 * (first.x() + second.x()), sign * height),
                 second,
             )
-        elif self.kind == "tertiary" or self.layer > 0:
-            # Arc tertiary and pseudoknot pairs gracefully above the intervening structure
+        elif self.kind == "noncanonical" or self.layer > 0:
+            # Arc noncanonical and pseudoknot pairs gracefully above the intervening structure
             delta_x = second.x() - first.x()
             delta_y = second.y() - first.y()
             distance = math.hypot(delta_x, delta_y)
@@ -5894,7 +5897,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         pymol_selection="all",
         algorithm="standard",
         number_every=10,
-        show_tertiary=False,
+        show_noncanonical=False,
         parent=None,
     ):
         super().__init__(parent)
@@ -5903,7 +5906,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         requested = str(algorithm or "standard").strip().lower()
         self.algorithm = requested if requested in LAYOUT_CHOICES else "standard"
         self.number_every = max(0, int(number_every))
-        self.show_tertiary = bool(show_tertiary)
+        self.show_noncanonical = bool(show_noncanonical)
         self.base_colors = True
         self.show_circles = True  # Default: circles visible
         self.is_dark = False
@@ -5943,7 +5946,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.scene.selectionChanged.connect(self._selection_changed)
         self.layout_combo.currentTextChanged.connect(self.redraw)
         self.number_spin.valueChanged.connect(self.redraw)
-        self.tertiary_cb.toggled.connect(self.redraw)
+        self.noncanonical_cb.toggled.connect(self.redraw)
         self.base_colors_cb.toggled.connect(self.redraw)
         self.redraw()
         self._update_history_buttons()
@@ -6039,7 +6042,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 self.layout_combo.currentText().strip().lower() or "standard"
             )
             self.number_every = self.number_spin.value()
-            self.show_tertiary = self.tertiary_cb.isChecked()
+            self.show_noncanonical = self.noncanonical_cb.isChecked()
             self.base_colors = self.base_colors_cb.isChecked()
             positions = self._capture_positions()
             selected = [node.nt_index for node in self.nodes if node.isSelected()]
@@ -6065,11 +6068,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 if index not in self.model.chain_breaks:
                     self._add_edge(index, index + 1, "backbone", linear=linear)
             groups = [("secondary", self.model.secondary_pairs)]
-            if self.show_tertiary:
-                groups.append(("tertiary", self.model.tertiary_pairs))
+            if self.show_noncanonical:
+                groups.append(("noncanonical", self.model.noncanonical_pairs))
             for kind, pairs in groups:
                 for pair in pairs:
-                    layer = -1 if kind == "tertiary" else int(pair.get("layer", 0))
+                    layer = -1 if kind == "noncanonical" else int(pair.get("layer", 0))
                     self._add_edge(
                         int(pair["i"]),
                         int(pair["j"]),
@@ -6936,8 +6939,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
             QtGui.QColor(248, 250, 252) if is_dark else QtGui.QColor(15, 23, 42)
         )
         for edge in self.edges:
-            if edge.kind == "tertiary":
-                edge.setVisible(self.show_tertiary)
+            if edge.kind == "noncanonical":
+                edge.setVisible(self.show_noncanonical)
 
         for node in self.nodes:
             node.base_text_item.setBrush(
@@ -7230,9 +7233,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.options_panel = QtWidgets.QGroupBox("Display and 3D")
         options = QtWidgets.QGridLayout(self.options_panel)
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
-        self.tertiary_cb = DssrUI.checkbox(
+        self.noncanonical_cb = DssrUI.checkbox(
             "Non-canonical pairs",
-            self.show_tertiary,
+            self.show_noncanonical,
             tip="Display non-canonical (non-WC/Wobble) base pairs",
         )
         self.base_colors_cb = DssrUI.checkbox(
@@ -7254,7 +7257,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.zoom_3d_cb = DssrUI.checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
-        options.addWidget(self.tertiary_cb, 0, 2)
+        options.addWidget(self.noncanonical_cb, 0, 2)
         options.addWidget(self.base_colors_cb, 0, 3)
         options.addWidget(self.circles_cb, 0, 4)
         options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
