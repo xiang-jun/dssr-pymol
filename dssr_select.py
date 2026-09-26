@@ -192,7 +192,7 @@ QGroupBox::title {
 QPushButton, QToolButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
     color: #0f172a; background: #ffffff;
     border: 1px solid #94a3b8; border-radius: 6px;
-    padding: 4px 7px; min-height: 22px; font-weight: 500;
+    padding: 3px 8px; min-height: 24px; max-height: 24px; font-weight: 500;
 }
 QPushButton:hover, QComboBox:hover, QLineEdit:focus {
     background: #f8fafc; border-color: #0284c7;
@@ -261,7 +261,7 @@ QGroupBox::title {
 QPushButton, QToolButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
     color: #f8fafc; background: #1e293b;
     border: 1px solid #475569; border-radius: 6px;
-    padding: 4px 7px; min-height: 22px; font-weight: 500;
+    padding: 3px 8px; min-height: 24px; max-height: 24px; font-weight: 500;
 }
 QPushButton:hover, QComboBox:hover, QLineEdit:focus {
     background: #334155; border-color: #38bdf8;
@@ -7111,8 +7111,13 @@ class Dssr2DEditor(QtWidgets.QWidget):
         """Build the toolbars, sequence view, and single 2D graphics canvas."""
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+
         top = QtWidgets.QHBoxLayout()
+        top.setAlignment(QtCore.Qt.AlignVCenter)
+        top.setContentsMargins(0, 2, 0, 4)
+        top.setSpacing(6)
         root.addLayout(top)
+
         self.layout_combo = DssrUI.combo(LAYOUT_CHOICES)
         self.layout_combo.setCurrentText(self.algorithm)
         self.layout_combo.setMinimumWidth(135)
@@ -7149,6 +7154,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         top.addWidget(self.selection_menu_btn)
 
         tools = QtWidgets.QHBoxLayout()
+        tools.setAlignment(QtCore.Qt.AlignVCenter)
         tools.setContentsMargins(0, 2, 0, 4)
         tools.setSpacing(10)
         root.addLayout(tools)
