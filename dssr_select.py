@@ -7244,9 +7244,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self,
         )
         top.addWidget(self.selection_menu_btn)
-        self.options_btn = QtWidgets.QPushButton("Options")
-        self.options_btn.setCheckable(True)
-        top.addWidget(self.options_btn)
 
         tools = QtWidgets.QHBoxLayout()
         root.addLayout(tools)
@@ -7318,8 +7315,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options.addWidget(self.base_colors_cb, 0, 3)
         options.addWidget(self.circles_cb, 0, 4)
         root.addWidget(self.options_panel)
-        self.options_panel.hide()
-        self.options_btn.toggled.connect(self.options_panel.setVisible)
 
         self.sequence_view = Dssr2DSequenceView(self)
         root.addWidget(self.sequence_view)
