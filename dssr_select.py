@@ -7093,16 +7093,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             )
         )
 
-    def _reverse_sync_toggled(self, checked):
-        self._last_pymol_signature = None
-        self._last_sel_count = -1
-        self._last_active_names = ()
-        if checked:
-            self._pull_pymol_selection()
-            self._update_editor_status("bidirectional sync on")
-        else:
-            self._update_editor_status("3D-to-2D sync off")
-
     def _pull_pymol_selection(self):
         """Synchronize 3D PyMOL selections to 2D nodes without unnecessary overhead."""
         if (
@@ -7110,7 +7100,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             or self._sync_pending
             or self._sync_from_pymol
             or not self.isVisible()
-            or not self.reverse_3d_cb.isChecked()
         ):
             return
 
@@ -7350,9 +7339,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.live_3d_cb = DssrUI.checkbox(
             "3D highlight", False, self._sync_pymol_selection
         )
-        self.reverse_3d_cb = DssrUI.checkbox(
-            "3D → 2D sync", True, self._reverse_sync_toggled
-        )
         self.zoom_3d_cb = DssrUI.checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
@@ -7362,8 +7348,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
         options.addWidget(self.follow_spin, 1, 1)
         options.addWidget(self.live_3d_cb, 1, 2)
-        options.addWidget(self.reverse_3d_cb, 1, 3)
-        options.addWidget(self.zoom_3d_cb, 2, 2, 1, 2)
+        options.addWidget(self.zoom_3d_cb, 1, 3)
         root.addWidget(self.options_panel)
         self.options_panel.hide()
         self.options_btn.toggled.connect(self.options_panel.setVisible)
