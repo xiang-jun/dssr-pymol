@@ -2894,6 +2894,10 @@ class Dssr2DModel:
                 secondary_by_key[key]["dssr"] = entry
                 continue
 
+            pair_name = str(entry.get("name", "")).strip().upper()
+            if pair_name in ("WC", "WOBBLE"):
+                continue
+
             if key not in tertiary_by_key:
                 tertiary_by_key[key] = {
                     "i": key[0],
@@ -4761,11 +4765,12 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             width = 1.0
             style = QtCore.Qt.SolidLine
         elif self.kind == "tertiary":
-            # Tertiary pairs: luminous violet
             color = (
-                QtGui.QColor(192, 132, 252) if is_dark else QtGui.QColor(124, 58, 237)
+                QtGui.QColor(192, 132, 252, 180)
+                if is_dark
+                else QtGui.QColor(139, 92, 246, 175)
             )
-            width = 1.35
+            width = 0.95
             style = QtCore.Qt.DashLine
         elif self.layer > 0:
             # Pseudoknots: bright purple
@@ -6138,15 +6143,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 p2 = self.nodes[j].pos()
                 edge_segments.append(((p1.x(), p1.y()), (p2.x(), p2.y())))
 
-        if self.show_tertiary:
-            for pair in self.model.tertiary_pairs:
-                i = int(pair.get("i", -1))
-                j = int(pair.get("j", -1))
-                if 0 <= i < total and 0 <= j < total and i != j:
-                    p1 = self.nodes[i].pos()
-                    p2 = self.nodes[j].pos()
-                    edge_segments.append(((p1.x(), p1.y()), (p2.x(), p2.y())))
-
         used_label_rects = list(getattr(self, "_chain_rects", []))
 
         def _intersection_area(first, second):
@@ -6618,6 +6614,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
     def _selection_changed(self):
         if self._closed or self._rebuilding:
             return
+        self._refresh_scene_style()
         self._schedule_live_sync()
         self._update_editor_status("selection changed")
 
@@ -6938,6 +6935,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
         label_color = (
             QtGui.QColor(248, 250, 252) if is_dark else QtGui.QColor(15, 23, 42)
         )
+        for edge in self.edges:
+            if edge.kind == "tertiary":
+                edge.setVisible(self.show_tertiary)
+
         for node in self.nodes:
             node.base_text_item.setBrush(
                 QtGui.QBrush(
@@ -7229,7 +7230,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.options_panel = QtWidgets.QGroupBox("Display and 3D")
         options = QtWidgets.QGridLayout(self.options_panel)
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
-        self.tertiary_cb = DssrUI.checkbox("Extra DSSR pairs", self.show_tertiary)
+        self.tertiary_cb = DssrUI.checkbox(
+            "Non-canonical pairs",
+            self.show_tertiary,
+            tip="Display non-canonical (non-WC/Wobble) base pairs",
+        )
         self.base_colors_cb = DssrUI.checkbox(
             "Base colors", True, tip="Color bases using classical PyMOL/DSSR scheme"
         )
