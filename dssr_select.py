@@ -585,7 +585,7 @@ class DssrUtils:
             resn = parts[3] if len(parts) > 3 else ""
             resi = parts[4] if len(parts) > 4 else ""
             if chain and resn and resi:
-                return "%s:%s%s" % (chain, resn, resi)
+                return "%s.%s%s" % (chain, resn, resi)
         return raw
 
 
@@ -846,11 +846,10 @@ class DssrParser:
     @staticmethod
     def _preview_entry(feature, entry, i):
         if feature == "pairs":
-            nt1 = entry.get("nt1", "?")
-            nt2 = entry.get("nt2", "?")
-            lw = entry.get("LW", entry.get("bp", ""))
-            name = entry.get("name", "").strip()
-
+            nt1 = DssrUtils.format_unit_id(entry.get("nt1", "?"))
+            nt2 = DssrUtils.format_unit_id(entry.get("nt2", "?"))
+            lw = str(entry.get("LW", entry.get("bp", ""))).strip()
+            name = str(entry.get("name", "")).strip()
             tags = [t for t in (lw, name) if t]
             tag_str = (" (%s)" % ", ".join(tags)) if tags else ""
             return "%d: %s - %s%s" % (i, nt1, nt2, tag_str)
