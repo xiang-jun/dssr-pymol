@@ -5791,6 +5791,10 @@ class Dssr2DSequenceView(QtWidgets.QTextEdit):
             else:
                 groups.append([index, index])
         selections = []
+        is_dark = getattr(self.editor, "is_dark", False)
+        bg_color = QtGui.QColor("#e11d48") if not is_dark else QtGui.QColor("#f43f5e")
+        fg_color = QtGui.QColor("#ffffff")
+
         for first, last in groups:
             selection = QtWidgets.QTextEdit.ExtraSelection()
             selection.cursor = QtGui.QTextCursor(self.document())
@@ -5798,10 +5802,8 @@ class Dssr2DSequenceView(QtWidgets.QTextEdit):
             selection.cursor.setPosition(
                 self._spans[last][1], QtGui.QTextCursor.KeepAnchor
             )
-            is_dark = getattr(self.editor, "is_dark", False)
-            selection.format.setBackground(
-                QtGui.QColor("#881337") if is_dark else QtGui.QColor("#fce7f3")
-            )
+            selection.format.setBackground(bg_color)
+            selection.format.setForeground(fg_color)
             selections.append(selection)
         self.setExtraSelections(selections)
 
