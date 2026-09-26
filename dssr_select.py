@@ -7292,8 +7292,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
         tools.addWidget(self.gel_style_cb)
         tools.addStretch(1)
 
-        self.options_panel = QtWidgets.QGroupBox("Display and 3D")
-        options = QtWidgets.QGridLayout(self.options_panel)
+        options = QtWidgets.QHBoxLayout()
+        options.setContentsMargins(0, 2, 0, 2)
+        options.setSpacing(12)
+
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
         self.noncanonical_cb = DssrUI.checkbox(
             "Non-canonical pairs",
@@ -7309,12 +7311,15 @@ class Dssr2DEditor(QtWidgets.QWidget):
             changed=self._circles_toggled,
             tip="Show or hide circular node borders around bases",
         )
-        options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
-        options.addWidget(self.number_spin, 0, 1)
-        options.addWidget(self.noncanonical_cb, 0, 2)
-        options.addWidget(self.base_colors_cb, 0, 3)
-        options.addWidget(self.circles_cb, 0, 4)
-        root.addWidget(self.options_panel)
+
+        options.addWidget(QtWidgets.QLabel("Number every"))
+        options.addWidget(self.number_spin)
+        options.addWidget(self.noncanonical_cb)
+        options.addWidget(self.base_colors_cb)
+        options.addWidget(self.circles_cb)
+        options.addStretch(1)
+
+        root.addLayout(options)
 
         self.sequence_view = Dssr2DSequenceView(self)
         root.addWidget(self.sequence_view)
