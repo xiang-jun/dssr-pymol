@@ -5952,8 +5952,6 @@ class Dssr2DSequenceView(QtWidgets.QTextEdit):
 class Dssr2DEditor(QtWidgets.QWidget):
     HISTORY_LIMIT = 100
 
-    HIGHLIGHT_OBJECT = "_dssr_2d_brush_highlight"
-
     def __init__(
         self,
         model,
@@ -6724,7 +6722,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         signature = self._node_residue_signature()
         self._select_residues_in_pymol(signature)
         self._last_pymol_signature = signature
-        self._update_pymol_highlight(signature)
 
     def save_layout(self):
         default_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.model.title)
@@ -7072,10 +7069,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._sync_pymol_selection()
         if final:
             try:
-                if self.zoom_3d_cb.isChecked() and cmd.count_atoms(
-                    self.HIGHLIGHT_OBJECT
-                ):
-                    cmd.zoom(self.HIGHLIGHT_OBJECT, buffer=4.0)
+                if self.zoom_3d_cb.isChecked() and cmd.count_atoms("sele"):
+                    cmd.zoom("sele", buffer=4.0)
             except Exception:
                 pass
 
@@ -7122,7 +7117,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
                         node.setSelected(False)
                 finally:
                     self._rebuilding = self._sync_from_pymol = False
-                self._update_pymol_highlight()
                 self._update_editor_status("3D selection cleared")
             return
 
@@ -7151,7 +7145,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
                         node.setSelected(False)
                 finally:
                     self._rebuilding = self._sync_from_pymol = False
-                self._update_pymol_highlight()
             return
 
         residues = set()
@@ -7190,17 +7183,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         finally:
             self._rebuilding = self._sync_from_pymol = False
 
-        self._update_pymol_highlight()
         self._update_editor_status("3D selection mirrored to 2D")
-
-    def _update_pymol_highlight(self, signature=None):
-        name = self.HIGHLIGHT_OBJECT
-        try:
-            cmd.delete(name)
-            _DSSR_BLOCK_OBJECTS.discard(name)
-        except Exception:
-            pass
-        self._last_highlight_signature = None
 
     def _select_residues_in_pymol(self, signature=None):
         if signature is None:
@@ -7336,9 +7319,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             tip="Show or hide circular node borders around bases",
         )
         self.follow_spin = DssrUI.spinbox(0.1, 0.9, 0.62, decimals=True, step=0.05)
-        self.live_3d_cb = DssrUI.checkbox(
-            "3D highlight", False, self._sync_pymol_selection
-        )
         self.zoom_3d_cb = DssrUI.checkbox("Zoom after brush", False)
         options.addWidget(QtWidgets.QLabel("Number every"), 0, 0)
         options.addWidget(self.number_spin, 0, 1)
@@ -7347,8 +7327,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         options.addWidget(self.circles_cb, 0, 4)
         options.addWidget(QtWidgets.QLabel("Elasticity"), 1, 0)
         options.addWidget(self.follow_spin, 1, 1)
-        options.addWidget(self.live_3d_cb, 1, 2)
-        options.addWidget(self.zoom_3d_cb, 1, 3)
+        options.addWidget(self.zoom_3d_cb, 1, 2)
         root.addWidget(self.options_panel)
         self.options_panel.hide()
         self.options_btn.toggled.connect(self.options_panel.setVisible)
@@ -7384,8 +7363,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._sync_pending = False
             for timer in (self._timer, self._sync_timer, self._reverse_timer):
                 timer.stop()
-            cmd.delete(self.HIGHLIGHT_OBJECT)
-            _DSSR_BLOCK_OBJECTS.discard(self.HIGHLIGHT_OBJECT)
             self._last_highlight_signature = None
 
     def showEvent(self, event):
