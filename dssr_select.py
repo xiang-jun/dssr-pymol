@@ -584,9 +584,8 @@ class DssrUtils:
             chain = parts[2] if len(parts) > 2 else ""
             resn = parts[3] if len(parts) > 3 else ""
             resi = parts[4] if len(parts) > 4 else ""
-            icode = parts[5] if len(parts) > 5 else ""
             if chain and resn and resi:
-                return "%s:%s%s%s" % (chain, resn, resi, icode)
+                return "%s:%s%s" % (chain, resn, resi)
         return raw
 
 
