@@ -1993,6 +1993,24 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             )
         return ""
 
+    def _set_busy(self, busy):
+        """Toggle interactive controls and cursor during background operations."""
+        self._loading = bool(busy)
+        enabled = not busy
+
+        # Disable trigger widgets to prevent re-entrant events during processEvents()
+        self.analyze_btn.setEnabled(enabled)
+        self.refresh_obj_btn.setEnabled(enabled)
+        self.obj_combo.setEnabled(enabled)
+        self.state_combo.setEnabled(enabled)
+        self.feature_combo.setEnabled(enabled)
+        self.list_widget.setEnabled(enabled)
+
+        if busy:
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        else:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
     def _load_structure(self, force=True):
         if self._loading:
             return self.editor
@@ -2004,10 +2022,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         ):
             return self.editor
 
-        self._loading = True
-        self.analyze_btn.setEnabled(False)
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-
+        self._set_busy(True)
         warn = self._big_object_warning(selection)
         self.status_label.setText(
             warn + ("Analyzing %s, state %d..." % (selection, state))
@@ -2024,9 +2039,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._clear_analysis("Analysis error: %s" % error)
             return None
         finally:
-            self._loading = False
-            self.analyze_btn.setEnabled(True)
-            QtWidgets.QApplication.restoreOverrideCursor()
+            self._set_busy(False)
 
     def show_analysis(
         self,
