@@ -7245,14 +7245,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
         )
         top.addWidget(self.selection_menu_btn)
 
+        # Row 2: Interaction tools, Drag modes, and Display Options
         tools = QtWidgets.QHBoxLayout()
+        tools.setContentsMargins(0, 2, 0, 4)
+        tools.setSpacing(10)
         root.addLayout(tools)
 
+        # 1. Interaction & Drag mode selectors
         self.interaction_combo = QtWidgets.QComboBox()
         self.interaction_combo.setView(QtWidgets.QListView(self.interaction_combo))
         self.interaction_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
         self.interaction_combo.setMinimumWidth(128)
-        self.interaction_combo.view().setMinimumWidth(128)
         self.interaction_combo.addItem("Select / edit [P]", "edit")
         self.interaction_combo.addItem("Brush select [B]", "brush")
         self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
@@ -7261,8 +7264,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.drag_mode_combo = QtWidgets.QComboBox()
         self.drag_mode_combo.setView(QtWidgets.QListView(self.drag_mode_combo))
         self.drag_mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
-        self.drag_mode_combo.setMinimumWidth(128)
-        self.drag_mode_combo.view().setMinimumWidth(128)
+        self.drag_mode_combo.setMinimumWidth(110)
         for text, value in (
             ("Soft drag", "soft"),
             ("Single base", "base"),
@@ -7285,12 +7287,14 @@ class Dssr2DEditor(QtWidgets.QWidget):
             "Glass-like rendering and elastic motion",
         )
         tools.addWidget(self.gel_style_cb)
-        tools.addStretch(1)
 
-        options = QtWidgets.QHBoxLayout()
-        options.setContentsMargins(0, 0, 0, 0)
-
+        # 2. Numbering input
+        tools.addSpacing(12)
+        tools.addWidget(QtWidgets.QLabel("Number every"))
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
+        tools.addWidget(self.number_spin)
+
+        # 3. Display toggles distributed across remaining space
         self.noncanonical_cb = DssrUI.checkbox(
             "Non-canonical pairs",
             self.show_noncanonical,
@@ -7306,18 +7310,13 @@ class Dssr2DEditor(QtWidgets.QWidget):
             tip="Show or hide circular node borders around bases",
         )
 
-        options.addWidget(QtWidgets.QLabel("Number every"))
-        options.addWidget(self.number_spin)
-
-        options.addStretch(1)
-        options.addWidget(self.noncanonical_cb)
-        options.addStretch(1)
-        options.addWidget(self.base_colors_cb)
-        options.addStretch(1)
-        options.addWidget(self.circles_cb)
-        options.addStretch(1)
-
-        root.addLayout(options)
+        tools.addStretch(1)
+        tools.addWidget(self.noncanonical_cb)
+        tools.addStretch(1)
+        tools.addWidget(self.base_colors_cb)
+        tools.addStretch(1)
+        tools.addWidget(self.circles_cb)
+        tools.addStretch(1)
 
         self.sequence_view = Dssr2DSequenceView(self)
         root.addWidget(self.sequence_view)
