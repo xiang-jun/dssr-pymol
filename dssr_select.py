@@ -4871,9 +4871,6 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
 
     def paint(self, painter, option, widget=None):
         """Paint clean lines for backbone and base pairs."""
-        return self._paint_flat(painter, option, widget)
-
-    def _paint_flat(self, painter, option, widget=None):
         try:
             painter.save()
             self._draw_paths(painter, (self.pen(),))
@@ -5087,23 +5084,17 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             instant = math.hypot(step.x(), step.y()) / dt
             self._drag_speed = 0.72 * self._drag_speed + 0.28 * instant
         self._last_move_pos, self._last_move_time = event.scenePos(), now
-        self._apply_drag_delta(delta, smooth=self.viewer.gel_style_enabled())
+        self._apply_drag_delta(delta)
         event.accept()
 
-    def _apply_drag_delta(self, delta, smooth=False):
+    def _apply_drag_delta(self, delta):
         for index, start in self._drag_starts.items():
             if not 0 <= index < len(self.viewer.nodes):
                 continue
             weight = float(self._drag_weights.get(index, 1.0))
             x = start.x() + delta.x() * weight
             y = start.y() + delta.y() * weight
-            node = self.viewer.nodes[index]
-            if smooth and weight < 0.999:
-                follow = 0.44 + 0.34 * weight
-                current = node.pos()
-                x = current.x() + (x - current.x()) * follow
-                y = current.y() + (y - current.y()) * follow
-            node.setPos(x, y)
+            self.viewer.nodes[index].setPos(x, y)
 
     def mouseReleaseEvent(self, event):
         was_dragging = self._dragging
@@ -5273,10 +5264,9 @@ class Dssr2DNodeItem(QtWidgets.QGraphicsEllipseItem):
             pass
 
     def _advance_visual(self):
-        enabled = self.viewer.gel_style_enabled()
-        target = self._scale_target if enabled else 1.0
-        stiffness = 0.24 if enabled else 0.42
-        damping = 0.68 if enabled else 0.55
+        target = 1.0
+        stiffness = 0.42
+        damping = 0.55
         self._scale_velocity = (
             self._scale_velocity + (target - self._visual_scale) * stiffness
         ) * damping
@@ -6933,9 +6923,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
             else QtCore.Qt.ArrowCursor
         )
         self.view.setCursor(cursor)
-
-    def gel_style_enabled(self):
-        return False
 
     def _circles_toggled(self, checked):
         self.show_circles = bool(checked)
