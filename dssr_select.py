@@ -5609,7 +5609,7 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
         if cancel:
             self._set_rectangle_selection(self._rectangle_base)
         self.cancel_selection_gesture()
-        self.editor._flush_live_sync(final=True)
+        self.editor._flush_live_sync()
         self.editor._update_editor_status(
             "rectangle canceled" if cancel else "rectangle selection mapped to 3D"
         )
@@ -7050,7 +7050,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def _after_brush_selection(self, final=False):
         if final:
-            self._flush_live_sync(final=True)
+            self._flush_live_sync()
             self._update_editor_status("brush selection mapped to 3D")
         else:
             self._schedule_live_sync()
@@ -7061,7 +7061,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._sync_pending = True
             self._sync_timer.start()
 
-    def _flush_live_sync(self, final=False):
+    def _flush_live_sync(self):
         if getattr(self, "_closed", False):
             return
         self._sync_pending = False
