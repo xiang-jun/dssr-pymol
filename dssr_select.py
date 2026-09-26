@@ -4745,27 +4745,60 @@ class Dssr2DLayout:
 
 class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
     def __init__(
-        self, node_a, node_b, kind="backbone", layer=0, lw="", linear_layout=False
+        self,
+        node_a,
+        node_b,
+        kind="backbone",
+        layer=0,
+        lw="",
+        linear_layout=False,
+        dssr_entry=None,
     ):
         super().__init__()
         self.node_a, self.node_b = node_a, node_b
         self.kind, self.layer = str(kind), int(layer)
         self.lw, self.linear_layout = str(lw or ""), bool(linear_layout)
+        self.dssr_entry = dssr_entry or {}
         self.setZValue(-5.0 if self.kind == "backbone" else -3.0)
         self._set_style()
         self.update_geometry()
 
+    @staticmethod
+    def _format_unit_id(nt_id):
+        raw = str(nt_id or "").strip()
+        if not raw:
+            return "?"
+        if raw.startswith("|") and raw.count("|") >= 4:
+            parts = raw.split("|")
+            chain = parts[2] if len(parts) > 2 else ""
+            resn = parts[3] if len(parts) > 3 else ""
+            resi = parts[4] if len(parts) > 4 else ""
+            icode = parts[5] if len(parts) > 5 else ""
+            if chain and resn and resi:
+                return "%s:%s%s%s" % (chain, resn, resi, icode)
+        # If it is already in standard or PyMOL notation, keep as-is
+        return raw
+
+    def _pair_tooltip(self):
+        if not self.dssr_entry:
+            return ("Base pair: %s" % self.lw) if self.lw else ""
+        nt1 = self._format_unit_id(self.dssr_entry.get("nt1", "?"))
+        nt2 = self._format_unit_id(self.dssr_entry.get("nt2", "?"))
+        lw = str(self.dssr_entry.get("LW", self.dssr_entry.get("bp", ""))).strip()
+        name = str(self.dssr_entry.get("name", "")).strip()
+        tags = [t for t in (lw, name) if t]
+        tag_str = (" (%s)" % ", ".join(tags)) if tags else ""
+        return "%s - %s%s" % (nt1, nt2, tag_str)
+
     def _set_style(self):
         is_dark = getattr(getattr(self.node_a, "viewer", None), "is_dark", False)
         if self.kind == "backbone":
-            # Slate gray backbone
             color = (
                 QtGui.QColor(100, 116, 139) if is_dark else QtGui.QColor(148, 163, 184)
             )
             width = 1.0
             style = QtCore.Qt.SolidLine
         elif self.kind == "noncanonical":
-            # Non-canonical pairs: subtle, thin dashed violet line
             color = (
                 QtGui.QColor(192, 132, 252, 180)
                 if is_dark
@@ -4774,14 +4807,12 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
             width = 0.95
             style = QtCore.Qt.DashLine
         elif self.layer > 0:
-            # Pseudoknots: bright purple
             color = (
                 QtGui.QColor(216, 180, 254) if is_dark else QtGui.QColor(147, 51, 234)
             )
             width = 1.45
             style = QtCore.Qt.DashLine
         else:
-            # Canonical Watson-Crick/Wobble rungs: electric sky-blue in dark mode, royal cobalt in light mode
             color = QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(29, 78, 216)
             width = 2.2
             style = QtCore.Qt.SolidLine
@@ -4789,8 +4820,9 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         self.setPen(
             QtGui.QPen(color, width, style, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
         )
-        if self.lw:
-            self.setToolTip("Base pair: %s" % self.lw)
+        tip = self._pair_tooltip()
+        if tip:
+            self.setToolTip(tip)
 
     def _pen(self, color, width):
         style = (
@@ -6013,7 +6045,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                         u2 = t
         return u1 <= u2
 
-    def _add_edge(self, i, j, kind, layer=0, lw="", linear=False):
+    def _add_edge(self, i, j, kind, layer=0, lw="", linear=False, dssr_entry=None):
         if i < 0 or j < 0 or i >= len(self.nodes) or j >= len(self.nodes):
             return None
         edge = Dssr2DEdgeItem(
@@ -6023,13 +6055,13 @@ class Dssr2DEditor(QtWidgets.QWidget):
             layer=layer,
             lw=lw,
             linear_layout=linear,
+            dssr_entry=dssr_entry,
         )
         self.scene.addItem(edge)
         self.nodes[i].edge_items.append(edge)
         self.nodes[j].edge_items.append(edge)
         self.edges.append(edge)
         edge.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        edge.setAcceptHoverEvents(False)
         return edge
 
     def redraw(self, *_args):
@@ -6080,6 +6112,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                         layer=layer,
                         lw=pair.get("lw", ""),
                         linear=linear,
+                        dssr_entry=pair.get("dssr"),
                     )
             self._chain_rects = self._add_chain_labels()
             self._add_number_labels()
