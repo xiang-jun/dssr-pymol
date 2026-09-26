@@ -325,6 +325,14 @@ class DssrUtils:
         return s[-n:]
 
     @staticmethod
+    def clean_exe_path(exe):
+        """Sanitize an executable path by stripping quotes, whitespace, and expanding user home ~."""
+        s = DssrUtils.unquote(exe).strip()
+        if s:
+            s = os.path.expanduser(s)
+        return s or "x3dna-dssr"
+
+    @staticmethod
     def _run_dssr(args, operation="DSSR", timeout=DSSR_TIMEOUT_SECONDS):
         """Run either annotation or block generation with timeout and error handling."""
         try:
@@ -360,8 +368,9 @@ class DssrUtils:
 
     @staticmethod
     def run_dssr_json(pdb_path, exe, timeout=DSSR_TIMEOUT_SECONDS):
+        exe_clean = DssrUtils.clean_exe_path(exe)
         out, err = DssrUtils._run_dssr(
-            [exe, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path],
+            [exe_clean, "--json", "--u-turn", "--idstr=ebi", "-i=" + pdb_path],
             operation="DSSR JSON",
             timeout=timeout,
         )
@@ -1326,6 +1335,7 @@ class DssrCmd:
         if not name:
             name = DssrCmd._unused_name("dssr_block")
 
+        exe_clean = DssrUtils.clean_exe_path(exe)
         with tempfile.TemporaryDirectory(prefix="dssr_block_") as directory:
             tmpfilepdb = os.path.join(directory, "input.pdb")
             tmpfiler3d = os.path.join(directory, "blocks.r3d")
@@ -1342,7 +1352,7 @@ class DssrCmd:
                 cmd.save(tmpfilepdb, selection, st)
 
                 args = [
-                    exe,
+                    exe_clean,
                     "--block-file=" + DssrUtils.unquote(block_file),
                     "--block-depth=" + str(block_depth),
                     "-i=" + tmpfilepdb,
