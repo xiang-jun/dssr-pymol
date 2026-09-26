@@ -574,6 +574,21 @@ class DssrUtils:
     def base_text_color(base, enabled=True):
         return DssrUtils.base_style(base, enabled)["text"]
 
+    @staticmethod
+    def format_unit_id(nt_id):
+        raw = str(nt_id or "").strip()
+        if not raw:
+            return "?"
+        if raw.startswith("|") and raw.count("|") >= 4:
+            parts = raw.split("|")
+            chain = parts[2] if len(parts) > 2 else ""
+            resn = parts[3] if len(parts) > 3 else ""
+            resi = parts[4] if len(parts) > 4 else ""
+            icode = parts[5] if len(parts) > 5 else ""
+            if chain and resn and resi:
+                return "%s:%s%s%s" % (chain, resn, resi, icode)
+        return raw
+
 
 class DssrParser:
     @staticmethod
@@ -4763,27 +4778,11 @@ class Dssr2DEdgeItem(QtWidgets.QGraphicsPathItem):
         self._set_style()
         self.update_geometry()
 
-    @staticmethod
-    def _format_unit_id(nt_id):
-        raw = str(nt_id or "").strip()
-        if not raw:
-            return "?"
-        if raw.startswith("|") and raw.count("|") >= 4:
-            parts = raw.split("|")
-            chain = parts[2] if len(parts) > 2 else ""
-            resn = parts[3] if len(parts) > 3 else ""
-            resi = parts[4] if len(parts) > 4 else ""
-            icode = parts[5] if len(parts) > 5 else ""
-            if chain and resn and resi:
-                return "%s:%s%s%s" % (chain, resn, resi, icode)
-        # If it is already in standard or PyMOL notation, keep as-is
-        return raw
-
     def _pair_tooltip(self):
         if not self.dssr_entry:
             return ("Base pair: %s" % self.lw) if self.lw else ""
-        nt1 = self._format_unit_id(self.dssr_entry.get("nt1", "?"))
-        nt2 = self._format_unit_id(self.dssr_entry.get("nt2", "?"))
+        nt1 = DssrUtils.format_unit_id(self.dssr_entry.get("nt1", "?"))
+        nt2 = DssrUtils.format_unit_id(self.dssr_entry.get("nt2", "?"))
         lw = str(self.dssr_entry.get("LW", self.dssr_entry.get("bp", ""))).strip()
         name = str(self.dssr_entry.get("name", "")).strip()
         tags = [t for t in (lw, name) if t]
