@@ -7293,8 +7293,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
         tools.addStretch(1)
 
         options = QtWidgets.QHBoxLayout()
-        options.setContentsMargins(0, 2, 0, 2)
-        options.setSpacing(12)
+        options.setContentsMargins(0, 4, 0, 4)
+        options.setSpacing(40)
 
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
         self.noncanonical_cb = DssrUI.checkbox(
@@ -7314,6 +7314,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         options.addWidget(QtWidgets.QLabel("Number every"))
         options.addWidget(self.number_spin)
+
+        options.addSpacing(12)
+
         options.addWidget(self.noncanonical_cb)
         options.addWidget(self.base_colors_cb)
         options.addWidget(self.circles_cb)
