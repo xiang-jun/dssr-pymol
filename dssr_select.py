@@ -7281,10 +7281,13 @@ class Dssr2DEditor(QtWidgets.QWidget):
         )
         tools.addWidget(self.drag_mode_combo)
 
-        tools.addSpacing(12)
+        tools.addSpacing(10)
         tools.addWidget(QtWidgets.QLabel("Number every"))
+        top.addSpacing(4) if hasattr(self, "top") else tools.addSpacing(4)
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
         tools.addWidget(self.number_spin)
+
+        tools.addStretch(1)
 
         self.noncanonical_cb = DssrUI.checkbox(
             "Non-canonical pairs",
@@ -7301,13 +7304,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
             tip="Show or hide circular node borders around bases",
         )
 
-        tools.addStretch(1)
         tools.addWidget(self.noncanonical_cb)
-        tools.addStretch(1)
+        tools.addSpacing(14)
         tools.addWidget(self.base_colors_cb)
-        tools.addStretch(1)
+        tools.addSpacing(14)
         tools.addWidget(self.circles_cb)
-        tools.addStretch(1)
 
         self.sequence_view = Dssr2DSequenceView(self)
         root.addWidget(self.sequence_view)
