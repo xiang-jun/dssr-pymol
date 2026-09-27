@@ -1097,13 +1097,49 @@ class DssrCmd:
         color="auto",
         precolor=1,
     ):
-        # Allow natural usage: dssr_select <selection>, <feature>, <index>
-        # e.g., 'dssr_select 1ehz, pairs, 1' instead of requiring an explicit state argument
+        """
+        DESCRIPTION
+
+            Select and highlight RNA structural features identified by DSSR.
+
+        USAGE
+
+            dssr_select [ selection [, state [, feature [, index [, name ]]]]]
+            dssr_select [ selection [, feature [, index [, name ]]]]
+
+        ARGUMENTS
+
+            selection = str: atom selection {default: all}
+
+            state = int: object state (0 for all states) {default: -1, current state}
+
+            feature = str: structural feature type (e.g. pairs, stems, helices,
+                      hairpins, bulges, iloops, junctions, pseudoknot, gquadruplexes).
+                      Use "features" or "help" to list supported options. {default: pairs}
+
+            index = int: 1-based feature index. Use index=0 to list all detected items
+                    for the chosen feature. {default: 1}
+
+            name = str: name of the new PyMOL selection {default: dssr_select}
+
+        EXAMPLE
+
+            fetch 1ehz, async=0
+
+            # Select and highlight the first base pair
+            dssr_select 1ehz, pairs, 1
+
+            # List all detected stems
+            dssr_select 1ehz, stems, 0
+
+            # Select hairpin #1 and assign a custom selection name
+            dssr_select 1ehz, hairpins, 1, name=loop1
+        """
+        # Support both formal convention (dssr_select sele, state, feature, index)
+        # and natural shorthand (dssr_select sele, feature, index)
         try:
             state = int(state)
         except (ValueError, TypeError):
-            # Positional argument 2 was not an integer: treat it as 'feature'
-            # and shift argument 3 to 'index'
             index = feature
             feature = state
             state = -1
