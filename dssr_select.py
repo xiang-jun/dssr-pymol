@@ -3091,14 +3091,24 @@ class Dssr2DModel:
         return len(self.chain_breaks) + 1
 
     def summary(self):
-        return (
-            "%d nt | %d chain(s) | %d secondary pair(s) | %d non-canonical pair(s)"
-            % (
-                len(self.nts),
-                self.chain_count(),
-                len(self.secondary_pairs),
-                len(self.noncanonical_pairs),
-            )
+        n_nts = len(self.nts)
+        n_chains = self.chain_count()
+        n_canonical = len(self.secondary_pairs)
+        n_noncanonical = len(self.noncanonical_pairs)
+
+        nt_str = "%d nt" % n_nts if n_nts == 1 else "%d nts" % n_nts
+        chain_str = "%d chain" % n_chains if n_chains == 1 else "%d chains" % n_chains
+        can_str = "%d canonical pair%s" % (n_canonical, "" if n_canonical == 1 else "s")
+        noncan_str = "%d non-canonical pair%s" % (
+            n_noncanonical,
+            "" if n_noncanonical == 1 else "s",
+        )
+
+        return "%s | %s | %s | %s" % (
+            nt_str,
+            chain_str,
+            can_str,
+            noncan_str,
         )
 
 
