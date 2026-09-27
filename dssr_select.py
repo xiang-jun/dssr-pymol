@@ -1710,16 +1710,19 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         top = QtWidgets.QHBoxLayout()
         top.setAlignment(QtCore.Qt.AlignVCenter)
         top.setContentsMargins(0, 0, 0, 4)
-        top.setSpacing(6)
+        top.setSpacing(0)  # Use explicit addSpacing for precise grouping
         root.addLayout(top)
 
         top.addWidget(QtWidgets.QLabel("Object"))
+        top.addSpacing(5)
+
         self.obj_combo = QtWidgets.QComboBox()
         self.obj_combo.setEditable(True)
         self.obj_combo.setMinimumWidth(150)
         self.obj_combo.setMaximumWidth(220)
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         top.addWidget(self.obj_combo)
+        top.addSpacing(6)
 
         self.refresh_obj_btn = DssrUI.button(
             "Refresh", self._refresh_objects, "Refresh loaded PyMOL molecular objects"
@@ -1727,14 +1730,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.analyze_btn = DssrUI.button(
             "Run",
             lambda: self._load_structure(force=True),
-            "Perform a DSSR analysis on the selected object",
+            "Run DSSR analysis on the selected object",
         )
         top.addWidget(self.refresh_obj_btn)
+        top.addSpacing(6)
         top.addWidget(self.analyze_btn)
 
         top.addStretch(1)
 
         top.addWidget(QtWidgets.QLabel("Style"))
+        top.addSpacing(5)
+
         self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
         self.block_file_combo.setMinimumWidth(110)
         self.block_file_combo.view().setMinimumWidth(130)
@@ -1743,13 +1749,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             "Styles can be typed and combined (e.g., wc-minor)."
         )
         top.addWidget(self.block_file_combo)
+        top.addSpacing(14)
 
         top.addWidget(QtWidgets.QLabel("Depth"))
+        top.addSpacing(5)
+
         self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
         self.block_depth_spin.setToolTip(
             "Thickness of rectangular blocks (default: 0.5)"
         )
         top.addWidget(self.block_depth_spin)
+        top.addSpacing(14)
 
         self.make_blocks_btn = DssrUI.button(
             "Make blocks",
@@ -1768,6 +1778,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.show_2d_btn.setToolTip("Show / hide the sequence and 2D panel")
         self.show_2d_btn.toggled.connect(self._set_2d_visible)
         top.addWidget(self.show_2d_btn)
+        top.addSpacing(6)
 
         self.dark_btn = QtWidgets.QPushButton("Dark")
         self.dark_btn.setCheckable(True)
