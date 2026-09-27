@@ -233,6 +233,10 @@ QToolTip { color: #0f172a; background: #ffffff; border: 1px solid #0284c7; }
 QPushButton:pressed { background: #e2e8f0; }
 QCheckBox::indicator { width: 15px; height: 15px; }
 QLabel#studioHint { color: #64748b; font-weight: 400; }
+QWidget#dssrStatusBar {
+    border-top: 1px solid #cbd5e1;
+    background: transparent;
+}
 """
 
 DARK_THEME = """
@@ -302,6 +306,10 @@ QToolTip { color: #f8fafc; background: #1e293b; border: 1px solid #38bdf8; }
 QPushButton:pressed { background: #334155; }
 QCheckBox::indicator { width: 15px; height: 15px; }
 QLabel#studioHint { color: #94a3b8; font-weight: 400; }
+QWidget#dssrStatusBar {
+    border-top: 1px solid #334155;
+    background: transparent;
+}
 """
 
 
@@ -1852,10 +1860,25 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([350, 1010])
 
+        self.status_bar_widget = QtWidgets.QWidget()
+        self.status_bar_widget.setObjectName("dssrStatusBar")
+        status_layout = QtWidgets.QHBoxLayout(self.status_bar_widget)
+        status_layout.setContentsMargins(6, 4, 6, 2)
+        status_layout.setSpacing(10)
+
         self.status_label = QtWidgets.QLabel("Load a molecule, then click Run.")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("font-weight: 500; padding: 2px 4px;")
-        root.addWidget(self.status_label)
+        self.status_label.setStyleSheet("font-weight: 600;")
+        status_layout.addWidget(self.status_label)
+
+        status_layout.addStretch(1)
+
+        self.hint_label = QtWidgets.QLabel(
+            "Drag blank space: box select · Drag bases: edit · Arrows: pan · Wheel: zoom · B: brush"
+        )
+        self.hint_label.setObjectName("studioHint")
+        status_layout.addWidget(self.hint_label)
+
+        root.addWidget(self.status_bar_widget)
 
     def _set_2d_visible(self, visible):
         """Collapse the pane without retiring its analysis or edited coordinates."""
@@ -1863,6 +1886,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._editor_sizes = self.splitter.sizes()
         self.editor_container.setVisible(visible)
         self.sidebar.setMaximumWidth(440 if visible else 16777215)
+        if hasattr(self, "hint_label"):
+            self.hint_label.setVisible(visible)
         if visible:
             self.splitter.setSizes(self._editor_sizes)
         if self.editor is not None:
@@ -7315,12 +7340,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.scene = QtWidgets.QGraphicsScene(self)
         self.view = Dssr2DGraphicsView(self.scene, self)
         root.addWidget(self.view, 1)
-        hint = QtWidgets.QLabel(
-            "Drag blank space: box select · Drag bases: edit · Arrows: pan · Wheel: zoom · B: brush"
-        )
-        hint.setObjectName("studioHint")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
 
     def set_view_active(self, active):
         active = bool(active) and not self._closed
