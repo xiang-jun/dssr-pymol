@@ -1797,11 +1797,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         root.addWidget(self.splitter, 1)
+
         sidebar = self.sidebar = QtWidgets.QWidget()
         sidebar.setMinimumWidth(280)
         sidebar.setMaximumWidth(440)
         left = QtWidgets.QVBoxLayout(sidebar)
-        left.setContentsMargins(0, 0, 4, 0)
+        left.setContentsMargins(0, 4, 4, 0)
+        left.setSpacing(0)
+
         self.feature_combo = QtWidgets.QComboBox()
         self.feature_combo.setView(QtWidgets.QListView(self.feature_combo))
         self.feature_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
@@ -1809,10 +1812,16 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.feature_combo.addItem(FEATURE_LABELS.get(feature, feature), feature)
         self.feature_combo.currentIndexChanged.connect(self._on_feature_changed)
         left.addWidget(self.feature_combo)
+
+        left.addSpacing(10)
+
         self.filter_edit = QtWidgets.QLineEdit()
         self.filter_edit.setPlaceholderText("Filter (e.g. wc | wobble, -wc -wobble)...")
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         left.addWidget(self.filter_edit)
+
+        left.addSpacing(6)
+
         self.list_widget = QtWidgets.QListWidget()
         self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.list_widget.itemSelectionChanged.connect(
@@ -7250,6 +7259,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         """Build the toolbars, sequence view, and single 2D graphics canvas."""
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
 
         top = QtWidgets.QHBoxLayout()
         top.setAlignment(QtCore.Qt.AlignVCenter)
@@ -7294,7 +7304,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         tools = QtWidgets.QHBoxLayout()
         tools.setAlignment(QtCore.Qt.AlignVCenter)
-        tools.setContentsMargins(0, 2, 0, 4)
+        tools.setContentsMargins(0, 0, 0, 4)
         tools.setSpacing(10)
         root.addLayout(tools)
 
