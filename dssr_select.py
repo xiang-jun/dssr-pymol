@@ -2236,6 +2236,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.details_box.clear()
             if self.editor is not None:
                 self.editor.clear_base_selection()
+                self.status_label.setText(
+                    "%s | state %d | %s"
+                    % (
+                        self._analysis_context[0],
+                        self._analysis_context[1],
+                        self.editor.model.summary(),
+                    )
+                )
             return
 
         try:
@@ -2299,6 +2307,26 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     self.editor._last_pymol_signature = tuple()
                     self.editor._sync_timer.stop()
                     self.editor._sync_pending = False
+
+                    # Update main dialog status line
+                    feat_label = FEATURE_LABELS.get(
+                        self._current_feature, self._current_feature
+                    )
+                    if len(items) == 1:
+                        self.status_label.setText(
+                            "%s · %s selected (%d base%s)"
+                            % (
+                                items[0].text(),
+                                feat_label,
+                                len(matching),
+                                "s" if len(matching) != 1 else "",
+                            )
+                        )
+                    else:
+                        self.status_label.setText(
+                            "%d %s items selected (%d bases)"
+                            % (len(items), feat_label, len(matching))
+                        )
 
         except Exception as error:
             self.status_label.setText("Selection error: %s" % error)
@@ -6702,9 +6730,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def set_status(self, message):
         """Forward status messages to the host dialog status bar."""
-        parent = self.parent()
-        if parent is not None and hasattr(parent, "status_label"):
-            parent.status_label.setText(str(message))
+        host = self.window()
+        if host is not None and hasattr(host, "status_label"):
+            host.status_label.setText(str(message))
 
     def _update_editor_status(self, action=""):
         selected = self._sync_sequence_selection()
