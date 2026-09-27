@@ -1538,6 +1538,46 @@ class DssrCmd:
         title="",
         quiet=1,
     ):
+        """
+        DESCRIPTION
+
+            Open the interactive RNA 2D layout studio for secondary structure
+            visualization and bi-directional 3D selection linking.
+
+        USAGE
+
+            dssr_2d [ selection [, state [, layout [, number_every
+                [, show_noncanonical [, title ]]]]]]
+
+        ARGUMENTS
+
+            selection = str: atom selection or object name {default: all}
+
+            state = int: object state (0 for all states) {default: -1, current state}
+
+            layout = standard|circular|linear|legacy radiate: 2D diagram layout
+                     algorithm {default: standard}
+
+            number_every = int: interval for residue number labels (0 for none)
+                           {default: 10}
+
+            show_noncanonical = 0|1: display non-canonical base pairs {default: 0}
+
+            title = str: optional title displayed on the 2D diagram {default: }
+
+        EXAMPLE
+
+            fetch 1ehz, async=0
+
+            # Open 2D studio with standard NAView layout
+            dssr_2d 1ehz
+
+            # Display with circular layout and non-canonical base pairs
+            dssr_2d 1ehz, layout=circular, show_noncanonical=1
+
+            # Custom labeling interval and title
+            dssr_2d 1ehz, number_every=5, title="Yeast tRNA-Phe"
+        """
         global _DSSR_GUI_DIALOG
         selection = DssrUtils.unquote(selection)
         exe = DssrUtils.unquote(exe)
