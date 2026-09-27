@@ -1760,32 +1760,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.data_tabs.setCurrentWidget(self.report_box)
         left.addWidget(self.data_tabs, 1)
         self.splitter.addWidget(sidebar)
+
         self.editor_container = QtWidgets.QWidget()
         self.editor_layout = QtWidgets.QVBoxLayout(self.editor_container)
         self.editor_layout.setContentsMargins(0, 0, 0, 0)
-        panel_title = QtWidgets.QHBoxLayout()
-        panel_title.addWidget(QtWidgets.QLabel("Sequence · RNA 2D"))
-        panel_title.addStretch(1)
-        self.minimize_2d_btn = DssrUI.button(
-            "−",
-            lambda: self.show_2d_btn.setChecked(False),
-            "Collapse 2D; keep the layout and undo history",
-        )
-        self.hide_2d_btn = DssrUI.button(
-            "×",
-            lambda: self.show_2d_btn.setChecked(False),
-            "Hide 2D; reopen with the 2D button above",
-        )
-        for button in (self.minimize_2d_btn, self.hide_2d_btn):
-            button.setFixedWidth(28)
-            panel_title.addWidget(button)
-        self.editor_layout.addLayout(panel_title)
         self.empty_label = QtWidgets.QLabel(
             "RNA 2D view\n\nLoad a molecule and click Analyze."
         )
         self.empty_label.setAlignment(QtCore.Qt.AlignCenter)
         self.editor_layout.addWidget(self.empty_label)
         self.splitter.addWidget(self.editor_container)
+
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([350, 1010])
 
