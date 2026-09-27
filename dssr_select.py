@@ -5421,15 +5421,6 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             QtCore.Qt.Key_Up: (0, -1),
             QtCore.Qt.Key_Down: (0, 1),
         }
-        movement = dict(arrows)
-        movement.update(
-            {
-                QtCore.Qt.Key_A: (-1, 0),
-                QtCore.Qt.Key_D: (1, 0),
-                QtCore.Qt.Key_W: (0, -1),
-                QtCore.Qt.Key_S: (0, 1),
-            }
-        )
         if control and key == QtCore.Qt.Key_Z:
             (self.editor.redo_layout if shift else self.editor.undo_layout)()
         elif control and key == QtCore.Qt.Key_Y:
@@ -5440,8 +5431,8 @@ class Dssr2DGraphicsView(QtWidgets.QGraphicsView):
             dx, dy = arrows[key]
             step = 10.0 if shift else 2.0
             self.editor.nudge_selected(dx * step, dy * step)
-        elif key in movement and not control and not modifiers & QtCore.Qt.AltModifier:
-            dx, dy = movement[key]
+        elif key in arrows and not modifiers & QtCore.Qt.AltModifier:
+            dx, dy = arrows[key]
             step = 120 if shift else 40
             self._pan_view(dx * step, dy * step)
         elif key in (QtCore.Qt.Key_B, QtCore.Qt.Key_P):
@@ -7251,7 +7242,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.view = Dssr2DGraphicsView(self.scene, self)
         root.addWidget(self.view, 1)
         hint = QtWidgets.QLabel(
-            "Drag blank space: box select · Drag bases: edit · Arrows / WASD: pan · Wheel: zoom · B: brush"
+            "Drag blank space: box select · Drag bases: edit · Arrows: pan · Wheel: zoom · B: brush"
         )
         hint.setObjectName("studioHint")
         hint.setWordWrap(True)
