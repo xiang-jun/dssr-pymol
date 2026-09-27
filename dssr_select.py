@@ -7185,7 +7185,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         super().showEvent(event)
         if not self._shown_once:
             self._shown_once = True
-            QtCore.QTimer.singleShot(0, self.fit_scene)
+            QtCore.QTimer.singleShot(50, self.fit_scene)
 
     def shutdown(self):
         if not self._closed:
