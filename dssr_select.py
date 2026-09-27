@@ -1531,10 +1531,10 @@ class DssrCmd:
     def dssr_2d(
         selection="all",
         state=-1,
-        exe="x3dna-dssr",
         layout="standard",
         number_every=10,
         show_noncanonical=0,
+        exe="x3dna-dssr",
         quiet=1,
     ):
         """
@@ -1546,7 +1546,7 @@ class DssrCmd:
         USAGE
 
             dssr_2d [ selection [, state [, layout [, number_every
-                [, show_noncanonical ]]]]]
+                [, show_noncanonical [, exe ]]]]]]
 
         ARGUMENTS
 
@@ -1562,12 +1562,17 @@ class DssrCmd:
 
             show_noncanonical = 0|1: display non-canonical base pairs {default: 0}
 
+            exe = str: path to "x3dna-dssr" executable {default: x3dna-dssr}
+
         EXAMPLE
 
             fetch 1ehz, async=0
 
             # Open 2D studio with standard NAView layout
             dssr_2d 1ehz
+
+            # Positional arguments: selection, state, layout
+            dssr_2d 1ehz, 1, circular
 
             # Display with circular layout and non-canonical base pairs
             dssr_2d 1ehz, layout=circular, show_noncanonical=1
