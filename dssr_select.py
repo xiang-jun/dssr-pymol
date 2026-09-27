@@ -1665,7 +1665,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         blocks_row.addWidget(QtWidgets.QLabel("Block style"))
         self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
-        self.block_file_combo.setMinimumWidth(120)
+        self.block_file_combo.setMinimumWidth(130)
+        self.block_file_combo.view().setMinimumWidth(140)
+        self.block_file_combo.setToolTip(
+            "Block cartoon style: face, edge, wc, g4, imotif, minor, etc.\n"
+            "Styles can be typed and combined (e.g., wc-minor)."
+        )
         blocks_row.addWidget(self.block_file_combo)
         blocks_row.addStretch(1)
 
@@ -1865,7 +1870,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _get_dssr_data(self, selection, state, exe, precolor_on):
         if not self._molecule_objects() or cmd.count_atoms(selection, state=state) <= 0:
-            raise CmdException("No atoms in the requested object / selection.")
+            raise CmdException("No atoms in the requested object.")
         return DssrUtils._cached_selection_json(
             selection, state, exe, precolor=bool(precolor_on)
         )
