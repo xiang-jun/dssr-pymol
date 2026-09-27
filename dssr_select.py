@@ -1906,34 +1906,33 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             pass
 
     def _check_context(self):
+        """Periodically verify that the analyzed structure remains valid and loaded in PyMOL."""
         if self._loading or self._analysis_context is None or not self.isVisible():
             return
         try:
             selection, state, _exe = self._context()
             loaded_objects = cmd.get_names("objects")
+            valid_molecules = self._molecule_objects()
 
             is_single_object = selection != "all" and not any(
                 ch in selection for ch in " ()=+"
             )
-            if is_single_object and selection not in loaded_objects:
+
+            structure_missing = (
+                (is_single_object and selection not in loaded_objects)
+                or not valid_molecules
+                or cmd.count_atoms(selection, state=state) <= 0
+            )
+
+            if structure_missing:
                 self._clear_analysis(
                     "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
                 )
                 return
 
-            valid_molecules = self._molecule_objects()
-            if not valid_molecules:
-                self._clear_analysis(
-                    "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
-                )
-                return
-
-            if cmd.count_atoms(selection, state=state) <= 0:
-                self._clear_analysis(
-                    "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
-                )
-            elif self._analysis_context != self._context():
+            if self._analysis_context != self._context():
                 self._on_dssr_context_changed()
+
         except Exception as error:
             self._clear_analysis("Structure context is unavailable: %s" % error)
 
