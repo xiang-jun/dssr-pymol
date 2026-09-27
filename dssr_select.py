@@ -43,6 +43,7 @@ for mod in ("pymol.Qt", "PyQt5", "PyQt6"):
 
 __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
 DSSR_TIMEOUT_SECONDS = 300  # Default timeout in seconds (5 minutes)
+DSSR_LARGE_STRUCTURE_THRESHOLD = 20000  # Atom count threshold to warn about long DSSR runs
 
 _prev_dialog = globals().get("_DSSR_GUI_DIALOG")
 if _prev_dialog is not None:
@@ -1944,13 +1945,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return data
 
     def _big_object_warning(self, sel):
-        """Return a warning string if the object exceeds 20,000 atoms."""
-        thresh = 20000
+        """Return a warning string if the object exceeds 20,000 atoms (DSSR_LARGE_STRUCTURE_THRESHOLD)."""
         try:
             n_atoms = int(cmd.count_atoms(sel))
         except Exception:
             n_atoms = 0
-        if n_atoms >= thresh:
+        if n_atoms >= DSSR_LARGE_STRUCTURE_THRESHOLD:
             return (
                 "Warning: Large structure (%d atoms). DSSR analysis may take a few moments.\n"
                 % n_atoms
