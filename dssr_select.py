@@ -1770,10 +1770,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         root.addWidget(self.settings_widget)
 
-        self.status_label = QtWidgets.QLabel("Load a molecule, then click Run DSSR.")
-        self.status_label.setWordWrap(True)
-        root.addWidget(self.status_label)
-
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         root.addWidget(self.splitter, 1)
         sidebar = self.sidebar = QtWidgets.QWidget()
@@ -1838,6 +1834,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([350, 1010])
+
+        self.status_label = QtWidgets.QLabel("Load a molecule, then click Run DSSR.")
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("font-weight: 500; padding: 2px 4px;")
+        root.addWidget(self.status_label)
 
     def _set_2d_visible(self, visible):
         """Collapse the pane without retiring its analysis or edited coordinates."""
