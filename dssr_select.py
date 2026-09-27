@@ -2102,13 +2102,25 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if not force and self.editor is not None and context == self._analysis_context:
             requested = str(algorithm or "standard").strip().lower()
             requested = requested if requested in LAYOUT_CHOICES else "standard"
+
+            new_title = str(title).strip() if title else str(selection)
+            self.editor.model.title = new_title
+
+            self.editor.number_spin.blockSignals(True)
+            self.editor.number_spin.setValue(max(0, int(number_every)))
+            self.editor.number_spin.blockSignals(False)
+
+            self.editor.noncanonical_cb.blockSignals(True)
+            self.editor.noncanonical_cb.setChecked(bool(int(show_noncanonical)))
+            self.editor.noncanonical_cb.blockSignals(False)
+
             if self.editor.layout_combo.currentText() != requested:
                 self.editor.layout_combo.setCurrentText(requested)
-            self.editor.number_spin.setValue(max(0, int(number_every)))
-            self.editor.noncanonical_cb.setChecked(bool(int(show_noncanonical)))
-            if title:
-                self.editor.model.title = str(title)
+            else:
+                self.editor.redraw()
+
             return self.editor
+
         model = Dssr2DModel.from_dssr(data, title=title or str(selection))
         self._dispose_editor()
         self._updating_context = True
@@ -6084,6 +6096,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                     )
             self._chain_rects = self._add_chain_labels()
             self._add_number_labels()
+            self._title_item = self._add_title_label()
             self._update_scene_rect()
             for index in selected:
                 if index < len(self.nodes):
@@ -6330,6 +6343,38 @@ class Dssr2DEditor(QtWidgets.QWidget):
             used_label_rects.append(best[3])
             label.setZValue(8.0)
             DssrUI.no_mouse(label)
+
+    def _add_title_label(self):
+        """Add the diagram title above the RNA structure if a title is defined."""
+        title_text = str(getattr(self.model, "title", "") or "").strip()
+        if not title_text or not self.nodes:
+            return None
+
+        is_dark = getattr(self, "is_dark", False)
+        title_color = (
+            QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(15, 23, 42)
+        )
+
+        label = QtWidgets.QGraphicsSimpleTextItem(title_text)
+        font = QtGui.QFont("Sans Serif")
+        font.setPointSize(14)
+        font.setBold(True)
+        label.setFont(font)
+        label.setBrush(QtGui.QBrush(title_color))
+        label.setZValue(8.0)
+        DssrUI.no_mouse(label)
+
+        # Calculate bounding box of all current nodes to center the title on top
+        rect = self.scene.itemsBoundingRect()
+        title_rect = label.boundingRect()
+
+        # Position centered horizontally, with comfortable margin above the top-most node
+        pos_x = rect.center().x() - (title_rect.width() / 2.0)
+        pos_y = rect.top() - title_rect.height() - 25.0
+
+        label.setPos(pos_x, pos_y)
+        self.scene.addItem(label)
+        return label
 
     def _add_chain_labels(self):
         total = len(self.nodes)
@@ -6967,6 +7012,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
         label_color = (
             QtGui.QColor(248, 250, 252) if is_dark else QtGui.QColor(15, 23, 42)
         )
+        title_color = (
+            QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(15, 23, 42)
+        )
+        if getattr(self, "_title_item", None) is not None:
+            self._title_item.setBrush(QtGui.QBrush(title_color))
+
         for edge in self.edges:
             if edge.kind == "noncanonical":
                 edge.setVisible(self.show_noncanonical)
