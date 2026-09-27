@@ -1930,7 +1930,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return data
 
     def _big_object_warning(self, sel):
-        """Return a warning string if the selection exceeds 20,000 atoms."""
+        """Return a warning string if the object exceeds 20,000 atoms."""
         thresh = 20000
         try:
             n_atoms = int(cmd.count_atoms(sel))
@@ -1938,8 +1938,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             n_atoms = 0
         if n_atoms >= thresh:
             return (
-                "Warning: Large selection (%d atoms). DSSR analysis may be slow. "
-                "Consider selecting a specific chain.\n" % n_atoms
+                "Warning: Large structure (%d atoms). DSSR analysis may take a few moments.\n"
+                % n_atoms
             )
         return ""
 
