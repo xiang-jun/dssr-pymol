@@ -1654,43 +1654,21 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self._exe_path = "x3dna-dssr"
         self.settings_widget = QtWidgets.QWidget()
-        settings = QtWidgets.QGridLayout(self.settings_widget)
-        settings.setContentsMargins(0, 0, 0, 0)
-        settings.setHorizontalSpacing(16)
-        self.precolor_cb = DssrUI.checkbox("Gray precolor", checked=True)
-        self.display_cb = DssrUI.checkbox("Display sticks", checked=False)
-        self.zoom_cb = DssrUI.checkbox("Zoom to selection", checked=False)
-        self.color_edit = QtWidgets.QLineEdit("auto")
+        blocks_row = QtWidgets.QHBoxLayout(self.settings_widget)
+        blocks_row.setContentsMargins(0, 2, 0, 4)
+        blocks_row.setSpacing(12)
+
+        blocks_row.addWidget(QtWidgets.QLabel("Block style"))
         self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
+        self.block_file_combo.setMinimumWidth(120)
+        blocks_row.addWidget(self.block_file_combo)
+
+        blocks_row.addWidget(QtWidgets.QLabel("Depth"))
         self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
+        blocks_row.addWidget(self.block_depth_spin)
+
         self.make_blocks_btn = DssrUI.button("Make blocks", self._make_blocks_clicked)
-
-        settings.addWidget(self.precolor_cb, 0, 0)
-        settings.addWidget(self.display_cb, 0, 1)
-        settings.addWidget(self.zoom_cb, 0, 2)
-
-        color_box = QtWidgets.QHBoxLayout()
-        color_box.setContentsMargins(0, 0, 0, 0)
-        color_box.setSpacing(6)
-        color_box.addWidget(QtWidgets.QLabel("Color"))
-        color_box.addWidget(self.color_edit, 1)
-        settings.addLayout(color_box, 0, 3, 1, 3)
-
-        block_box = QtWidgets.QHBoxLayout()
-        block_box.setContentsMargins(0, 0, 0, 0)
-        block_box.setSpacing(6)
-        block_box.addWidget(QtWidgets.QLabel("Block style"))
-        block_box.addWidget(self.block_file_combo, 1)
-        settings.addLayout(block_box, 1, 0, 1, 2)
-
-        depth_box = QtWidgets.QHBoxLayout()
-        depth_box.setContentsMargins(0, 0, 0, 0)
-        depth_box.setSpacing(6)
-        depth_box.addWidget(QtWidgets.QLabel("Depth"))
-        depth_box.addWidget(self.block_depth_spin, 1)
-        settings.addLayout(depth_box, 1, 2, 1, 2)
-
-        settings.addWidget(self.make_blocks_btn, 1, 4, 1, 2)
+        blocks_row.addWidget(self.make_blocks_btn, 1)
 
         root.addWidget(self.settings_widget)
 
@@ -1803,7 +1781,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._get_object_text(),
             getattr(self, "_exe_path", "x3dna-dssr"),
             self._get_state_value(),
-            int(self.precolor_cb.isChecked()),
+            0,
         )
 
     def _context(self):
@@ -2320,13 +2298,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         nm = "%s%d" % (feat.lower(), idx)
 
-        col = self.color_edit.text().strip() or "auto"
-        precolor_on = 1 if self.precolor_cb.isChecked() else 0
-        display_on = 1 if self.display_cb.isChecked() else 0
-        zoom_on = 1 if self.zoom_cb.isChecked() else 0
-        showinfo_on = 0
-        radius = 0.25
-
         try:
             DssrCmd._dssr(
                 sel=sel,
@@ -2334,14 +2305,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 i=idx,
                 n=nm,
                 q=0,
-                si=showinfo_on,
+                si=0,
                 st=st,
                 exe=exe,
-                color=col,
-                display=display_on,
-                stick_radius=radius,
-                do_zoom=zoom_on,
-                pc=precolor_on,
+                color="auto",
+                display=0,
+                stick_radius=0.25,
+                do_zoom=0,
+                pc=0,
             )
 
             try:
@@ -2394,6 +2365,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 pass
 
     def _select_all_current_feature(self):
+        """Select all items (or all filtered items) of the active feature in PyMOL and 2D."""
         try:
             data = self._require_analysis()
             selection, state, _exe = self._analysis_context
@@ -2432,21 +2404,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             name = "%s_%s" % (feature.lower(), "filtered" if has_filter else "all")
             DssrCmd._create_feature_selection(name, selection, sel_str, quiet=0)
 
-            col = self.color_edit.text().strip() or "auto"
-            user_color = DssrUtils._resolve_color_spec(col)
-            cmd.color(user_color if user_color else "pink", name)
-
-            if self.display_cb.isChecked():
-                DssrCmd._display_feature_selection(
-                    name, display=1, stick_radius=0.25, do_zoom=0
-                )
-
+            cmd.color("pink", name)
             cmd.select("sele", name)
             cmd.enable("sele")
             cmd.refresh()
-
-            if self.zoom_cb.isChecked():
-                cmd.zoom(name)
 
             self.status_label.setText(
                 "Created selection '%s' with %d %s items."
@@ -2544,8 +2505,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 exe=exe,
                 quiet=1,
             )
-            if self.zoom_cb.isChecked():
-                cmd.zoom(name)
             self.status_label.setText("Created %s for the selected bases." % name)
         except Exception as error:
             self.status_label.setText("Blocks error: %s" % error)
