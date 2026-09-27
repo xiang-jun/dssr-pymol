@@ -1545,8 +1545,7 @@ class DssrCmd:
 
         USAGE
 
-            dssr_2d [ selection [, state [, layout [, number_every
-                [, show_noncanonical [, exe ]]]]]]
+            dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, exe ]]]]]]
 
         ARGUMENTS
 
@@ -2766,12 +2765,11 @@ class Dssr2DModel:
             return "", ""
 
     @classmethod
-    def from_dssr(cls, dssr_data, title="RNA secondary structure"):
+    def from_dssr(cls, dssr_data):
         if not isinstance(dssr_data, dict):
             raise CmdException("DSSR JSON data must be a dictionary")
 
         model = cls()
-        model.title = str(title or "RNA secondary structure")
 
         record = cls._find_dbn_record(dssr_data)
         seq_raw = ""
