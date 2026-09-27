@@ -1910,10 +1910,25 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             return
         try:
             selection, state, _exe = self._context()
-            if (
-                not self._molecule_objects()
-                or cmd.count_atoms(selection, state=state) <= 0
-            ):
+            loaded_objects = cmd.get_names("objects")
+
+            is_single_object = selection != "all" and not any(
+                ch in selection for ch in " ()=+"
+            )
+            if is_single_object and selection not in loaded_objects:
+                self._clear_analysis(
+                    "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
+                )
+                return
+
+            valid_molecules = self._molecule_objects()
+            if not valid_molecules:
+                self._clear_analysis(
+                    "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
+                )
+                return
+
+            if cmd.count_atoms(selection, state=state) <= 0:
                 self._clear_analysis(
                     "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
                 )
