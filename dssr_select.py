@@ -1822,17 +1822,30 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addWidget(self.list_widget, 3)
 
         paging = QtWidgets.QHBoxLayout()
-        self.prev_btn = DssrUI.button("Previous", lambda: self._change_page(-1))
+        paging.setContentsMargins(0, 2, 0, 2)
+        paging.setSpacing(6)
+
         self.select_all_btn = DssrUI.button(
             "Select all",
             self._select_all_current_feature,
-            "Select all items (or all filtered items) in PyMOL",
+            "Select all items (or all filtered items) in PyMOL and 2D diagram",
         )
-        self.next_btn = DssrUI.button("Next", lambda: self._change_page(1))
-        self.page_label = QtWidgets.QLabel()
-        paging.addWidget(self.prev_btn)
         paging.addWidget(self.select_all_btn)
-        paging.addWidget(self.page_label, 1)
+
+        paging.addStretch(1)
+
+        self.page_label = QtWidgets.QLabel()
+        self.page_label.setStyleSheet("color: #64748b; font-size: 11px;")
+        paging.addWidget(self.page_label)
+
+        self.prev_btn = DssrUI.button(
+            "◀", lambda: self._change_page(-1), "Previous page"
+        )
+        self.prev_btn.setFixedWidth(28)
+        self.next_btn = DssrUI.button("▶", lambda: self._change_page(1), "Next page")
+        self.next_btn.setFixedWidth(28)
+
+        paging.addWidget(self.prev_btn)
         paging.addWidget(self.next_btn)
         left.addLayout(paging)
 
@@ -2287,9 +2300,18 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             item = QtWidgets.QListWidgetItem(text)
             item.setData(QtCore.Qt.UserRole, index)
             self.list_widget.addItem(item)
-        self.page_label.setText("%d items · %d/%d" % (count, self._page + 1, pages))
-        self.prev_btn.setEnabled(self._page > 0)
-        self.next_btn.setEnabled(self._page + 1 < pages)
+        if pages > 1:
+            self.page_label.setText("%d items (%d/%d)" % (count, self._page + 1, pages))
+            self.prev_btn.show()
+            self.next_btn.show()
+            self.prev_btn.setEnabled(self._page > 0)
+            self.next_btn.setEnabled(self._page + 1 < pages)
+        else:
+            self.page_label.setText("%d items" % count if count != 1 else "1 item")
+            self.prev_btn.setEnabled(False)
+            self.next_btn.setEnabled(False)
+            self.prev_btn.hide()
+            self.next_btn.hide()
 
     def _entry_for_feature_index(self, data, feature, index):
         if feature == "pseudoknot":
