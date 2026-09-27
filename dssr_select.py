@@ -237,6 +237,11 @@ QWidget#dssrStatusBar {
     border-top: 1px solid #cbd5e1;
     background: transparent;
 }
+QMenu::separator {
+    height: 1px;
+    background: #e2e8f0;
+    margin: 4px 6px;
+}
 """
 
 DARK_THEME = """
@@ -309,6 +314,11 @@ QLabel#studioHint { color: #94a3b8; font-weight: 400; }
 QWidget#dssrStatusBar {
     border-top: 1px solid #334155;
     background: transparent;
+}
+QMenu::separator {
+    height: 1px;
+    background: #334155;
+    margin: 4px 6px;
 }
 """
 
@@ -1670,8 +1680,11 @@ class DssrUI:
         button.setText(text)
         button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         menu = QtWidgets.QMenu(button)
-        for label, callback in actions:
-            menu.addAction(label, callback)
+        for item in actions:
+            if not item or item[0] == "---" or item[1] is None:
+                menu.addSeparator()
+            else:
+                menu.addAction(item[0], item[1])
         button.setMenu(menu)
         return button
 
@@ -6517,6 +6530,18 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not self._closed:
             rect = self.scene.itemsBoundingRect().adjusted(-35, -35, 35, 35)
             self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
+            self._update_editor_status("fit all")
+
+    def fit_selected(self):
+        selected = [node for node in self.nodes if node.isSelected()]
+        if not selected:
+            self.fit_scene()
+            return
+        rect = QtCore.QRectF(selected[0].sceneBoundingRect())
+        for node in selected[1:]:
+            rect = rect.united(node.sceneBoundingRect())
+        self.view.fitInView(rect.adjusted(-80, -80, 80, 80), QtCore.Qt.KeepAspectRatio)
+        self._update_editor_status("fit selected (%d bases)" % len(selected))
 
     def select_nucleotide(self, index):
         self.select_indices([index], replace=True)
@@ -7032,16 +7057,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         }
         self._update_editor_status("dragging %s" % mode)
 
-    def fit_selected(self):
-        selected = [node for node in self.nodes if node.isSelected()]
-        if not selected:
-            self.fit_scene()
-            return
-        rect = QtCore.QRectF(selected[0].sceneBoundingRect())
-        for node in selected[1:]:
-            rect = rect.united(node.sceneBoundingRect())
-        self.view.fitInView(rect.adjusted(-80, -80, 80, 80), QtCore.Qt.KeepAspectRatio)
-
     def _ensure_animation(self):
         if not self._closed and self._view_active and not self._timer.isActive():
             self._timer.start()
@@ -7271,7 +7286,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.layout_combo.setCurrentText(self.algorithm)
         self.layout_combo.setMinimumWidth(135)
         top.addWidget(self.layout_combo)
-        self.fit_btn = DssrUI.button("Fit", self.fit_scene, "Fit drawing [F]")
+
+        self.fit_btn = DssrUI.button("Fit", self.fit_scene, "Fit all [F]")
         self.undo_btn = DssrUI.button("Undo", self.undo_layout, "Undo [Ctrl+Z]")
         self.redo_btn = DssrUI.button("Redo", self.redo_layout, "Redo [Ctrl+Y]")
         for button in (self.fit_btn, self.undo_btn, self.redo_btn):
@@ -7295,7 +7311,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
             (
                 ("Select all [Ctrl+A]", self.select_all_bases),
                 ("Clear selection [Esc]", self.clear_base_selection),
+                ("---", None),
                 ("Fit selected [C]", self.fit_selected),
+                ("---", None),
                 ("Reset selected coordinates", self.reset_selected_bases),
             ),
             self,
