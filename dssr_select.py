@@ -706,12 +706,20 @@ class DssrParser:
             return (1, str(resi_str))
 
     @staticmethod
+    def _escape_resi(r):
+        """Escape negative residue numbers so PyMOL treats '-' as negative rather than a range."""
+        s = str(r).strip()
+        if s.startswith("-"):
+            return "\\%s" % s
+        return s
+
+    @staticmethod
     def _compact_sel_from_residues(residues):
         """Build a compact PyMOL selection string grouping residues by chain with '+'.
 
         Example:
-            Input:  {('A', '10'), ('A', '11'), ('B', '5')}
-            Output: '(chain A and resi 10+11) or (chain B and resi 5)'
+            Input:  {('A', '-2'), ('A', '-1'), ('A', '1')}
+            Output: '(chain A and resi \\-2+\\-1+1)'
         """
         if not residues:
             return ""
@@ -737,12 +745,13 @@ class DssrParser:
         parts = []
         for c in sorted(by_chain.keys()):
             resis = sorted(by_chain[c], key=DssrParser._sort_resi_key)
-            resi_expr = "+".join(resis)
+            resi_expr = "+".join(DssrParser._escape_resi(r) for r in resis)
             parts.append("(chain %s and resi %s)" % (c, resi_expr))
 
         if no_chain:
             resis = sorted(no_chain, key=DssrParser._sort_resi_key)
-            parts.append("(resi %s)" % "+".join(resis))
+            resi_expr = "+".join(DssrParser._escape_resi(r) for r in resis)
+            parts.append("(resi %s)" % resi_expr)
 
         return " or ".join(parts)
 
@@ -1096,7 +1105,8 @@ class DssrParser:
             if not nt_id:
                 raise CmdException("Nucleotide entry missing nt_id field")
             c, r = DssrParser.parse_nt_id(nt_id)
-            return "(chain %s and resi %s)" % (c, r)
+            escaped_r = DssrParser._escape_resi(r)
+            return "(chain %s and resi %s)" % (c, escaped_r)
 
         raise CmdException('Feature "%s" not supported for residue selection' % feature)
 
