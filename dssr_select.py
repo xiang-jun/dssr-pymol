@@ -1702,29 +1702,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._context_timer.timeout.connect(self._check_context)
         self._refresh_objects()
 
-    def _create_vseparator(self):
-        """Create a subtle vertical separator line between toolbar control groups."""
-        line = QtWidgets.QFrame()
-        line.setFrameShape(QtWidgets.QFrame.VLine)
-        line.setFrameShadow(QtWidgets.QFrame.Sunken)
-        line.setStyleSheet("color: #cbd5e1; margin: 2px 4px;")
-        return line
-
     def _build_widgets(self):
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)
         root.setSpacing(6)
 
-        # -------------------------------------------------------------
-        # Unified Header Toolbar
-        # -------------------------------------------------------------
         top = QtWidgets.QHBoxLayout()
         top.setAlignment(QtCore.Qt.AlignVCenter)
         top.setContentsMargins(0, 0, 0, 4)
         top.setSpacing(6)
         root.addLayout(top)
 
-        # Group 1: Object & Analysis
         top.addWidget(QtWidgets.QLabel("Object"))
         self.obj_combo = QtWidgets.QComboBox()
         self.obj_combo.setEditable(True)
@@ -1744,9 +1732,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         top.addWidget(self.refresh_obj_btn)
         top.addWidget(self.analyze_btn)
 
-        top.addWidget(self._create_vseparator())
+        top.addStretch(1)
 
-        # Group 2: DSSR 3D Blocks
         top.addWidget(QtWidgets.QLabel("Style"))
         self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
         self.block_file_combo.setMinimumWidth(110)
@@ -1773,7 +1760,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self._exe_path = "x3dna-dssr"
 
-        # Right-side Group: View toggles
         top.addStretch(1)
 
         self.show_2d_btn = QtWidgets.QPushButton("2D")
