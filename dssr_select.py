@@ -1620,23 +1620,35 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def _build_widgets(self):
         root = QtWidgets.QVBoxLayout(self)
         top = QtWidgets.QHBoxLayout()
+        top.setAlignment(QtCore.Qt.AlignVCenter)
+        top.setContentsMargins(0, 0, 0, 2)
+        top.setSpacing(8)
         root.addLayout(top)
+
+        top.addWidget(QtWidgets.QLabel("Object / selection"))
         self.obj_combo = QtWidgets.QComboBox()
         self.obj_combo.setEditable(True)
-        self.obj_combo.setMinimumWidth(220)
+        self.obj_combo.setMinimumWidth(200)
+        self.obj_combo.setMaximumWidth(260)
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
+        top.addWidget(self.obj_combo)
+
+        top.addSpacing(6)
+        top.addWidget(QtWidgets.QLabel("State"))
         self.state_combo = QtWidgets.QComboBox()
+        self.state_combo.setMinimumWidth(90)
         self.state_combo.currentIndexChanged.connect(self._on_dssr_context_changed)
+        top.addWidget(self.state_combo)
+
+        top.addStretch(1)
+
         self.refresh_obj_btn = DssrUI.button("Refresh objects", self._refresh_objects)
         self.analyze_btn = DssrUI.button(
             "Analyze", lambda: self._load_structure(force=True)
         )
-        top.addWidget(QtWidgets.QLabel("Object / selection"))
-        top.addWidget(self.obj_combo, 1)
-        top.addWidget(QtWidgets.QLabel("State"))
-        top.addWidget(self.state_combo)
         top.addWidget(self.refresh_obj_btn)
         top.addWidget(self.analyze_btn)
+
         self.show_2d_btn = QtWidgets.QPushButton("2D")
         self.show_2d_btn.setCheckable(True)
         self.show_2d_btn.setChecked(True)
@@ -1645,6 +1657,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         )
         self.show_2d_btn.toggled.connect(self._set_2d_visible)
         top.addWidget(self.show_2d_btn)
+
         self.dark_btn = QtWidgets.QPushButton("Dark")
         self.dark_btn.setCheckable(True)
         self.dark_btn.setChecked(False)
