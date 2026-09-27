@@ -1628,8 +1628,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         top.addWidget(QtWidgets.QLabel("Object"))
         self.obj_combo = QtWidgets.QComboBox()
         self.obj_combo.setEditable(True)
-        self.obj_combo.setMinimumWidth(200)
-        self.obj_combo.setMaximumWidth(260)
+        self.obj_combo.setMinimumWidth(180)
+        self.obj_combo.setMaximumWidth(240)
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         top.addWidget(self.obj_combo)
 
@@ -1944,7 +1944,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._loading = bool(busy)
         enabled = not busy
 
-        # Disable trigger widgets to prevent re-entrant events during processEvents()
         self.analyze_btn.setEnabled(enabled)
         self.refresh_obj_btn.setEnabled(enabled)
         self.obj_combo.setEnabled(enabled)
