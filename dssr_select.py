@@ -1714,7 +1714,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         super().__init__()
         self.setWindowTitle("DSSR RNA studio")
         self.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, True)
-        self.resize(1360, 860)
+        self.resize(1280, 800)
         self.setStyleSheet(LIGHT_THEME)
         self.editor = None
         self._analysis_context = None
@@ -1724,7 +1724,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._page = 0
         self._updating_context = False
         self._loading = False
-        self._editor_sizes = [350, 1010]
+        self._editor_sizes = [340, 940]
         self._build_widgets()
         self._context_timer = QtCore.QTimer(self)
         self._context_timer.setInterval(750)
