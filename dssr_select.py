@@ -1702,29 +1702,78 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._context_timer.timeout.connect(self._check_context)
         self._refresh_objects()
 
+    def _create_vseparator(self):
+        """Create a subtle vertical separator line between toolbar control groups."""
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.VLine)
+        line.setFrameShadow(QtWidgets.QFrame.Sunken)
+        line.setStyleSheet("color: #cbd5e1; margin: 2px 4px;")
+        return line
+
     def _build_widgets(self):
         root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(6)
+
+        # -------------------------------------------------------------
+        # Unified Header Toolbar
+        # -------------------------------------------------------------
         top = QtWidgets.QHBoxLayout()
         top.setAlignment(QtCore.Qt.AlignVCenter)
-        top.setContentsMargins(0, 0, 0, 2)
-        top.setSpacing(8)
+        top.setContentsMargins(0, 0, 0, 4)
+        top.setSpacing(6)
         root.addLayout(top)
 
+        # Group 1: Object & Analysis
         top.addWidget(QtWidgets.QLabel("Object"))
         self.obj_combo = QtWidgets.QComboBox()
         self.obj_combo.setEditable(True)
-        self.obj_combo.setMinimumWidth(180)
-        self.obj_combo.setMaximumWidth(240)
+        self.obj_combo.setMinimumWidth(150)
+        self.obj_combo.setMaximumWidth(220)
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         top.addWidget(self.obj_combo)
 
-        self.refresh_obj_btn = DssrUI.button("Refresh objects", self._refresh_objects)
+        self.refresh_obj_btn = DssrUI.button(
+            "Refresh", self._refresh_objects, "Refresh loaded PyMOL molecular objects"
+        )
         self.analyze_btn = DssrUI.button(
-            "Run DSSR", lambda: self._load_structure(force=True)
+            "Run",
+            lambda: self._load_structure(force=True),
+            "Run DSSR analysis on the selected object",
         )
         top.addWidget(self.refresh_obj_btn)
         top.addWidget(self.analyze_btn)
 
+        top.addWidget(self._create_vseparator())
+
+        # Group 2: DSSR 3D Blocks
+        top.addWidget(QtWidgets.QLabel("Style"))
+        self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
+        self.block_file_combo.setMinimumWidth(110)
+        self.block_file_combo.view().setMinimumWidth(130)
+        self.block_file_combo.setToolTip(
+            "Block cartoon style: face, edge, wc, g4, imotif, minor, etc.\n"
+            "Styles can be typed and combined (e.g., wc-minor)."
+        )
+        top.addWidget(self.block_file_combo)
+
+        top.addWidget(QtWidgets.QLabel("Depth"))
+        self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
+        self.block_depth_spin.setToolTip(
+            "Thickness of rectangular blocks (default: 0.5)"
+        )
+        top.addWidget(self.block_depth_spin)
+
+        self.make_blocks_btn = DssrUI.button(
+            "Make blocks",
+            self._make_blocks_clicked,
+            "Generate 3D block representation in PyMOL",
+        )
+        top.addWidget(self.make_blocks_btn)
+
+        self._exe_path = "x3dna-dssr"
+
+        # Right-side Group: View toggles
         top.addStretch(1)
 
         self.show_2d_btn = QtWidgets.QPushButton("2D")
@@ -1740,35 +1789,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.dark_btn.setToolTip("Toggle PyMOL dark / light mode")
         self.dark_btn.toggled.connect(self._set_dark_mode)
         top.addWidget(self.dark_btn)
-
-        self._exe_path = "x3dna-dssr"
-        self.settings_widget = QtWidgets.QWidget()
-        blocks_row = QtWidgets.QHBoxLayout(self.settings_widget)
-        blocks_row.setAlignment(QtCore.Qt.AlignVCenter)
-        blocks_row.setContentsMargins(0, 2, 0, 4)
-        blocks_row.setSpacing(6)
-
-        blocks_row.addWidget(QtWidgets.QLabel("Block style"))
-        self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
-        self.block_file_combo.setMinimumWidth(130)
-        self.block_file_combo.view().setMinimumWidth(140)
-        self.block_file_combo.setToolTip(
-            "Block cartoon style: face, edge, wc, g4, imotif, minor, etc.\n"
-            "Styles can be typed and combined (e.g., wc-minor)."
-        )
-        blocks_row.addWidget(self.block_file_combo)
-        blocks_row.addStretch(1)
-
-        blocks_row.addWidget(QtWidgets.QLabel("Depth"))
-        self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
-        blocks_row.addWidget(self.block_depth_spin)
-        blocks_row.addStretch(1)
-
-        self.make_blocks_btn = DssrUI.button("Make blocks", self._make_blocks_clicked)
-        blocks_row.addWidget(self.make_blocks_btn)
-        blocks_row.addStretch(1)
-
-        root.addWidget(self.settings_widget)
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         root.addWidget(self.splitter, 1)
