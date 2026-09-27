@@ -1633,21 +1633,14 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.obj_combo.currentTextChanged.connect(self._on_object_changed)
         top.addWidget(self.obj_combo)
 
-        top.addSpacing(6)
-        top.addWidget(QtWidgets.QLabel("State"))
-        self.state_combo = QtWidgets.QComboBox()
-        self.state_combo.setMinimumWidth(90)
-        self.state_combo.currentIndexChanged.connect(self._on_dssr_context_changed)
-        top.addWidget(self.state_combo)
-
-        top.addStretch(1)
-
         self.refresh_obj_btn = DssrUI.button("Refresh objects", self._refresh_objects)
         self.analyze_btn = DssrUI.button(
             "Analyze", lambda: self._load_structure(force=True)
         )
         top.addWidget(self.refresh_obj_btn)
         top.addWidget(self.analyze_btn)
+
+        top.addStretch(1)
 
         self.show_2d_btn = QtWidgets.QPushButton("2D")
         self.show_2d_btn.setCheckable(True)
@@ -1790,8 +1783,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         return self.obj_combo.currentText().strip() or "all"
 
     def _get_state_value(self):
-        state = self.state_combo.currentData()
-        return max(1, int(cmd.get_state())) if state in (None, -1) else int(state)
+        try:
+            return max(1, int(cmd.get_state()))
+        except Exception:
+            return 1
 
     def _get_dssr_context(self):
         return (
@@ -1830,21 +1825,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     pass
         return valid
 
-    def _update_state_combo(self, wanted=None):
-        selected = self.state_combo.currentData() if wanted is None else wanted
-        try:
-            count = max(1, int(cmd.count_states(self._get_object_text())))
-        except Exception:
-            count = 1
-        self.state_combo.blockSignals(True)
-        self.state_combo.clear()
-        self.state_combo.addItem("Current", -1)
-        for state in range(1, count + 1):
-            self.state_combo.addItem(str(state), state)
-        index = self.state_combo.findData(selected)
-        self.state_combo.setCurrentIndex(max(0, index))
-        self.state_combo.blockSignals(False)
-
     def _refresh_objects(self):
         objects = self._molecule_objects()
         previous = self.obj_combo.currentText().strip()
@@ -1862,7 +1842,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self.obj_combo.setCurrentIndex(0)
             else:
                 self.obj_combo.setEditText("")
-            self._update_state_combo()
         finally:
             self._updating_context = False
         if not objects:
@@ -1874,7 +1853,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _on_object_changed(self, *_args):
         if not self._updating_context:
-            self._update_state_combo()
             self._on_dssr_context_changed()
 
     def _on_dssr_context_changed(self, *_args):
@@ -1970,7 +1948,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.analyze_btn.setEnabled(enabled)
         self.refresh_obj_btn.setEnabled(enabled)
         self.obj_combo.setEnabled(enabled)
-        self.state_combo.setEnabled(enabled)
         self.feature_combo.setEnabled(enabled)
         self.list_widget.setEnabled(enabled)
 
@@ -2023,8 +2000,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     ):
         context = (str(selection), int(state), str(exe))
         if not force and self.editor is not None and context == self._analysis_context:
-            if not self._loading:
-                self._update_state_combo(wanted=int(state))
             requested = str(algorithm or "standard").strip().lower()
             requested = requested if requested in LAYOUT_CHOICES else "standard"
             if self.editor.layout_combo.currentText() != requested:
@@ -2038,12 +2013,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             data, title=title or "%s — state %d" % (selection, state)
         )
         self._dispose_editor()
-        keep_current = self._loading and self.state_combo.currentData() == -1
         self._updating_context = True
         try:
             self.obj_combo.setEditText(str(selection))
             self._exe_path = str(exe)
-            self._update_state_combo(wanted=-1 if keep_current else int(state))
         finally:
             self._updating_context = False
         self._analysis_context = self._cache_key = context
