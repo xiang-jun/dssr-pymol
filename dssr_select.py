@@ -1651,12 +1651,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.dark_btn.setToolTip("Toggle PyMOL dark / light mode")
         self.dark_btn.toggled.connect(self._set_dark_mode)
         top.addWidget(self.dark_btn)
-        self.settings_btn = QtWidgets.QPushButton("Settings")
-        self.settings_btn.setToolTip(
-            "Display options, base blocks, and the DSSR executable path"
-        )
-        self.settings_btn.setCheckable(True)
-        top.addWidget(self.settings_btn)
 
         self._exe_path = "x3dna-dssr"
         self.settings_widget = QtWidgets.QWidget()
@@ -1699,8 +1693,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         settings.addWidget(self.make_blocks_btn, 1, 4, 1, 2)
 
         root.addWidget(self.settings_widget)
-        self.settings_widget.hide()
-        self.settings_btn.toggled.connect(self.settings_widget.setVisible)
 
         self.status_label = QtWidgets.QLabel("Load a molecule, then click Analyze.")
         self.status_label.setWordWrap(True)
