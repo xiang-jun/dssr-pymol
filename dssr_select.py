@@ -7190,16 +7190,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self.interaction_combo = QtWidgets.QComboBox()
         self.interaction_combo.setView(QtWidgets.QListView(self.interaction_combo))
         self.interaction_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
-        self.interaction_combo.setMinimumWidth(128)
+        self.interaction_combo.setMinimumWidth(148)
         self.interaction_combo.addItem("Select / edit [P]", "edit")
         self.interaction_combo.addItem("Brush select [B]", "brush")
+        self.interaction_combo.view().setMinimumWidth(155)
         self.interaction_combo.currentIndexChanged.connect(self._interaction_changed)
         tools.addWidget(self.interaction_combo)
 
         self.drag_mode_combo = QtWidgets.QComboBox()
         self.drag_mode_combo.setView(QtWidgets.QListView(self.drag_mode_combo))
         self.drag_mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
-        self.drag_mode_combo.setMinimumWidth(110)
+        self.drag_mode_combo.setMinimumWidth(120)
         for text, value in (
             ("Soft drag", "soft"),
             ("Single base", "base"),
@@ -7210,6 +7211,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             ("Branch", "branch"),
         ):
             self.drag_mode_combo.addItem(text, value)
+        self.drag_mode_combo.view().setMinimumWidth(145)
         self.drag_mode_combo.currentIndexChanged.connect(
             lambda: self._update_editor_status("drag mode changed")
         )
