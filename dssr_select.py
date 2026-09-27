@@ -1466,8 +1466,8 @@ class DssrCmd:
 
         if not quiet:
             print(
-                'dssr_select: created selection "%s" for %s (index %d) in state %d'
-                % (name, feature, index, state)
+                'dssr_select: created selection "%s" for %s (index %d)'
+                % (name, feature, index)
             )
 
     @staticmethod
@@ -1967,9 +1967,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self._set_busy(True)
         warn = self._big_object_warning(selection)
-        self.status_label.setText(
-            warn + ("Analyzing %s, state %d..." % (selection, state))
-        )
+        self.status_label.setText(warn + ("Analyzing %s..." % selection))
         QtWidgets.QApplication.processEvents()
 
         try:
@@ -2007,9 +2005,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if title:
                 self.editor.model.title = str(title)
             return self.editor
-        model = Dssr2DModel.from_dssr(
-            data, title=title or "%s — state %d" % (selection, state)
-        )
+        model = Dssr2DModel.from_dssr(data, title=title or str(selection))
         self._dispose_editor()
         self._updating_context = True
         try:
@@ -2036,9 +2032,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._refresh_list()
         self.report_box.setPlainText(DssrParser._format_rna_summary_text(data))
         self.data_tabs.setCurrentWidget(self.report_box)
-        self.status_label.setText(
-            "%s | state %d | %s" % (selection, state, model.summary())
-        )
+        self.status_label.setText("%s | %s" % (selection, model.summary()))
         QtCore.QTimer.singleShot(50, self.editor.fit_scene)
         return self.editor
 
@@ -2176,10 +2170,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if self.editor is not None:
                 self.editor.clear_base_selection()
                 self.status_label.setText(
-                    "%s | state %d | %s"
+                    "%s | %s"
                     % (
                         self._analysis_context[0],
-                        self._analysis_context[1],
                         self.editor.model.summary(),
                     )
                 )
@@ -2247,7 +2240,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     self.editor._sync_timer.stop()
                     self.editor._sync_pending = False
 
-                    # Update main dialog status line
                     feat_label = FEATURE_LABELS.get(
                         self._current_feature, self._current_feature
                     )
@@ -5844,7 +5836,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._reverse_timer.setInterval(450)
         self._reverse_timer.timeout.connect(self._pull_pymol_selection)
 
-        # Build widgets once and establish initial theme
         self._build_widgets()
         self.set_theme(False)
 
@@ -5858,7 +5849,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._update_view_cursor()
         self._update_editor_status("ready")
         self._reverse_timer.start()
-        QtCore.QTimer.singleShot(50, self.editor.fit_scene)
+        QtCore.QTimer.singleShot(50, self.fit_scene)
 
     def set_theme(self, is_dark):
         self.is_dark = bool(is_dark)
