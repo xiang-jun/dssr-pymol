@@ -43,7 +43,7 @@ for mod in ("pymol.Qt", "PyQt5", "PyQt6"):
 
 __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
 DSSR_TIMEOUT_SECONDS = 300  # Default timeout in seconds (5 minutes)
-DSSR_LARGE_STRUCTURE_THRESHOLD = 20000  # Atom count threshold to warn about long DSSR runs
+DSSR_LARGE_STRUCTURE_THRESHOLD = 20000  # Atom count threshold for warning
 
 _prev_dialog = globals().get("_DSSR_GUI_DIALOG")
 if _prev_dialog is not None:
@@ -1097,8 +1097,17 @@ class DssrCmd:
         color="auto",
         precolor=1,
     ):
+        # Allow natural usage: dssr_select <selection>, <feature>, <index>
+        # e.g., 'dssr_select 1ehz, pairs, 1' instead of requiring an explicit state argument
+        try:
+            state = int(state)
+        except (ValueError, TypeError):
+            # Positional argument 2 was not an integer: treat it as 'feature'
+            # and shift argument 3 to 'index'
+            index = feature
+            feature = state
+            state = -1
 
-        state = int(state)
         index = int(index)
         show_info = int(show_info)
         quiet = int(quiet)
