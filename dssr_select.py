@@ -1658,12 +1658,11 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.settings_btn.setCheckable(True)
         top.addWidget(self.settings_btn)
 
+        self._exe_path = "x3dna-dssr"
         self.settings_widget = QtWidgets.QWidget()
         settings = QtWidgets.QGridLayout(self.settings_widget)
         settings.setContentsMargins(0, 0, 0, 0)
-        settings.setHorizontalSpacing(16)  # Generous separation between columns
-        self.exe_edit = QtWidgets.QLineEdit("x3dna-dssr")
-        self.exe_edit.textChanged.connect(self._on_dssr_context_changed)
+        settings.setHorizontalSpacing(16)
         self.precolor_cb = DssrUI.checkbox("Gray precolor", checked=True)
         self.display_cb = DssrUI.checkbox("Display sticks", checked=False)
         self.zoom_cb = DssrUI.checkbox("Zoom to selection", checked=False)
@@ -1672,35 +1671,32 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
         self.make_blocks_btn = DssrUI.button("Make blocks", self._make_blocks_clicked)
 
-        settings.addWidget(QtWidgets.QLabel("DSSR executable"), 0, 0)
-        settings.addWidget(self.exe_edit, 0, 1, 1, 5)
-
-        settings.addWidget(self.precolor_cb, 1, 0)
-        settings.addWidget(self.display_cb, 1, 1)
-        settings.addWidget(self.zoom_cb, 1, 2)
+        settings.addWidget(self.precolor_cb, 0, 0)
+        settings.addWidget(self.display_cb, 0, 1)
+        settings.addWidget(self.zoom_cb, 0, 2)
 
         color_box = QtWidgets.QHBoxLayout()
         color_box.setContentsMargins(0, 0, 0, 0)
         color_box.setSpacing(6)
         color_box.addWidget(QtWidgets.QLabel("Color"))
         color_box.addWidget(self.color_edit, 1)
-        settings.addLayout(color_box, 1, 3, 1, 3)
+        settings.addLayout(color_box, 0, 3, 1, 3)
 
         block_box = QtWidgets.QHBoxLayout()
         block_box.setContentsMargins(0, 0, 0, 0)
         block_box.setSpacing(6)
         block_box.addWidget(QtWidgets.QLabel("Block style"))
         block_box.addWidget(self.block_file_combo, 1)
-        settings.addLayout(block_box, 2, 0, 1, 2)
+        settings.addLayout(block_box, 1, 0, 1, 2)
 
         depth_box = QtWidgets.QHBoxLayout()
         depth_box.setContentsMargins(0, 0, 0, 0)
         depth_box.setSpacing(6)
         depth_box.addWidget(QtWidgets.QLabel("Depth"))
         depth_box.addWidget(self.block_depth_spin, 1)
-        settings.addLayout(depth_box, 2, 2, 1, 2)
+        settings.addLayout(depth_box, 1, 2, 1, 2)
 
-        settings.addWidget(self.make_blocks_btn, 2, 4, 1, 2)
+        settings.addWidget(self.make_blocks_btn, 1, 4, 1, 2)
 
         root.addWidget(self.settings_widget)
         self.settings_widget.hide()
@@ -1813,7 +1809,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def _get_dssr_context(self):
         return (
             self._get_object_text(),
-            self.exe_edit.text().strip() or "x3dna-dssr",
+            getattr(self, "_exe_path", "x3dna-dssr"),
             self._get_state_value(),
             int(self.precolor_cb.isChecked()),
         )
@@ -2059,7 +2055,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._updating_context = True
         try:
             self.obj_combo.setEditText(str(selection))
-            self.exe_edit.setText(str(exe))
+            self._exe_path = str(exe)
             self._update_state_combo(wanted=-1 if keep_current else int(state))
         finally:
             self._updating_context = False
@@ -2327,7 +2323,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         sel = self._get_object_text()
         feat = self._current_feature
-        exe = self.exe_edit.text().strip() or "x3dna-dssr"
+        exe = getattr(self, "_exe_path", "x3dna-dssr")
         st = self._get_state_value()
 
         nm = "%s%d" % (feat.lower(), idx)
