@@ -1655,20 +1655,24 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._exe_path = "x3dna-dssr"
         self.settings_widget = QtWidgets.QWidget()
         blocks_row = QtWidgets.QHBoxLayout(self.settings_widget)
+        blocks_row.setAlignment(QtCore.Qt.AlignVCenter)
         blocks_row.setContentsMargins(0, 2, 0, 4)
-        blocks_row.setSpacing(12)
+        blocks_row.setSpacing(6)
 
         blocks_row.addWidget(QtWidgets.QLabel("Block style"))
         self.block_file_combo = DssrUI.combo(BLOCK_FEATURES, editable=True)
         self.block_file_combo.setMinimumWidth(120)
         blocks_row.addWidget(self.block_file_combo)
+        blocks_row.addStretch(1)
 
         blocks_row.addWidget(QtWidgets.QLabel("Depth"))
         self.block_depth_spin = DssrUI.spinbox(0.01, 5.0, 0.5, decimals=True, step=0.05)
         blocks_row.addWidget(self.block_depth_spin)
+        blocks_row.addStretch(1)
 
         self.make_blocks_btn = DssrUI.button("Make blocks", self._make_blocks_clicked)
-        blocks_row.addWidget(self.make_blocks_btn, 1)
+        blocks_row.addWidget(self.make_blocks_btn)
+        blocks_row.addStretch(1)
 
         root.addWidget(self.settings_widget)
 
