@@ -6381,9 +6381,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
         )
         try:
             QtWidgets.QApplication.clipboard().setText(text)
-            self.status_label.setText("DBN copied to clipboard")
+            self.set_status("DBN copied to clipboard")
         except Exception as e:
-            self.status_label.setText("Clipboard error: %s" % str(e))
+            self.set_status("Clipboard error: %s" % str(e))
 
     def export_image(self):
         filters = "PNG image (*.png)"
@@ -6409,10 +6409,10 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 if not path.lower().endswith(".png"):
                     path += ".png"
                 self._export_png(path)
-            self.status_label.setText("Exported: %s" % path)
+            self.set_status("Exported: %s" % path)
         except Exception as e:
             msg = "Export failed: %s" % str(e)
-            self.status_label.setText(msg)
+            self.set_status(msg)
             try:
                 QtWidgets.QMessageBox.critical(self, "2D export", msg)
             except Exception:
@@ -6654,7 +6654,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         }
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
-        self._update_editor_status("layout saved: %s" % path)
+        self.set_status("Layout saved: %s" % path)
 
     def load_layout(self):
         path, _chosen = QtWidgets.QFileDialog.getOpenFileName(
@@ -6689,7 +6689,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._apply_positions(positions)
         self._push_history(before, self._capture_positions(), "load layout")
         self.fit_scene()
-        self._update_editor_status("layout loaded: %s" % path)
+        self.set_status("Layout loaded: %s" % path)
 
     def _update_history_buttons(self):
         for button, history, action in (
@@ -6700,6 +6700,12 @@ class Dssr2DEditor(QtWidgets.QWidget):
             if history:
                 button.setToolTip("%s: %s" % (action, history[-1].get("label", "edit")))
 
+    def set_status(self, message):
+        """Forward status messages to the host dialog status bar."""
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "status_label"):
+            parent.status_label.setText(str(message))
+
     def _update_editor_status(self, action=""):
         selected = self._sync_sequence_selection()
         variant = str(getattr(self.model, "_dssr2d_layout_variant", self.algorithm))
@@ -6708,7 +6714,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self.interaction_tool(),
             variant,
         )
-        self.status_label.setText(text + (" · " + action if action else ""))
+        self.set_status(text + (" · " + action if action else ""))
 
     def _schedule_scene_rect(self):
         if self._closed or self._scene_rect_pending:
@@ -7099,7 +7105,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             try:
                 cmd.select("sele", "byres (%s)" % expression)
             except Exception as error:
-                self.status_label.setText("PyMOL selection error: %s" % str(error))
+                self.set_status("PyMOL selection error: %s" % str(error))
 
     def _build_widgets(self):
         """Build the toolbars, sequence view, and single 2D graphics canvas."""
@@ -7220,9 +7226,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
         hint.setObjectName("studioHint")
         hint.setWordWrap(True)
         root.addWidget(hint)
-        self.status_label = QtWidgets.QLabel(self.model.summary())
-        self.status_label.setWordWrap(True)
-        root.addWidget(self.status_label)
 
     def set_view_active(self, active):
         active = bool(active) and not self._closed
