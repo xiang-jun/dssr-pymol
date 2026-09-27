@@ -1625,7 +1625,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         top.setSpacing(8)
         root.addLayout(top)
 
-        top.addWidget(QtWidgets.QLabel("Object / selection"))
+        top.addWidget(QtWidgets.QLabel("Object"))
         self.obj_combo = QtWidgets.QComboBox()
         self.obj_combo.setEditable(True)
         self.obj_combo.setMinimumWidth(200)
