@@ -2617,6 +2617,30 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     @staticmethod
     def dssr_gui():
+        """
+        DESCRIPTION
+
+            Launch the interactive DSSR RNA Studio graphical interface.
+
+            Provides an integrated workspace to inspect structural features,
+            generate 3D block cartoons, view interactive 2D diagrams, and
+            synchronize selections with PyMOL in real time.
+
+        USAGE
+
+            dssr_gui
+
+        NOTES
+
+            - Can also be launched from PyMOL's top menu: Plugin -> DSSR.
+            - Automatically detects loaded molecular objects in the session.
+            - If no structure is loaded, a prompt will remind you to load a PDB/CIF file.
+
+        EXAMPLE
+
+            fetch 1ehz, async=0
+            dssr_gui
+        """
         global _DSSR_GUI_DIALOG
 
         has_structure = bool(
