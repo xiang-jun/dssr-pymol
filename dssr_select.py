@@ -1635,7 +1635,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.refresh_obj_btn = DssrUI.button("Refresh objects", self._refresh_objects)
         self.analyze_btn = DssrUI.button(
-            "Analyze", lambda: self._load_structure(force=True)
+            "Run DSSR", lambda: self._load_structure(force=True)
         )
         top.addWidget(self.refresh_obj_btn)
         top.addWidget(self.analyze_btn)
@@ -1645,9 +1645,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.show_2d_btn = QtWidgets.QPushButton("2D")
         self.show_2d_btn.setCheckable(True)
         self.show_2d_btn.setChecked(True)
-        self.show_2d_btn.setToolTip(
-            "Show / hide the sequence and 2D panel; keep the edited layout"
-        )
+        self.show_2d_btn.setToolTip("Show / hide the sequence and 2D panel")
         self.show_2d_btn.toggled.connect(self._set_2d_visible)
         top.addWidget(self.show_2d_btn)
 
@@ -1682,9 +1680,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         root.addWidget(self.settings_widget)
 
-        self.status_label = QtWidgets.QLabel("Load a molecule, then click Analyze.")
+        self.status_label = QtWidgets.QLabel("Load a molecule, then click Run DSSR.")
         self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
+
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         root.addWidget(self.splitter, 1)
         sidebar = self.sidebar = QtWidgets.QWidget()
@@ -1741,7 +1740,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.editor_layout = QtWidgets.QVBoxLayout(self.editor_container)
         self.editor_layout.setContentsMargins(0, 0, 0, 0)
         self.empty_label = QtWidgets.QLabel(
-            "RNA 2D view\n\nLoad a molecule and click Analyze."
+            "RNA 2D view\n\nLoad a molecule and click Run DSSR."
         )
         self.empty_label.setAlignment(QtCore.Qt.AlignCenter)
         self.editor_layout.addWidget(self.empty_label)
@@ -1846,10 +1845,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self._updating_context = False
         if not objects:
             self._clear_analysis(
-                "No molecule loaded. Load a PDB/CIF file, then click Analyze."
+                "No molecule loaded. Load a PDB/CIF file, then click Run DSSR."
             )
         elif self._analysis_context != self._context():
-            self._clear_analysis("Choose an object / selection, then click Analyze.")
+            self._clear_analysis("Choose an object, then click Run DSSR.")
 
     def _on_object_changed(self, *_args):
         if not self._updating_context:
@@ -1858,7 +1857,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def _on_dssr_context_changed(self, *_args):
         if not self._updating_context:
             self._clear_analysis(
-                "Analysis context changed. Click Analyze to update the structure."
+                "Analysis context changed. Click Run DSSR to update the structure."
             )
 
     def _invalidate_dssr_cache(self):
@@ -1911,7 +1910,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 or cmd.count_atoms(selection, state=state) <= 0
             ):
                 self._clear_analysis(
-                    "The analyzed structure is no longer loaded. Click Analyze after loading it."
+                    "The analyzed structure is no longer loaded. Click Run DSSR after loading it."
                 )
             elif self._analysis_context != self._context():
                 self._on_dssr_context_changed()
@@ -1922,7 +1921,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._check_context()
         data = _DSSR_DATA_CACHE.get("data")
         if self._analysis_context != self._context() or data is None:
-            raise CmdException("Click Analyze for the current object and state first.")
+            raise CmdException("Click Run DSSR for the current object first.")
         return data
 
     def _big_object_warning(self, sel):
@@ -2040,7 +2039,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.status_label.setText(
             "%s | state %d | %s" % (selection, state, model.summary())
         )
-        QtCore.QTimer.singleShot(0, self.editor.fit_scene)
+        QtCore.QTimer.singleShot(50, self.editor.fit_scene)
         return self.editor
 
     def _update_feature_counts(self, data):
@@ -2504,12 +2503,12 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def closeEvent(self, event):
         self._context_timer.stop()
-        self._clear_analysis("Click Analyze to load the structure again.")
+        self._clear_analysis("Click Run DSSR to load the structure again.")
         super().closeEvent(event)
 
     def reject(self):
         self._context_timer.stop()
-        self._clear_analysis("Click Analyze to load the structure again.")
+        self._clear_analysis("Click Run DSSR to load the structure again.")
         super().reject()
 
     @staticmethod
@@ -5859,7 +5858,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         self._update_view_cursor()
         self._update_editor_status("ready")
         self._reverse_timer.start()
-        QtCore.QTimer.singleShot(0, self.fit_scene)
+        QtCore.QTimer.singleShot(50, self.editor.fit_scene)
 
     def set_theme(self, is_dark):
         self.is_dark = bool(is_dark)
