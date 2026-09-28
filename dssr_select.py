@@ -45,6 +45,10 @@ __DSSR_PLUGIN_VERSION__ = "v2.0.0-dev"
 DSSR_TIMEOUT_SECONDS = 300  # Default timeout in seconds (5 minutes)
 DSSR_LARGE_STRUCTURE_THRESHOLD = 20000  # Atom count threshold for warning
 
+# Default GUI dimensions and splitter partition (sidebar vs. 2D studio)
+DSSR_DEFAULT_WINDOW_SIZE = (1280, 800)
+DSSR_DEFAULT_SPLITTER_SIZES = [340, 940]
+
 _prev_dialog = globals().get("_DSSR_GUI_DIALOG")
 if _prev_dialog is not None:
     try:
@@ -1714,7 +1718,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         super().__init__()
         self.setWindowTitle("DSSR RNA studio")
         self.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, True)
-        self.resize(1280, 800)
+        self.resize(*DSSR_DEFAULT_WINDOW_SIZE)
         self.setStyleSheet(LIGHT_THEME)
         self.editor = None
         self._analysis_context = None
@@ -1724,7 +1728,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self._page = 0
         self._updating_context = False
         self._loading = False
-        self._editor_sizes = [340, 940]
+        self._editor_sizes = list(DSSR_DEFAULT_SPLITTER_SIZES)
         self._build_widgets()
         self._context_timer = QtCore.QTimer(self)
         self._context_timer.setInterval(750)
@@ -1901,7 +1905,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.splitter.addWidget(self.editor_container)
 
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([340, 940])
+        self.splitter.setSizes(DSSR_DEFAULT_SPLITTER_SIZES)
 
         self.status_bar_widget = QtWidgets.QWidget()
         self.status_bar_widget.setObjectName("dssrStatusBar")
@@ -6889,7 +6893,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def _update_editor_status(self, action=""):
         selected = self._sync_sequence_selection()
-        if not selected and action == "fit all" and hasattr(self.window(), "status_label"):
+        if (
+            not selected
+            and action == "fit all"
+            and hasattr(self.window(), "status_label")
+        ):
             return
         variant = str(getattr(self.model, "_dssr2d_layout_variant", self.algorithm))
         text = "Selected %d · %s · %s" % (
