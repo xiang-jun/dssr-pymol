@@ -2405,7 +2405,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             if cores:
                 sel_str = " or ".join("(%s)" % c for c in cores)
 
-                cmd.color("gray", selection)
                 cmd.select("sele", "byres ((%s) and (%s))" % (selection, sel_str))
                 cmd.enable("sele")
                 cmd.refresh()
@@ -2474,58 +2473,37 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             self.status_label.setText("Selection error: %s" % error)
 
     def _on_item_double_clicked(self, item):
-        selected_items = self.list_widget.selectedItems()
-        if not selected_items:
+        data = item.data(QtCore.Qt.UserRole)
+        if data is None:
+            return
+        try:
+            idx = int(data)
+        except Exception:
             return
 
         sel = self._get_object_text()
         feat = self._current_feature
+        exe = getattr(self, "_exe_path", "x3dna-dssr")
+        st = self._get_state_value()
+
+        nm = "%s%d" % (feat.lower(), idx)
 
         try:
-            data = self._require_analysis()
-        except Exception as e:
-            try:
-                QtWidgets.QMessageBox.critical(self, "DSSR GUI error", str(e))
-            except Exception:
-                pass
-            return
-
-        indices = []
-        for list_item in selected_items:
-            raw = list_item.data(QtCore.Qt.UserRole)
-            if raw is None:
-                continue
-            try:
-                indices.append(int(raw))
-            except Exception:
-                continue
-
-        if not indices:
-            return
-
-        # Build a name that reflects all selected indices
-        nm = "%s_%s" % (feat.lower(), "_".join(str(i) for i in indices))
-
-        try:
-            # Gray the whole structure once before highlighting
-            cmd.color("gray", sel)
-
-            # Build merged residue selection from all selected indices
-            parts = []
-            for idx in indices:
-                try:
-                    core = DssrParser._build_residue_sel_from_dssr(data, feat, idx)
-                    if core:
-                        parts.append("(%s)" % core)
-                except Exception:
-                    continue
-
-            if not parts:
-                return
-
-            sel_str = " or ".join(parts)
-            DssrCmd._create_feature_selection(nm, sel, sel_str, quiet=0)
-            cmd.color("pink", nm)
+            DssrCmd._dssr(
+                sel=sel,
+                f=feat,
+                i=idx,
+                n=nm,
+                q=0,
+                si=0,
+                st=st,
+                exe=exe,
+                color="auto",
+                display=0,
+                stick_radius=0.25,
+                do_zoom=0,
+                pc=0,
+            )
 
             try:
                 cmd.delete("sele")
@@ -6805,15 +6783,6 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def clear_base_selection(self):
         self.select_indices(())
-        try:
-            for name in list(_DSSR_SELECTION_OBJECTS):
-                cmd.disable(name)
-            cmd.delete("sele")
-            cmd.delete("indicate")
-            cmd.color("gray", self.pymol_selection)
-            cmd.refresh()
-        except Exception:
-            pass
 
     def _pair_partner(self, index):
         table = self._pair_table
@@ -7299,9 +7268,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             signature = self._node_residue_signature()
         if not signature and not any(node.isSelected() for node in self.nodes):
             try:
-                cmd.delete("sele")
-                cmd.delete("indicate")
-                cmd.refresh()
+                cmd.select("sele", "none")
             except Exception:
                 pass
             return
