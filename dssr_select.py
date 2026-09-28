@@ -2480,8 +2480,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         sel = self._get_object_text()
         feat = self._current_feature
-        exe = getattr(self, "_exe_path", "x3dna-dssr")
-        st = self._get_state_value()
 
         try:
             data = self._require_analysis()
