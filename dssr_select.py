@@ -1901,7 +1901,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         self.splitter.addWidget(self.editor_container)
 
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([350, 1010])
+        self.splitter.setSizes([340, 940])
 
         self.status_bar_widget = QtWidgets.QWidget()
         self.status_bar_widget.setObjectName("dssrStatusBar")
@@ -6889,6 +6889,8 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def _update_editor_status(self, action=""):
         selected = self._sync_sequence_selection()
+        if not selected and action == "fit all" and hasattr(self.window(), "status_label"):
+            return
         variant = str(getattr(self.model, "_dssr2d_layout_variant", self.algorithm))
         text = "Selected %d · %s · %s" % (
             len(selected),
