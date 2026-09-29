@@ -1849,6 +1849,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.filter_edit = QtWidgets.QLineEdit()
         self.filter_edit.setPlaceholderText("Filter (e.g. wc | wobble, -wc -wobble)...")
+        self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         left.addWidget(self.filter_edit)
 
@@ -2278,6 +2279,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _on_feature_changed(self, *_args):
         self._current_feature = str(self.feature_combo.currentData() or "pairs")
+        self.filter_edit.blockSignals(True)
+        self.filter_edit.clear()
+        self.filter_edit.blockSignals(False)
         self.details_box.clear()
         self._refresh_list()
 
@@ -2784,11 +2788,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Escape:
-            # If there was an active selection, consume Esc to clear it without closing
             if self._clear_active_selection():
                 event.accept()
                 return
-            # If nothing was selected, dismiss the dialog
             self.close()
             event.accept()
             return
