@@ -8,7 +8,7 @@
 ### Key Features
 
 * **Interactive 2D RNA Layout Studio (`dssr_2d`)**:
-  * Pure-Python, dependency-free layout engine adapted from the NAView loop-decomposition algorithm (ViennaRNA/fornac).
+  * Pure-Python, dependency-free layout engine ported from the JavaScript NAView loop-decomposition implementation in ViennaRNA/fornac (`naview.js`).
   * Multiple layout projections: **Standard NAView**, **Circular**, **Linear (arc)**, and **Radiate**.
   * Automated tRNA cloverleaf topology recognition and standardized orientation (acceptor stem pointing down, anticodon arm pointing up).
   * Direct visualization of non-canonical (non-WC/Wobble) base pairs as curved tertiary arcs.
@@ -50,9 +50,11 @@
 
 Run the following commands in the PyMOL command line:
 
-    fetch 1ehz, async=0
-    as cartoon
-    dssr_gui
+```text
+fetch 1ehz, async=0
+as cartoon
+dssr_gui
+```
 
 1. **2D Studio**: The RNA 2D diagram automatically generates using the standard NAView tRNA cloverleaf layout alongside the 1D sequence ruler.
 2. **Selection Linking**: Drag a box around the anticodon loop in the 2D view; the corresponding residues are immediately selected and highlighted in pink in PyMOL's 3D viewport.
@@ -66,10 +68,11 @@ Run the following commands in the PyMOL command line:
 All core functions can be scripted or invoked directly from the PyMOL console:
 
 #### 1. Interactive 2D Studio (`dssr_2d`)
-Syntax: `dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, exe ]]]]]]`
+Syntax: `dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, exe [, quiet ]]]]]]]`
 
 Examples:
 * `dssr_2d 1ehz`
+* `dssr_2d 1ehz, 1, circular, show_noncanonical=1`
 * `dssr_2d 1ehz, layout=circular, show_noncanonical=1`
 * `dssr_2d 1ehz, number_every=5`
 
@@ -116,11 +119,11 @@ Examples:
 
 ### Project Heritage & Contributions
 
-* **Conceived, Directed, and Actively Co-developed by**: **Xiang-Jun Lu**, including core architecture, ongoing refactoring, bug fixes, and feature integration.
-* **Interactive Qt GUI & 2D Studio (`dssr_gui`, `dssr_2d`)**: **Eric Chen**.
-* **Structural Feature Selection, JSON Parsing & Architecture**: **Bener Dulger**, who created the initial structural feature selection and JSON parsing, and drove ongoing feature development, architectural refactoring, and documentation.
-* **Original 3D Block Cartoon Logic (`dssr_block`)**: **Thomas Holder** (Schrödinger LLC).
-* **Algorithmic Foundation**: Adapted the pure-Python NAView geometry engine from [ViennaRNA/fornac](https://github.com/ViennaRNA/fornac) (Peter Kerpedjiev, Stefan Hammer, Ronny Lorenz; Apache-2.0). Inspired by the DSSR–VARNA–Jmol integration developed by Robert M. Hanson and Xiang-Jun Lu.
+* **Conceived, directed, and actively co-developed by**: Xiang-Jun Lu, including core architecture, ongoing refactoring, bug fixes, and feature integration.
+* **Interactive Qt GUI & 2D Studio (`dssr_gui`, `dssr_2d`)**: Eric Chen, who created the initial Qt graphical interface, engineered the interactive pure-Python 2D RNA studio, and integrated `dssr_block`.
+* **Structural feature selection, JSON parsing & architectural development**: Bener Dulger, who designed the initial structural feature selection and JSON parsing, and drove ongoing feature development, architectural refactoring, and documentation.
+* **Original 3D block cartoon logic (`dssr_block`)**: Thomas Holder (Schrödinger LLC).
+* **Inspiration & Algorithmic Foundation**: Prof. Robert M. Hanson (Jmol/VARNA integration) and the [ViennaRNA/fornac](https://github.com/ViennaRNA/fornac) project.
 
 ---
 
@@ -135,6 +138,8 @@ If you use this plugin in your research, please cite it as follows:
 **Core Technology Citation**
 
 > Lu XJ, Bussemaker HJ, Olson WK (2015). **DSSR: an integrated software tool for dissecting the spatial structure of RNA.** *Nucleic Acids Research*, 43(21), e142.
+
+---
 
 ### Funding & Acknowledgments
 
