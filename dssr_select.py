@@ -378,6 +378,13 @@ class DssrUtils:
         return s
 
     @staticmethod
+    def normalize_layout(layout):
+        """Normalize layout algorithm name against aliases, falling back to 'standard'."""
+        key = str(layout or "standard").strip().lower().replace("-", "_")
+        resolved = LAYOUT_ALIASES.get(key, key)
+        return resolved if resolved in LAYOUT_CHOICES else "standard"
+
+    @staticmethod
     def _run_dssr(args, operation="DSSR", timeout=DSSR_TIMEOUT_SECONDS):
         """Run either annotation or block generation with timeout and error handling."""
         try:
@@ -1635,15 +1642,7 @@ class DssrCmd:
         selection = DssrUtils.unquote(selection)
         exe = DssrUtils.clean_exe_path(exe)
 
-        layout_raw = str(layout).strip().lower().replace("-", "_")
-        layout = LAYOUT_ALIASES.get(layout_raw, layout_raw)
-
-        if layout not in LAYOUT_CHOICES:
-            print(
-                f"DSSR warning: Unknown layout '{layout}', falling back to 'standard'."
-            )
-            layout = "standard"
-
+        layout = DssrUtils.normalize_layout(layout)
         layout = DssrUtils.unquote(layout)
         state, number_every = int(state), int(number_every)
         if state <= 0:
@@ -2224,11 +2223,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     ):
         context = (str(selection), int(state), str(exe))
         if not force and self.editor is not None and context == self._analysis_context:
-            requested_raw = (
-                str(algorithm or "standard").strip().lower().replace("-", "_")
-            )
-            requested = LAYOUT_ALIASES.get(requested_raw, requested_raw)
-            requested = requested if requested in LAYOUT_CHOICES else "standard"
+            requested = DssrUtils.normalize_layout(algorithm)
 
             self.editor.number_spin.blockSignals(True)
             self.editor.number_spin.setValue(max(0, int(number_every)))
