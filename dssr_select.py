@@ -5054,27 +5054,19 @@ class Dssr2DLayout:
 
     @staticmethod
     def compute(model, algorithm):
-        name = str(algorithm or "standard").strip().lower()
-        if name in (
-            "standard",
-            "naview",
-            "varna",
-            "classic",
-            "publication",
-            "smart",
-            "auto",
-        ):
-            return Dssr2DLayout._naview_layout(model)
-        if name in ("legacy radiate", "legacy", "radiate", "radial"):
-            model._dssr2d_layout_variant = "legacy radiate"
-            return Dssr2DLayout.radiate(model)
-        if name in ("circular", "circle"):
+        layout = DssrUtils.normalize_layout(algorithm)
+
+        if layout == "circular":
             model._dssr2d_layout_variant = "circular"
             return Dssr2DLayout.circular(model)
-        if name in ("linear", "line"):
+        elif layout == "linear":
             model._dssr2d_layout_variant = "linear"
             return Dssr2DLayout.linear(model)
-        return Dssr2DLayout._naview_layout(model)
+        elif layout == "legacy radiate":
+            model._dssr2d_layout_variant = "legacy radiate"
+            return Dssr2DLayout.radiate(model)
+        else:  # "standard"
+            return Dssr2DLayout._naview_layout(model)
 
     @staticmethod
     def radiate(model):
