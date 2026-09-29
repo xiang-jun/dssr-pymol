@@ -2678,6 +2678,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 if index is not None
             ]
 
+            is_subset = True
             if parts:
                 core = " or ".join("(%s)" % part for part in parts)
             else:
@@ -2699,13 +2700,21 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                     res_parts = DssrParser._compact_sel_from_residues(
                         {(c, r) for c, r in sig if c}
                     )
-                    core = res_parts if res_parts else "all"
+                    core = res_parts if res_parts else selection
+                    if not res_parts:
+                        is_subset = False
                 else:
-                    raise CmdException("Select a feature or some bases first.")
+                    # Default to the entire analyzed molecule
+                    core = selection
+                    is_subset = False
 
-            scope = "byres ((%s) and (%s))" % (selection, core)
+            scope = (
+                ("byres ((%s) and (%s))" % (selection, core))
+                if is_subset
+                else selection
+            )
             if cmd.count_atoms(scope, state=state) <= 0:
-                raise CmdException("Select a feature or some bases first.")
+                raise CmdException("No atoms found in '%s'." % scope)
 
             name = DssrCmd._unused_name("dssr_blocks")
             DssrCmd.dssr_block(
@@ -2717,7 +2726,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 exe=exe,
                 quiet=1,
             )
-            self.status_label.setText("Created %s for the selected bases." % name)
+            if is_subset:
+                self.status_label.setText("Created %s for the selected bases." % name)
+            else:
+                self.status_label.setText("Created %s for %s." % (name, selection))
         except Exception as error:
             self.status_label.setText("Blocks error: %s" % error)
 
