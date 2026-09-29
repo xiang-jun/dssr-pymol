@@ -1646,10 +1646,18 @@ class DssrCmd:
         global _DSSR_GUI_DIALOG
         selection = DssrUtils.unquote(selection)
         exe = DssrUtils.clean_exe_path(exe)
+
+        try:
+            state = int(state)
+        except (ValueError, TypeError):
+            layout = state
+            state = -1
+
         layout = DssrUtils.normalize_layout(layout)
-        state, number_every = int(state), int(number_every)
+        number_every = int(number_every)
         if state <= 0:
             state = int(cmd.get_state())
+
         if _DSSR_GUI_DIALOG is None:
             _DSSR_GUI_DIALOG = DssrGuiDialog()
         host = _DSSR_GUI_DIALOG
@@ -7514,7 +7522,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
         tools.addSpacing(10)
         tools.addWidget(QtWidgets.QLabel("Number every"))
-        top.addSpacing(4) if hasattr(self, "top") else tools.addSpacing(4)
+        tools.addSpacing(4)
         self.number_spin = DssrUI.spinbox(0, 10000, self.number_every)
         tools.addWidget(self.number_spin)
 
@@ -7617,6 +7625,7 @@ try:
     for _name in ("dssr_select", "dssr_block", "dssr_2d"):
         cmd.auto_arg[0][_name] = cmd.auto_arg[0]["zoom"]
     cmd.auto_arg[2]["dssr_block"] = [cmd.Shortcut(BLOCK_FEATURES), "block_file", ""]
+    cmd.auto_arg[2]["dssr_2d"] = [cmd.Shortcut(LAYOUT_CHOICES), "layout", ""]
 except (AttributeError, KeyError):
     pass
 
