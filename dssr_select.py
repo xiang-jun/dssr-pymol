@@ -169,6 +169,21 @@ BLOCK_FEATURES = [
 
 LAYOUT_CHOICES = ["standard", "circular", "linear", "legacy radiate"]
 
+LAYOUT_ALIASES = {
+    "standard": "standard",
+    "naview": "standard",
+    "circular": "circular",
+    "circle": "circular",
+    "linear": "linear",
+    "line": "linear",
+    "arc": "linear",
+    "legacy radiate": "legacy radiate",
+    "legacy_radiate": "legacy radiate",
+    "legacy": "legacy radiate",
+    "radiate": "legacy radiate",
+    "radial": "legacy radiate",
+}
+
 LIGHT_THEME = """
 QDialog, QWidget#dssrWorkspace { background: #f1f5f9; color: #0f172a; }
 QMenu {
@@ -1619,6 +1634,16 @@ class DssrCmd:
         global _DSSR_GUI_DIALOG
         selection = DssrUtils.unquote(selection)
         exe = DssrUtils.clean_exe_path(exe)
+
+        layout_raw = str(layout).strip().lower().replace("-", "_")
+        layout = LAYOUT_ALIASES.get(layout_raw, layout_raw)
+
+        if layout not in LAYOUT_CHOICES:
+            print(
+                f"DSSR warning: Unknown layout '{layout}', falling back to 'standard'."
+            )
+            layout = "standard"
+
         layout = DssrUtils.unquote(layout)
         state, number_every = int(state), int(number_every)
         if state <= 0:
@@ -2199,7 +2224,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     ):
         context = (str(selection), int(state), str(exe))
         if not force and self.editor is not None and context == self._analysis_context:
-            requested = str(algorithm or "standard").strip().lower()
+            requested_raw = (
+                str(algorithm or "standard").strip().lower().replace("-", "_")
+            )
+            requested = LAYOUT_ALIASES.get(requested_raw, requested_raw)
             requested = requested if requested in LAYOUT_CHOICES else "standard"
 
             self.editor.number_spin.blockSignals(True)
