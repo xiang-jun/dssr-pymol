@@ -5055,18 +5055,15 @@ class Dssr2DLayout:
     @staticmethod
     def compute(model, algorithm):
         layout = DssrUtils.normalize_layout(algorithm)
+        model._dssr2d_layout_variant = layout
 
         if layout == "circular":
-            model._dssr2d_layout_variant = "circular"
             return Dssr2DLayout.circular(model)
-        elif layout == "linear":
-            model._dssr2d_layout_variant = "linear"
+        if layout == "linear":
             return Dssr2DLayout.linear(model)
-        elif layout == "legacy radiate":
-            model._dssr2d_layout_variant = "legacy radiate"
+        if layout == "legacy radiate":
             return Dssr2DLayout.radiate(model)
-        else:  # "standard"
-            return Dssr2DLayout._naview_layout(model)
+        return Dssr2DLayout._naview_layout(model)
 
     @staticmethod
     def radiate(model):
