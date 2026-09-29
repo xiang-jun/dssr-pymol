@@ -355,6 +355,14 @@ class DssrUtils:
         return s or "x3dna-dssr"
 
     @staticmethod
+    def error_msg(error):
+        """Sanitize exception strings by stripping PyMOL's redundant 'Error:' prefix."""
+        s = str(error).strip()
+        while s.lower().startswith("error:"):
+            s = s[6:].strip()
+        return s
+
+    @staticmethod
     def _run_dssr(args, operation="DSSR", timeout=DSSR_TIMEOUT_SECONDS):
         """Run either annotation or block generation with timeout and error handling."""
         try:
@@ -2170,7 +2178,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             data = self._get_dssr_data(selection, state, exe, precolor)
             return self.show_analysis(data, selection, state, exe, force=force)
         except Exception as error:
-            self._clear_analysis("Analysis error: %s" % error)
+            self._clear_analysis("Analysis error: %s" % DssrUtils.error_msg(error))
             return None
         finally:
             self._set_busy(False)
@@ -2369,7 +2377,6 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
     def _on_selection_changed_preview(self):
         items = self.list_widget.selectedItems()
 
-        # Clear the temporary PyMOL selection and 2D highlights if nothing is selected
         if not items:
             try:
                 cmd.delete("sele")
@@ -2471,7 +2478,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                         )
 
         except Exception as error:
-            self.status_label.setText("Selection error: %s" % error)
+            self.status_label.setText(
+                "Selection error: %s" % DssrUtils.error_msg(error)
+            )
 
     def _on_item_double_clicked(self, item):
         selected_items = self.list_widget.selectedItems()
@@ -2661,7 +2670,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 )
 
         except Exception as error:
-            self.status_label.setText("Select all error: %s" % error)
+            self.status_label.setText(
+                "Select all error: %s" % DssrUtils.error_msg(error)
+            )
 
     def _make_blocks_clicked(self):
         try:
@@ -2732,7 +2743,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             else:
                 self.status_label.setText("Created %s for %s." % (name, selection))
         except Exception as error:
-            self.status_label.setText("Blocks error: %s" % error)
+            self.status_label.setText("Blocks error: %s" % DssrUtils.error_msg(error))
 
     def showEvent(self, event):
         super().showEvent(event)
