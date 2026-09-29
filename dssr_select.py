@@ -2757,41 +2757,58 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def _clear_active_selection(self):
         """Clear active selections across the feature list, 2D studio, and PyMOL."""
+        has_sel = False
         if self.list_widget.selectedItems():
             self.list_widget.clearSelection()
-        elif self.editor is not None:
+            has_sel = True
+        if self.editor is not None and any(n.isSelected() for n in self.editor.nodes):
             self.editor.clear_base_selection()
-        else:
-            try:
+            has_sel = True
+        try:
+            if "sele" in cmd.get_names("selections"):
                 cmd.delete("sele")
                 cmd.delete("indicate")
                 cmd.refresh()
-            except Exception:
-                pass
-            self.details_box.clear()
+                has_sel = True
+        except Exception:
+            pass
+        self.details_box.clear()
+        return has_sel
 
     def eventFilter(self, obj, event):
         if obj is self.list_widget and event.type() == QtCore.QEvent.KeyPress:
             if event.key() == QtCore.Qt.Key_Escape:
                 self._clear_active_selection()
-                return True  # Consume Esc so macOS/Qt cannot trigger reject()
+                return True  # Consume Esc so list navigation does not close the dialog
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Escape:
-            self._clear_active_selection()
+            # If there was an active selection, consume Esc to clear it without closing
+            if self._clear_active_selection():
+                event.accept()
+                return
+            # If nothing was selected, dismiss the dialog
+            self.close()
             event.accept()
             return
         super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self._context_timer.stop()
-        self._clear_analysis("Click Run to load the structure again.")
+        self._dispose_editor()
+        self._analysis_context = None
+        self._invalidate_dssr_cache()
+        event.accept()
         super().closeEvent(event)
 
     def reject(self):
-        """Prevent Esc key from closing the dialog on macOS; clear selection instead."""
-        self._clear_active_selection()
+        """Dismiss the window when requested by the OS close button or dialog rejection."""
+        self._context_timer.stop()
+        self._dispose_editor()
+        self._analysis_context = None
+        self._invalidate_dssr_cache()
+        self.done(QtWidgets.QDialog.Rejected)
 
     @staticmethod
     def dssr_gui():
