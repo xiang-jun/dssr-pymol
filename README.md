@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)](https://github.com/xiang-jun/dssr-pymol/releases/tag/v2.0.0)
 [![License](https://img.shields.io/badge/license-BSD--2--Clause-green.svg)](LICENSE)
-[![PyMOL](https://img.shields.io/badge/PyMOL-plugin-orange.svg)](https://pymol.org/)
+[![PyMOL](https://img.shields.io/badge/PyMOL-plugin-orange.svg)](https://www.pymol.org/)
 
 **DSSR-PyMOL** is an integrated PyMOL plugin that bridges 3D structural analysis, stylized cartoon block modeling, and an interactive pure-Python RNA 2D layout studio. Powered by
 [DSSR](https://doi.org/10.1093/nar/gkv716) (Dissecting the Spatial Structure of RNA), the plugin allows structural biologists to explore, identify, select, and edit secondary/tertiary nucleic acid features seamlessly in real time.
