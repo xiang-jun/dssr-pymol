@@ -1,76 +1,134 @@
-# dssr_select: RNA/DNA Structural Feature Selection for PyMOL
+# DSSR-PyMOL: Interactive RNA 2D Layout Studio & 3D Visualization
 
-The **dssr_select** plugin is a powerful tool designed to bridge high-quality structural analysis with 3D visualization. It allows users to leverage [DSSR (Dissecting the Spatial Structure of RNA)](http://x3dna.org/) derived structural features—such as base pairs, stems, hairpins, pseudoknots, and A-minors—directly within [PyMOL](https://pymol.org/).
+[![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)](https://github.com/xiang-jun/dssr-pymol/releases/tag/v2.0.0)
+[![License](https://img.shields.io/badge/license-BSD--2--Clause-green.svg)](LICENSE)
+[![PyMOL](https://img.shields.io/badge/PyMOL-2.x%20%7C%203.x-orange.svg)](https://pymol.org/)
 
-### ✨ Key Features
-
-* **Interactive Graphical User Interface (GUI)**: A comprehensive Qt-based interface for browsing, filtering, and highlighting structural features without typing commands.
-* **Automated Selection**: Instantly select complex motifs like junctions, multiplets, and coaxially stacked stems using DSSR’s JSON output.
-* **Pseudoknot Visualization**: Identify and color individual pseudoknot layers based on dot-bracket notation.
-* **Base Blocks**: Integration of the `dssr_block` logic to create schematic rectangular "block" representations of nucleic acid bases.
-* **Sequence Extraction**: Quick FASTA-formatted sequence extraction with reverse-complement capabilities.
+**DSSR-PyMOL** is an integrated PyMOL plugin that bridges 3D structural analysis, stylized cartoon block modeling, and an interactive pure-Python RNA 2D layout studio. Powered by
+[DSSR](https://doi.org/10.1093/nar/gkv716) (Dissecting the Spatial Structure of RNA), the plugin allows structural biologists to explore, identify, select, and edit secondary/tertiary nucleic acid features seamlessly in real time.
 
 ---
 
-### 📅 Development Timeline
+### Key Features
 
-This plugin is the result of a multi-stage collaborative effort initiated and coordinated by **Xiang-Jun Lu**. The development followed an iterative process that merged the strengths of two researchers:
-
-#### Phase 1: Foundational Logic (Bener Dulger)
-
-* **Dec 06, 2025**: Initial project kick-off; development of basic nucleotide ID parsing.
-* **Jan 04, 2026**: Implementation of base-pair selection and standard secondary structure detection.
-* **Feb 15, 2026**: Final foundational version; added robust dot-bracket parsing for pseudoknot layers.
-
-#### Phase 2: Feature Expansion & GUI Integration (Eric Chen)
-
-* **Feb 18, 2026**: Expansion of the structural `FEATURE_MAP` and refined selection logic.
-* **Mar 04, 2026**: Major release; introduction of the **Interactive Qt GUI**, full integration of **`dssr_block`** logic, and automated RNA structure reports.
-
-#### Phase 3: Consolidation (Present)
-
-* **Mar 2026**: Migration to a unified `dssr_select.py` codebase for a synergistic development environment.
-
----
-
-### 📂 Repository Structure
-
-* `dssr_select.py`: The primary, consolidated script containing all features.
-* `LICENSE`: The BSD 2-Clause License.
-* `NOTICE`: Detailed project history and third-party credits.
-* `/archive`: Preservation of historical versions for educational and transparency purposes.
-* `/bener_versions`: Original scripts from Phase 1.
-* `/eric_versions`: Original scripts from Phase 2.
-* `/original_utilities`: Foundational logic including the original `dssr_block.py` by Thomas Holder.
+* **Interactive 2D RNA Layout Studio (`dssr_2d`)**:
+  * Pure-Python, dependency-free layout engine adapted from the NAView loop-decomposition algorithm (ViennaRNA/fornac).
+  * Multiple layout projections: **Standard NAView**, **Circular**, **Linear (arc)**, and **Radiate**.
+  * Automated tRNA cloverleaf topology recognition and standardized orientation (acceptor stem pointing down, anticodon arm pointing up).
+  * Direct visualization of non-canonical (non-WC/Wobble) base pairs as curved tertiary arcs.
+* **Bi-directional 2D ⟷ 3D Selection Linking**:
+  * Interactive canvas picking (click, box select, or brush tool `B`) mirrors directly to PyMOL 3D viewport selections.
+  * Real-time 3D-to-2D synchronization: selections made in PyMOL are reflected back onto the 2D layout nodes and 1D sequence ruler.
+  * Interactive diagram editing with soft dragging, base-pair, loop, stem, and branch kinematic manipulation, backed by a full undo/redo stack (`Ctrl+Z` / `Ctrl+Y`).
+* **1D Sequence Ruler**:
+  * Full sequence display separated by chain boundaries, aligned above an authentic residue numbering ruler.
+  * Supports click-and-drag range selection, shift-extending, and Ctrl-toggling directly linked to 3D and 2D highlights.
+* **3D Schematic Base Blocks (`dssr_block`)**:
+  * Generate customizable rectangular block cartoons (Watson-Crick face, minor groove edge, G-tetrads, and more) natively in PyMOL via DSSR.
+* **Feature Browser & Search**:
+  * Query DSSR-detected structural features: base pairs, stems, helices, hairpins, bulges, internal loops, junctions, pseudoknots, A-minors, stacks, G-quadruplexes, and U-turns.
+  * Filter motifs with boolean queries (`wc | wobble`, `-wc`) and inline clear functionality.
+* **Publication-Quality Export**:
+  * Export 2D diagrams directly to vector **SVG** or high-resolution **PNG**.
+  * Save and reload edited 2D coordinates (`.dssr2d.json`) or copy Dot-Bracket Notation (`.dbn`) directly to the clipboard.
 
 ---
 
-### 🚀 Installation & Usage
+### Installation & Requirements
 
-#### 1. Requirements
-* **DSSR**: The `x3dna-dssr` executable must be installed and in your system PATH.
-* **PyMOL**: A version of PyMOL that supports `PyMOL.Qt` (standard in most Schrödinger distributions).
+#### Requirements
+1. **PyMOL**: Modern PyMOL (v2.x or v3.x, Open-Source or Incentive build) with Python 3 and PyQt5/PyQt6.
+2. **DSSR (`x3dna-dssr`)**: The `x3dna-dssr` command-line executable must be installed and accessible in your system `PATH` (or configured via the plugin).
+   * Available from [Columbia Technology Ventures](https://inventions.techventures.columbia.edu/technologies/dssr-an-integrated-software--CU20391).
 
-#### 2. Getting Started
-To get the plugin up and running:
-
-1. **Download**: Save the `dssr_select.py` file from this repository to your computer.
-2. **Install**: In PyMOL, navigate to `Plugin` -> `Plugin Manager`.
-3. **Load**: Select the `Install New Plugin` tab, click `Choose file...`, and select the `dssr_select.py` file you just downloaded.
-4. **Access**: Once installed, a new **DSSR** menu item will appear under the PyMOL `Plugin` menu for easy access in future sessions.
-
-#### 3. ⚡ Quick Demo (1-Minute Visualization)
-To see the DSSR-PyMOL integration in action:
-
-1. **Fetch a structure**: In the PyMOL console, type `fetch 1ehz`.
-2. **Launch the GUI**: Go to `Plugin` -> `DSSR` (or type `dssr_gui`).
-3. **Generate Blocks**: In the DSSR GUI window, click the **"make blocks"** button.
-
-You will immediately see a schematic representation of the tRNA structure with stylized base blocks, providing a clear view of the RNA architecture.
+#### Installation
+1. Download `dssr_select.py` from the root of this repository.
+2. In PyMOL:
+   * **Direct execution**: Run `run /path/to/dssr_select.py` in the PyMOL command line.
+   * **Permanent installation**: In the PyMOL menu, go to **Plugin** → **Plugin Manager** → **Install New Plugin** → **Choose file...** and select `dssr_select.py`.
+3. Once loaded, launch the interface via **Plugin** → **DSSR** or type `dssr_gui` in the PyMOL command line.
 
 ---
 
-### 📜 How to Cite
+### Quick Start Demo (1-Minute Tour)
+
+Run the following commands in the PyMOL command line:
+
+    fetch 1ehz, async=0
+    as cartoon
+    dssr_gui
+
+1. **2D Studio**: The RNA 2D diagram automatically generates using the standard NAView tRNA cloverleaf layout alongside the 1D sequence ruler.
+2. **Selection Linking**: Drag a box around the anticodon loop in the 2D view; the corresponding residues are immediately selected and highlighted in pink in PyMOL's 3D viewport.
+3. **Make Blocks**: Click the **Make blocks** button in the top toolbar to generate a schematic 3D block representation for the entire structure.
+4. **Theme**: Click the **Dark** toggle button to switch between light and dark workstation themes.
+
+---
+
+### Command-Line Interface (CLI)
+
+All core functions can be scripted or invoked directly from the PyMOL console:
+
+#### 1. Interactive 2D Studio (`dssr_2d`)
+Syntax: `dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, exe ]]]]]]`
+
+Examples:
+* `dssr_2d 1ehz`
+* `dssr_2d 1ehz, layout=circular, show_noncanonical=1`
+* `dssr_2d 1ehz, number_every=5`
+
+#### 2. Feature Selection (`dssr_select`)
+Syntax: `dssr_select [ selection [, state [, feature [, index [, name ]]]]]`
+
+Supported features: `pairs`, `stems`, `helices`, `hairpins`, `bulges`, `iloops`, `junctions`, `pseudoknot`, `gquadruplexes`, `uturns`, `aminors`, `stacks`, etc.
+
+Examples:
+* `dssr_select 1ehz, stems, 1`
+* `dssr_select 1ehz, hairpins, 1, name=anticodon_loop`
+* `dssr_select 1ehz, helices, 0`
+
+#### 3. Stylized Base Blocks (`dssr_block`)
+Syntax: `dssr_block [ selection [, state [, block_file [, block_depth [, block_color [, name [, exe ]]]]]]]`
+
+Supported styles (`block_file`): `face`, `edge`, `wc`, `g4`, `imotif`, `minor`, `equal`, etc.
+
+Examples:
+* `dssr_block 1ehz`
+* `dssr_block 1ehz, block_file=wc-minor, block_depth=0.5`
+
+---
+
+### Keyboard Shortcuts in 2D Studio
+
+| Key / Action | Function |
+| :--- | :--- |
+| **Click / Drag Blank** | Box selection of nucleotides |
+| **Drag Bases** | Move bases according to the active drag mode |
+| **Shift + Click / Drag** | Add to selection |
+| **Ctrl + Click** | Toggle individual selection |
+| **B** | Toggle Brush selection tool |
+| **P** | Switch back to Select / Edit tool |
+| **1 – 6** | Switch drag modes: `base`, `selection`, `pair`, `loop`, `stem`, `branch` |
+| **F** | Fit entire 2D diagram to view |
+| **C** | Center and fit selected bases |
+| **Ctrl + Z / Ctrl + Y** | Undo / Redo 2D layout edits |
+| **Arrow keys** | Pan view (Hold `Shift` for faster pan) |
+| **Mouse Wheel** | Zoom in / out under cursor |
+| **Esc** | Clear selection in 2D studio, sidebar, and PyMOL |
+
+---
+
+### Project Heritage & Contributions
+
+* **Conceived, Directed, and Actively Co-developed by**: **Xiang-Jun Lu**, including core architecture, ongoing refactoring, bug fixes, and feature integration.
+* **Interactive Qt GUI & 2D Studio (`dssr_gui`, `dssr_2d`)**: **Eric Chen**.
+* **Structural Feature Selection, JSON Parsing & Architecture**: **Bener Dulger**, who created the initial structural feature selection and JSON parsing, and drove ongoing feature development, architectural refactoring, and documentation.
+* **Original 3D Block Cartoon Logic (`dssr_block`)**: **Thomas Holder** (Schrödinger LLC).
+* **Algorithmic Foundation**: Adapted the pure-Python NAView geometry engine from [ViennaRNA/fornac](https://github.com/ViennaRNA/fornac) (Peter Kerpedjiev, Stefan Hammer, Ronny Lorenz; Apache-2.0). Inspired by the DSSR–VARNA–Jmol integration developed by Robert M. Hanson and Xiang-Jun Lu.
+
+---
+
+### How to Cite
 
 If you use this plugin in your research, please cite it as follows:
 
@@ -82,15 +140,14 @@ If you use this plugin in your research, please cite it as follows:
 
 > Lu XJ, Bussemaker HJ, Olson WK (2015). **DSSR: an integrated software tool for dissecting the spatial structure of RNA.** *Nucleic Acids Research*, 43(21), e142.
 
+### Funding & Acknowledgments
+
+* **NIH Grant Support**: This project is supported by the **National Institutes of Health (NIH)** grant **R24GM153869** on *X3DNA-DSSR, an NIGMS National Resource for Structural Bioinformatics of Nucleic Acids*.
+* **3D Base-Block Schematics (`dssr_block`)**: This plugin incorporates components from the `dssr_block` plugin by Thomas Holder (© Schrödinger LLC).
+* **2D RNA Layout Engine (`ViennaRNA/fornac`)**: The pure-Python, dependency-free 2D layout engine was adapted from the NAView loop-decomposition algorithm in [ViennaRNA/fornac](https://github.com/ViennaRNA/fornac) (Peter Kerpedjiev, Stefan Hammer, and Ronny Lorenz; Apache-2.0).
+
 ---
 
-### ⚖️ License
+### License
 
-This project is licensed under the **BSD 2-Clause License**. See the [LICENSE](./LICENSE) file for the full text. This plugin incorporates components from the `dssr_block` plugin by **Thomas Holder** (c) Schrödinger LLC.
-
----
-
-### Acknowledgments
-
-* **Funding**: This work is supported by the **NIH R24GM153869** grant on **X3DNA-DSSR**, an NIGMS National Resource for Structural Bioinformatics of Nucleic Acids.
-* **Prior Work**: This plugin incorporates logic from the `dssr_block` plugin by **Thomas Holder** (c) Schrodinger LLC.
+This project is released under the [BSD 2-Clause License](LICENSE).
