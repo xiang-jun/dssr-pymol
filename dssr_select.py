@@ -1848,6 +1848,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         self.list_widget = QtWidgets.QListWidget()
         self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.list_widget.installEventFilter(self)
         self.list_widget.itemSelectionChanged.connect(
             self._on_selection_changed_preview
         )
@@ -2737,15 +2738,43 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         super().showEvent(event)
         self._context_timer.start()
 
+    def _clear_active_selection(self):
+        """Clear active selections across the feature list, 2D studio, and PyMOL."""
+        if self.list_widget.selectedItems():
+            self.list_widget.clearSelection()
+        elif self.editor is not None:
+            self.editor.clear_base_selection()
+        else:
+            try:
+                cmd.delete("sele")
+                cmd.delete("indicate")
+                cmd.refresh()
+            except Exception:
+                pass
+            self.details_box.clear()
+
+    def eventFilter(self, obj, event):
+        if obj is self.list_widget and event.type() == QtCore.QEvent.KeyPress:
+            if event.key() == QtCore.Qt.Key_Escape:
+                self._clear_active_selection()
+                return True  # Consume Esc so macOS/Qt cannot trigger reject()
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            self._clear_active_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def closeEvent(self, event):
         self._context_timer.stop()
         self._clear_analysis("Click Run to load the structure again.")
         super().closeEvent(event)
 
     def reject(self):
-        self._context_timer.stop()
-        self._clear_analysis("Click Run to load the structure again.")
-        super().reject()
+        """Prevent Esc key from closing the dialog on macOS; clear selection instead."""
+        self._clear_active_selection()
 
     @staticmethod
     def dssr_gui():
@@ -6826,6 +6855,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
             cmd.refresh()
         except Exception:
             pass
+        host = self.window()
+        if (
+            host is not None
+            and hasattr(host, "list_widget")
+            and host.list_widget.selectedItems()
+        ):
+            host.list_widget.blockSignals(True)
+            host.list_widget.clearSelection()
+            host.list_widget.blockSignals(False)
+            if hasattr(host, "details_box"):
+                host.details_box.clear()
 
     def _pair_partner(self, index):
         table = self._pair_table
@@ -7470,6 +7510,24 @@ class Dssr2DEditor(QtWidgets.QWidget):
             self._sync_pending = False
             for timer in (self._timer, self._sync_timer, self._reverse_timer):
                 timer.stop()
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            if self.list_widget.selectedItems():
+                self.list_widget.clearSelection()
+            elif self.editor is not None:
+                self.editor.clear_base_selection()
+            else:
+                try:
+                    cmd.delete("sele")
+                    cmd.delete("indicate")
+                    cmd.refresh()
+                except Exception:
+                    pass
+                self.details_box.clear()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
