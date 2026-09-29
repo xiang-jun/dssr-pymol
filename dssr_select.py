@@ -41,7 +41,7 @@ for mod in ("pymol.Qt", "PyQt5", "PyQt6"):
     except ImportError:
         pass
 
-__DSSR_PLUGIN_VERSION__ = "v2.0.0"
+__DSSR_PLUGIN_VERSION__ = "v2.0.1-dev"
 DSSR_TIMEOUT_SECONDS = 300  # Default timeout in seconds (5 minutes)
 DSSR_LARGE_STRUCTURE_THRESHOLD = 20000  # Atom count threshold for warning
 
