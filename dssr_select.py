@@ -1640,7 +1640,7 @@ class DssrCmd:
                 show_noncanonical=int(show_noncanonical),
             )
         except Exception as error:
-            host._clear_analysis("Analysis error: %s" % error)
+            host._clear_analysis("Analysis error: %s" % DssrUtils.error_msg(error))
             raise
         host.show()
         host.raise_()
@@ -2117,7 +2117,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
                 self._on_dssr_context_changed()
 
         except Exception as error:
-            self._clear_analysis("Structure context is unavailable: %s" % error)
+            self._clear_analysis(
+                "Structure context is unavailable: %s" % DssrUtils.error_msg(error)
+            )
 
     def _require_analysis(self):
         self._check_context()
@@ -2493,7 +2495,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             data = self._require_analysis()
         except Exception as e:
             try:
-                QtWidgets.QMessageBox.critical(self, "DSSR GUI error", str(e))
+                QtWidgets.QMessageBox.critical(
+                    self, "DSSR GUI error", DssrUtils.error_msg(e)
+                )
             except Exception:
                 pass
             return
@@ -2577,11 +2581,13 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         except Exception as e:
             try:
-                QtWidgets.QMessageBox.critical(self, "DSSR GUI error", str(e))
+                QtWidgets.QMessageBox.critical(
+                    self, "DSSR GUI error", DssrUtils.error_msg(e)
+                )
             except Exception:
                 pass
             try:
-                print("dssr_gui select error: %s" % str(e))
+                print("dssr_gui select error: %s" % DssrUtils.error_msg(e))
             except Exception:
                 pass
 
@@ -6642,7 +6648,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
             QtWidgets.QApplication.clipboard().setText(text)
             self.set_status("DBN copied to clipboard")
         except Exception as e:
-            self.set_status("Clipboard error: %s" % str(e))
+            self.set_status("Clipboard error: %s" % DssrUtils.error_msg(e))
 
     def export_image(self):
         filters = "PNG image (*.png)"
@@ -6670,7 +6676,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 self._export_png(path)
             self.set_status("Exported: %s" % path)
         except Exception as e:
-            msg = "Export failed: %s" % str(e)
+            msg = "Export failed: %s" % DssrUtils.error_msg(e)
             self.set_status(msg)
             try:
                 QtWidgets.QMessageBox.critical(self, "2D export", msg)
@@ -7382,7 +7388,9 @@ class Dssr2DEditor(QtWidgets.QWidget):
             try:
                 cmd.select("sele", "byres (%s)" % expression)
             except Exception as error:
-                self.set_status("PyMOL selection error: %s" % str(error))
+                self.set_status(
+                    "PyMOL selection error: %s" % DssrUtils.error_msg(error)
+                )
 
     def _build_widgets(self):
         """Build the toolbars, sequence view, and single 2D graphics canvas."""
