@@ -380,8 +380,13 @@ class DssrUtils:
     @staticmethod
     def normalize_layout(layout):
         """Normalize layout algorithm name against aliases, falling back to 'standard'."""
-        key = str(layout or "standard").strip().lower().replace("-", "_")
-        resolved = LAYOUT_ALIASES.get(key, key)
+        raw = (
+            DssrUtils.unquote(str(layout or "standard"))
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        resolved = LAYOUT_ALIASES.get(raw, raw)
         return resolved if resolved in LAYOUT_CHOICES else "standard"
 
     @staticmethod
@@ -1641,9 +1646,7 @@ class DssrCmd:
         global _DSSR_GUI_DIALOG
         selection = DssrUtils.unquote(selection)
         exe = DssrUtils.clean_exe_path(exe)
-
         layout = DssrUtils.normalize_layout(layout)
-        layout = DssrUtils.unquote(layout)
         state, number_every = int(state), int(number_every)
         if state <= 0:
             state = int(cmd.get_state())
