@@ -915,7 +915,6 @@ class DssrParser:
             "internal",
             "junctions",
             "sssegments",
-            "ssSegments",
             "multiplets",
             "splayunits",
             "gquadruplexes",
@@ -2502,14 +2501,15 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if not indices:
             return
 
-        # Build a name that reflects all selected indices
-        nm = "%s_%s" % (feat.lower(), "_".join(str(i) for i in indices))
+        if len(indices) == 1:
+            nm = "%s_%d" % (feat.lower(), indices[0])
+        elif len(indices) == len(self._items_all):
+            nm = "%s_all" % feat.lower()
+        else:
+            nm = "%s_%d_items" % (feat.lower(), len(indices))
 
         try:
-            # Gray the whole structure once before highlighting
             cmd.color("gray", sel)
-
-            # Build merged residue selection from all selected indices
             parts = []
             for idx in indices:
                 try:
@@ -2615,6 +2615,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             name = "%s_%s" % (feature.lower(), "filtered" if has_filter else "all")
             DssrCmd._create_feature_selection(name, selection, sel_str, quiet=0)
 
+            cmd.color("gray", selection)
             cmd.color("pink", name)
             cmd.select("sele", name)
             cmd.enable("sele")
