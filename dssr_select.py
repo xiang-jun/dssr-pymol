@@ -1607,7 +1607,8 @@ class DssrCmd:
 
         USAGE
 
-            dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, exe ]]]]]]
+            dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical ]]]]]
+            dssr_2d [ selection [, layout [, number_every [, show_noncanonical ]]]]
 
         ARGUMENTS
 
@@ -1623,8 +1624,6 @@ class DssrCmd:
 
             show_noncanonical = 0|1: display non-canonical base pairs {default: 0}
 
-            exe = str: path to "x3dna-dssr" executable {default: x3dna-dssr}
-
         EXAMPLE
 
             fetch 1ehz, async=0
@@ -1632,7 +1631,11 @@ class DssrCmd:
             # Open 2D studio with standard NAView layout
             dssr_2d 1ehz
 
-            # Positional arguments: selection, state, layout
+            # Positional shorthand (selection, layout)
+            dssr_2d 1ehz, circular
+            dssr_2d 1ehz, radiate
+
+            # Explicit state syntax
             dssr_2d 1ehz, 1, circular
 
             # Display with circular layout and non-canonical base pairs
@@ -2820,10 +2823,8 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Escape:
-            if self._clear_active_selection():
-                event.accept()
-                return
-            self.close()
+            if not self._clear_active_selection():
+                self.close()
             event.accept()
             return
         super().keyPressEvent(event)
