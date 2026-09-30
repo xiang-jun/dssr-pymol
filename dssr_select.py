@@ -180,9 +180,6 @@ LAYOUT_ALIASES = {
     "radiate": "radiate",
     "radial": "radiate",
     "tree": "radiate",
-    "legacy radiate": "radiate",
-    "legacy_radiate": "radiate",
-    "legacy": "radiate",
 }
 
 LIGHT_THEME = """
