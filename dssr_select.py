@@ -167,7 +167,7 @@ BLOCK_FEATURES = [
     "hbond",
 ]
 
-LAYOUT_CHOICES = ["standard", "circular", "linear", "legacy radiate"]
+LAYOUT_CHOICES = ["standard", "circular", "linear", "radiate"]
 
 LAYOUT_ALIASES = {
     "standard": "standard",
@@ -177,11 +177,11 @@ LAYOUT_ALIASES = {
     "linear": "linear",
     "line": "linear",
     "arc": "linear",
-    "legacy radiate": "legacy radiate",
-    "legacy_radiate": "legacy radiate",
-    "legacy": "legacy radiate",
-    "radiate": "legacy radiate",
-    "radial": "legacy radiate",
+    "radiate": "radiate",
+    "radial": "radiate",
+    "legacy radiate": "radiate",
+    "legacy_radiate": "radiate",
+    "legacy": "radiate",
 }
 
 LIGHT_THEME = """
@@ -1617,7 +1617,7 @@ class DssrCmd:
 
             state = int: object state (0 for all states) {default: -1, current state}
 
-            layout = standard|circular|linear|legacy radiate: 2D diagram layout
+            layout = standard|circular|linear|radiate: 2D diagram layout
                      algorithm {default: standard}
 
             number_every = int: interval for residue number labels (0 for none)
@@ -5069,7 +5069,7 @@ class Dssr2DLayout:
             return Dssr2DLayout.circular(model)
         if layout == "linear":
             return Dssr2DLayout.linear(model)
-        if layout == "legacy radiate":
+        if layout == "radiate":
             return Dssr2DLayout.radiate(model)
         return Dssr2DLayout._naview_layout(model)
 
