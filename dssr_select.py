@@ -2937,7 +2937,7 @@ class Dssr2DModel:
         self.secondary_pairs = []
         self.noncanonical_pairs = []
         self.warnings = []
-        self.title = "RNA secondary structure"
+        self.title = "DSSR-2D"
         self.resi_to_index = {}
 
     @staticmethod
@@ -6969,17 +6969,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def save_layout(self):
         default_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.model.title)
-        default_name = (default_name.strip("_") or "rna_2d") + ".dssr2d.json"
+        default_name = (default_name.strip("_-") or "dssr-2d") + "-layout.json"
         path, _chosen = QtWidgets.QFileDialog.getSaveFileName(
             self,
-            "Save RNA 2D layout",
+            "Save DSSR-2D layout",
             default_name,
-            "DSSR RNA 2D layout (*.dssr2d.json *.json);;All files (*)",
+            "DSSR-2D layout JSON (*-layout.json *.json);;All files (*)",
         )
         if not path:
             return
         if not path.lower().endswith(".json"):
-            path += ".dssr2d.json"
+            path += "-layout.json"
         payload = {
             "format": "DSSR-PyMOL-RNA2D",
             "version": 1,
@@ -6998,14 +6998,15 @@ class Dssr2DEditor(QtWidgets.QWidget):
     def load_layout(self):
         path, _chosen = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Load RNA 2D layout",
+            "Load DSSR-2D layout",
             "",
-            "DSSR RNA 2D layout (*.dssr2d.json *.json);;All files (*)",
+            "DSSR-2D layout JSON (*-layout.json *.json);;All files (*)",
         )
         if not path:
             return
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
+
         positions = payload.get("positions", [])
         if len(positions) != len(self.nodes):
             raise CmdException(
