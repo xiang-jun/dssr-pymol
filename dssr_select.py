@@ -1597,6 +1597,7 @@ class DssrCmd:
         number_every=10,
         show_noncanonical=0,
         title="",
+        export="",
         exe="x3dna-dssr",
         quiet=1,
     ):
@@ -1668,6 +1669,7 @@ class DssrCmd:
             host._clear_analysis("Analyzing the requested structure...")
         try:
             data = host._get_dssr_data(selection, state, exe, 0)
+            export = DssrUtils.unquote(export).strip()
             editor = host.show_analysis(
                 data,
                 selection,
@@ -1678,6 +1680,19 @@ class DssrCmd:
                 show_noncanonical=int(show_noncanonical),
                 title=title,
             )
+
+            if export:
+                lower = export.lower()
+                if lower.endswith(".svg") and QtSvg is not None:
+                    editor._export_svg(export)
+                else:
+                    out_path = export if lower.endswith(".png") else (export + ".png")
+                    editor._export_png(out_path)
+                if not int(quiet):
+                    print("dssr_2d: exported %s" % export)
+
+            return editor
+
         except Exception as error:
             host._clear_analysis("Analysis error: %s" % DssrUtils.error_msg(error))
             raise
