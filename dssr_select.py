@@ -1596,6 +1596,7 @@ class DssrCmd:
         layout="standard",
         number_every=10,
         show_noncanonical=0,
+        title="",
         exe="x3dna-dssr",
         quiet=1,
     ):
@@ -1647,6 +1648,7 @@ class DssrCmd:
         global _DSSR_GUI_DIALOG
         selection = DssrUtils.unquote(selection)
         exe = DssrUtils.clean_exe_path(exe)
+        title = DssrUtils.unquote(title).strip()
 
         try:
             state = int(state)
@@ -1674,6 +1676,7 @@ class DssrCmd:
                 algorithm=layout,
                 number_every=number_every,
                 show_noncanonical=int(show_noncanonical),
+                title=title,
             )
         except Exception as error:
             host._clear_analysis("Analysis error: %s" % DssrUtils.error_msg(error))
@@ -2231,11 +2234,17 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         algorithm="standard",
         number_every=10,
         show_noncanonical=0,
+        title="",
         force=False,
     ):
         context = (str(selection), int(state), str(exe))
         if not force and self.editor is not None and context == self._analysis_context:
             requested = DssrUtils.normalize_layout(algorithm)
+
+            if title:
+                self.editor.model.title = str(title)
+            elif selection and selection != "all":
+                self.editor.model.title = str(selection)
 
             self.editor.number_spin.blockSignals(True)
             self.editor.number_spin.setValue(max(0, int(number_every)))
@@ -2253,6 +2262,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
             return self.editor
 
         model = Dssr2DModel.from_dssr(data)
+        if title:
+            model.title = str(title)
+        elif selection and selection != "all":
+            model.title = str(selection)
         self._dispose_editor()
         self._updating_context = True
         try:
@@ -6765,7 +6778,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         generator.setSize(view_box.size())
         generator.setViewBox(view_box)
         generator.setTitle(self.model.title)
-        generator.setDescription("RNA secondary structure derived by DSSR")
+        generator.setDescription("RNA structural features derived by DSSR")
 
         painter = QtGui.QPainter(generator)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
