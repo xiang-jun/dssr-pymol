@@ -6623,9 +6623,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         total = len(self.nodes)
         if total <= 0:
             return []
+
         segments = []
+        breaks = sorted(self.model.chain_breaks)
         start = 0
-        for break_after in sorted(self.model.chain_breaks):
+        for break_after in breaks:
             if break_after >= start:
                 segments.append((start, min(total - 1, break_after)))
                 start = break_after + 1
@@ -6638,35 +6640,60 @@ class Dssr2DEditor(QtWidgets.QWidget):
         term_color = QtGui.QColor(56, 189, 248) if is_dark else QtGui.QColor(15, 23, 42)
         chain_rects = []
 
+        # Center of the entire diagram to determine outward radial orientation
+        all_x = [node.pos().x() for node in self.nodes]
+        all_y = [node.pos().y() for node in self.nodes]
+        center_x = sum(all_x) / float(max(1, len(all_x)))
+        center_y = sum(all_y) / float(max(1, len(all_y)))
+
         for segment_number, (first, last) in enumerate(segments, 1):
-            for index, text_value, offset in (
-                (first, "5′", (-42.0, -26.0)),
-                (last, "3′", (24.0, -26.0)),
-            ):
-                label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[index])
+            # 5′ and 3′ terminus labels
+            for index, text_value in ((first, "5′"), (last, "3′")):
+                node = self.nodes[index]
+                pos = node.pos()
+
+                # Calculate unit outward vector pointing away from structure center
+                dx = pos.x() - center_x
+                dy = pos.y() - center_y
+                dist = math.hypot(dx, dy)
+                if dist > 1e-4:
+                    ux, uy = dx / dist, dy / dist
+                else:
+                    ux, uy = 0.0, -1.0
+
+                # Project label radially outward past node perimeter
+                offset_dist = 28.0
+                ox = ux * offset_dist - 8.0
+                oy = uy * offset_dist - 8.0
+
+                label = QtWidgets.QGraphicsSimpleTextItem(text_value, node)
                 font = QtGui.QFont("Sans Serif")
                 font.setPointSize(13)
                 font.setBold(True)
                 label.setFont(font)
                 label.setBrush(QtGui.QBrush(term_color))
-                label.setPos(offset[0], offset[1])
+                label.setPos(ox, oy)
                 label.setZValue(8.0)
                 DssrUI.no_mouse(label)
+
                 br = label.boundingRect()
-                pos = self.nodes[index].pos()
                 chain_rects.append(
                     QtCore.QRectF(
-                        pos.x() + offset[0],
-                        pos.y() + offset[1],
+                        pos.x() + ox,
+                        pos.y() + oy,
                         br.width(),
                         br.height(),
                     )
                 )
 
+            # Chain identifier tag for multi-chain complexes
             if len(segments) > 1:
+                first_node = self.nodes[first]
+                pos_first = first_node.pos()
                 chain = str(self.model.nts[first].get("chain", "")).strip()
                 text_value = "chain %s" % (chain or segment_number)
-                label = QtWidgets.QGraphicsSimpleTextItem(text_value, self.nodes[first])
+
+                label = QtWidgets.QGraphicsSimpleTextItem(text_value, first_node)
                 font = QtGui.QFont("Sans Serif")
                 font.setPointSize(11)
                 font.setBold(True)
@@ -6675,16 +6702,17 @@ class Dssr2DEditor(QtWidgets.QWidget):
                 label.setPos(-48.0, -52.0)
                 label.setZValue(8.0)
                 DssrUI.no_mouse(label)
+
                 br = label.boundingRect()
-                pos = self.nodes[first].pos()
                 chain_rects.append(
                     QtCore.QRectF(
-                        pos.x() - 48.0,
-                        pos.y() - 52.0,
+                        pos_first.x() - 48.0,
+                        pos_first.y() - 52.0,
                         br.width(),
                         br.height(),
                     )
                 )
+
         return chain_rects
 
     def fit_scene(self):
