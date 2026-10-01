@@ -6981,7 +6981,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
         if not path.lower().endswith(".json"):
             path += "-layout.json"
         payload = {
-            "format": "DSSR-PyMOL-RNA2D",
+            "format": "dssr-2d-layout",
             "version": 1,
             "title": self.model.title,
             "sequence": self.model.sequence,
