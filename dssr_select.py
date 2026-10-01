@@ -1186,7 +1186,7 @@ class DssrCmd:
 
         EXAMPLE
 
-            fetch 1ehz, async=0
+            fetch 1ehz
 
             # Select and highlight the first base pair
             dssr_select 1ehz, pairs, 1
@@ -1412,7 +1412,7 @@ class DssrCmd:
 
         EXAMPLE
 
-            fetch 1ehz, async=0
+            fetch 1ehz
             as cartoon
             dssr_block
             set cartoon_ladder_radius, 0.1
@@ -1420,12 +1420,12 @@ class DssrCmd:
             set cartoon_nucleic_acid_mode, 1
 
             # multi-state
-            fetch 2n2d, async=0
+            fetch 2n2d
             dssr_block 2n2d, 0
             set all_states
 
             # custom coloring
-            fetch 1msy, async=0
+            fetch 1msy
             dssr_block block_color=N red | minor 0.9 | major yellow
         """
         try:
@@ -1627,7 +1627,7 @@ class DssrCmd:
 
         EXAMPLE
 
-            fetch 1ehz, async=0
+            fetch 1ehz
 
             # Open 2D studio with standard NAView layout
             dssr_2d 1ehz
@@ -2881,7 +2881,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
 
         EXAMPLE
 
-            fetch 1ehz, async=0
+            fetch 1ehz
             dssr_gui
         """
         global _DSSR_GUI_DIALOG

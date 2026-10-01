@@ -53,7 +53,7 @@
 Run the following commands in the PyMOL command line:
 
 ```text
-fetch 1ehz, async=0
+fetch 1ehz
 as cartoon
 dssr_gui
 ```
