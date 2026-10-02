@@ -562,20 +562,36 @@ class DssrUtils:
         return name
 
     @staticmethod
-    def _token_matches(token, text):
-        """Match token against text.
+    def _is_canonical_entry(text):
+        """Check if an item preview text represents a canonical WC or Wobble pair."""
+        return bool(
+            re.search(r"\bwc\b", text, re.IGNORECASE)
+            or re.search(r"\bwobble\b", text, re.IGNORECASE)
+        )
 
-        - If enclosed in quotes ('wc' or "wc"), requires exact whole-word matching (\b).
-        - Otherwise, performs flexible partial / substring matching.
+    @staticmethod
+    def _token_matches(token, text):
+        """Match a single token against entry text supporting:
+        - Domain tags: 'canonical'/'can' and 'noncanonical'/'noncan'/'nc'
+        - Quoted exact match: "wc" or 'wc'
+        - Standard substring match
         """
         token = str(token).strip()
+        lower = token.lower()
+
+        if lower in ("canonical", "can"):
+            return DssrUtils._is_canonical_entry(text)
+        if lower in ("noncanonical", "noncan", "nc"):
+            return not DssrUtils._is_canonical_entry(text)
+
         if (token.startswith('"') and token.endswith('"')) or (
             token.startswith("'") and token.endswith("'")
         ):
             inner = token[1:-1].strip()
             pattern = r"\b%s\b" % re.escape(inner)
             return bool(re.search(pattern, str(text), re.IGNORECASE))
-        return token.lower() in str(text).lower()
+
+        return lower in str(text).lower()
 
     @staticmethod
     def matches_boolean_query(text, query):
@@ -583,24 +599,23 @@ class DssrUtils:
         - AND: space or 'and' / '&&'
         - OR: 'or' / '|'
         - NOT: '-' / '!' / 'not'
-        - EXACT: quoted terms like "wc" or 'wc'
+        - EXACT: quoted terms like "wc"
+        - DOMAIN: can / canonical, nc / noncan / noncanonical
         """
         text = str(text)
         query = str(query).strip()
         if not query:
             return True
 
-        # Split across OR clauses ('|' or word 'or')
+        # Split across OR clauses
         or_clauses = [
             c.strip()
             for c in re.split(r"\s+\bor\b\s+|\|", query, flags=re.IGNORECASE)
             if c.strip()
         ]
 
-        # Match regex to split tokens while keeping quoted phrases intact
-        token_pattern = re.compile(
-            r"""[^\s"']+|"[^"]*"|'[^']*'|-[^\s"']+|-\"[^\"]*\"|-\'[^\']*\'|![^\s"']+|!\"[^\"]*\"|!\'[^\']*\' """
-        )
+        # Extract tokens, keeping quotes together
+        token_pattern = re.compile(r'[-!]?(?:"[^"]*"|\'[^\']*\'|[^\s|]+)')
 
         for clause in or_clauses:
             tokens = [t.strip() for t in token_pattern.findall(clause) if t.strip()]
@@ -1950,7 +1965,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addSpacing(10)
 
         self.filter_edit = QtWidgets.QLineEdit()
-        self.filter_edit.setPlaceholderText("Filter (e.g. wc | wobble)...")
+        self.filter_edit.setPlaceholderText('Filter (e.g. can, nc, "wc", wobble)...')
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         left.addWidget(self.filter_edit)
