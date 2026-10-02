@@ -1605,12 +1605,14 @@ class DssrCmd:
         DESCRIPTION
 
             Open the interactive RNA 2D layout studio for secondary structure
-            visualization and bi-directional 3D selection linking.
+            visualization, bi-directional 3D selection linking, and layout export.
 
         USAGE
 
-            dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical ]]]]]
-            dssr_2d [ selection [, layout [, number_every [, show_noncanonical ]]]]
+            dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical
+                [, title [, export ]]]]]]]
+            dssr_2d [ selection [, layout [, number_every [, show_noncanonical
+                [, title [, export ]]]]]]
 
         ARGUMENTS
 
@@ -1626,31 +1628,42 @@ class DssrCmd:
 
             show_noncanonical = 0|1: display non-canonical base pairs {default: 0}
 
+            title = str: optional diagram title stored in layout JSON metadata,
+                    SVG headers, and FASTA/DBN sequence exports {default: DSSR-2D}
+
+            export = str: target output path to export diagram image directly (.png or .svg)
+                     without interactive file dialogs {default: ''}
+
+            exe = str: path to "x3dna-dssr" executable {default: x3dna-dssr}
+
+            quiet = 0|1: suppress console status output {default: 1}
+
         EXAMPLE
 
             fetch 1ehz
 
             # Open 2D studio with standard NAView layout
+            dssr_2d
             dssr_2d 1ehz
 
             # Positional shorthand (selection, layout)
             dssr_2d 1ehz, circular
             dssr_2d 1ehz, radiate
 
-            # Explicit state syntax
-            dssr_2d 1ehz, 1, circular
+            # Custom labeling interval and custom title
+            dssr_2d 1ehz, number_every=5, title="Yeast tRNA-Phe"
 
-            # Display with circular layout and non-canonical base pairs
-            dssr_2d 1ehz, layout=circular, show_noncanonical=1
-
-            # Custom labeling interval
-            dssr_2d 1ehz, number_every=5
+            # Direct vector or raster export from command line
+            dssr_2d 1ehz, export=1ehz_2d.svg
+            dssr_2d 1ehz, layout=circular, export=1ehz_circle.png
         """
         global _DSSR_GUI_DIALOG
-        selection = DssrUtils.unquote(selection)
+        selection = DssrUtils.unquote(selection).strip()
         exe = DssrUtils.clean_exe_path(exe)
         title = DssrUtils.unquote(title).strip()
+        export = DssrUtils.unquote(export).strip()
 
+        # Handle natural positional shorthand: dssr_2d <selection>, <layout>
         try:
             state = int(state)
         except (ValueError, TypeError):
@@ -1665,11 +1678,22 @@ class DssrCmd:
         if _DSSR_GUI_DIALOG is None:
             _DSSR_GUI_DIALOG = DssrGuiDialog()
         host = _DSSR_GUI_DIALOG
+
+        # If selection is "all" or empty, resolve to the primary loaded molecule
+        if not selection or selection == "all":
+            molecules = host._molecule_objects()
+            if not molecules:
+                msg = "No structure loaded. Please load a PDB/CIF file before running DSSR-PyMOL."
+                print(msg)
+                host.status_label.setText(msg)
+                return None
+            selection = molecules[0]
+
         if host._analysis_context != (selection, state, exe):
             host._clear_analysis("Analyzing the requested structure...")
+
         try:
             data = host._get_dssr_data(selection, state, exe, 0)
-            export = DssrUtils.unquote(export).strip()
             editor = host.show_analysis(
                 data,
                 selection,
@@ -1680,29 +1704,31 @@ class DssrCmd:
                 show_noncanonical=int(show_noncanonical),
                 title=title,
             )
-
-            if export:
-                lower = export.lower()
-                if lower.endswith(".svg") and QtSvg is not None:
-                    editor._export_svg(export)
-                else:
-                    out_path = export if lower.endswith(".png") else (export + ".png")
-                    editor._export_png(out_path)
-                if not int(quiet):
-                    print("dssr_2d: exported %s" % export)
-
-            return editor
-
         except Exception as error:
             host._clear_analysis("Analysis error: %s" % DssrUtils.error_msg(error))
             raise
+
+        # Direct CLI export without GUI dependency
+        if export and editor is not None:
+            lower = export.lower()
+            if lower.endswith(".svg") and QtSvg is not None:
+                editor._export_svg(export)
+            else:
+                out_path = export if lower.endswith(".png") else (export + ".png")
+                editor._export_png(out_path)
+            if not int(quiet):
+                print("dssr_2d: exported %s" % export)
+            return editor
+
+        # Display window and focus the 2D canvas
         host.show()
         host.raise_()
         host.activateWindow()
         host.show_2d_btn.setChecked(True)
-        editor.view.setFocus(QtCore.Qt.OtherFocusReason)
-        if not int(quiet):
-            print("dssr_2d: shared workspace — %s" % editor.model.summary())
+        if editor is not None:
+            editor.view.setFocus(QtCore.Qt.OtherFocusReason)
+            if not int(quiet):
+                print("dssr_2d: shared workspace — %s" % editor.model.summary())
         return editor
 
 
