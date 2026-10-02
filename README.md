@@ -70,7 +70,7 @@ dssr_gui
 All core functions can be scripted or invoked directly from the PyMOL console:
 
 #### 1. Interactive 2D Studio (`dssr_2d`)
-Syntax: `dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, exe [, quiet ]]]]]]]`
+Syntax: `dssr_2d [ selection [, state [, layout [, number_every [, show_noncanonical [, title [, export ]]]]]]]`
 
 Examples:
 * `dssr_2d 1ehz`
