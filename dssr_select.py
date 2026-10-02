@@ -7656,18 +7656,7 @@ class Dssr2DEditor(QtWidgets.QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Escape:
-            if self.list_widget.selectedItems():
-                self.list_widget.clearSelection()
-            elif self.editor is not None:
-                self.editor.clear_base_selection()
-            else:
-                try:
-                    cmd.delete("sele")
-                    cmd.delete("indicate")
-                    cmd.refresh()
-                except Exception:
-                    pass
-                self.details_box.clear()
+            self.clear_base_selection()
             event.accept()
             return
         super().keyPressEvent(event)
