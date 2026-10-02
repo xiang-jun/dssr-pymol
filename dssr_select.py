@@ -1310,84 +1310,6 @@ class DssrCmd:
             )
 
     @staticmethod
-    def _dssr_default_selection():
-        objs = cmd.get_object_list("enabled")
-        if len(objs) == 1:
-            return objs[0]
-        return "all"
-
-    @staticmethod
-    def _dssr(
-        sel=None,
-        selection=None,
-        f=None,
-        feature="pairs",
-        i=None,
-        index=1,
-        n=None,
-        name=None,
-        q=None,
-        quiet=0,
-        si=None,
-        show_info=0,
-        st=None,
-        state=-1,
-        exe="x3dna-dssr",
-        color="auto",
-        display=0,
-        stick_radius=0.25,
-        do_zoom=1,
-        pc=None,
-        precolor=1,
-    ):
-        selection = selection or sel or DssrCmd._dssr_default_selection()
-
-        feature_in = f if f is not None else feature
-        feature_in = DssrUtils.unquote(feature_in).strip()
-
-        if feature_in.lower() in ("features", "help"):
-            DssrCmd.dssr_select(
-                selection=selection,
-                state=state,
-                feature="features",
-                index=0,
-                name="dssr_select",
-                exe=exe,
-                show_info=0,
-                quiet=int(q if q is not None else quiet),
-                color="auto",
-                precolor=int(precolor),
-            )
-            return
-
-        idx = int(i if i is not None else index)
-        qt = int(q if q is not None else quiet)
-        si2 = int(si if si is not None else show_info)
-        st2 = int(st if st is not None else state)
-
-        if pc is not None:
-            precolor = int(pc)
-        precolor = int(precolor)
-
-        nm = name if name is not None else n
-        if not nm:
-            nm = "%s%d" % (feature_in.lower(), idx)
-
-        DssrCmd.dssr_select(
-            selection=selection,
-            state=st2,
-            feature=feature_in,
-            index=idx,
-            name=nm,
-            exe=exe,
-            show_info=si2,
-            quiet=qt,
-            color=color,
-            precolor=precolor,
-        )
-        DssrCmd._display_feature_selection(nm, display, stick_radius, do_zoom)
-
-    @staticmethod
     def _unused_name(prefix):
         try:
             return cmd.get_unused_name(prefix)
@@ -1614,17 +1536,6 @@ class DssrCmd:
                 'dssr_select: created selection "%s" for %s (index %d)'
                 % (name, feature, index)
             )
-
-    @staticmethod
-    def _display_feature_selection(name, display=0, stick_radius=0.25, do_zoom=1):
-        if int(display):
-            cmd.show("sticks", name)
-            try:
-                cmd.set("stick_radius", float(stick_radius), name)
-            except Exception:
-                pass
-            if int(do_zoom):
-                cmd.zoom(name)
 
     @staticmethod
     def dssr_2d(
