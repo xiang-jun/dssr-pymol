@@ -562,45 +562,67 @@ class DssrUtils:
         return name
 
     @staticmethod
+    def _token_matches(token, text):
+        """Match token against text.
+
+        - If enclosed in quotes ('wc' or "wc"), requires exact whole-word matching (\b).
+        - Otherwise, performs flexible partial / substring matching.
+        """
+        token = str(token).strip()
+        if (token.startswith('"') and token.endswith('"')) or (
+            token.startswith("'") and token.endswith("'")
+        ):
+            inner = token[1:-1].strip()
+            pattern = r"\b%s\b" % re.escape(inner)
+            return bool(re.search(pattern, str(text), re.IGNORECASE))
+        return token.lower() in str(text).lower()
+
+    @staticmethod
     def matches_boolean_query(text, query):
         """Evaluate whether `text` satisfies a boolean query supporting:
         - AND: space or 'and' / '&&'
         - OR: 'or' / '|'
         - NOT: '-' / '!' / 'not'
+        - EXACT: quoted terms like "wc" or 'wc'
         """
-        text = str(text).lower()
-        query = str(query).strip().lower()
+        text = str(text)
+        query = str(query).strip()
         if not query:
             return True
 
-        # 1. Split across OR clauses (either '|' or whole-word 'or')
+        # Split across OR clauses ('|' or word 'or')
         or_clauses = [
-            c.strip() for c in re.split(r"\s+\bor\b\s+|\|", query) if c.strip()
+            c.strip()
+            for c in re.split(r"\s+\bor\b\s+|\|", query, flags=re.IGNORECASE)
+            if c.strip()
         ]
 
-        # 2. Entry matches if it satisfies ANY OR clause
+        # Match regex to split tokens while keeping quoted phrases intact
+        token_pattern = re.compile(
+            r"""[^\s"']+|"[^"]*"|'[^']*'|-[^\s"']+|-\"[^\"]*\"|-\'[^\']*\'|![^\s"']+|!\"[^\"]*\"|!\'[^\']*\' """
+        )
+
         for clause in or_clauses:
-            tokens = [t.strip() for t in clause.split() if t.strip()]
+            tokens = [t.strip() for t in token_pattern.findall(clause) if t.strip()]
             clause_match = True
             expect_not = False
 
             for token in tokens:
-                if token in ("and", "&&"):
+                lower = token.lower()
+                if lower in ("and", "&&"):
                     continue
-                if token in ("not", "!"):
+                if lower in ("not", "!"):
                     expect_not = True
                     continue
 
-                # Handle negative terms like "-wc", "!wobble", or "NOT wc"
                 if expect_not or token.startswith(("-", "!")):
                     neg_term = token.lstrip("-!") if not expect_not else token
                     expect_not = False
-                    if neg_term and neg_term in text:
+                    if neg_term and DssrUtils._token_matches(neg_term, text):
                         clause_match = False
                         break
                 else:
-                    # Positive term must appear in the entry text
-                    if token not in text:
+                    if not DssrUtils._token_matches(token, text):
                         clause_match = False
                         break
 
@@ -1928,7 +1950,7 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addSpacing(10)
 
         self.filter_edit = QtWidgets.QLineEdit()
-        self.filter_edit.setPlaceholderText("Filter (e.g. wc | wobble, -wc -wobble)...")
+        self.filter_edit.setPlaceholderText("Filter (e.g. wc | wobble)...")
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         left.addWidget(self.filter_edit)
