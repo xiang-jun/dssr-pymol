@@ -6621,69 +6621,85 @@ class Dssr2DEditor(QtWidgets.QWidget):
         center_y = sum(all_y) / float(max(1, len(all_y)))
 
         for segment_number, (first, last) in enumerate(segments, 1):
-            # 5′ and 3′ terminus labels
-            for index, text_value in ((first, "5′"), (last, "3′")):
-                node = self.nodes[index]
-                pos = node.pos()
+            pos_first = self.nodes[first].pos()
 
-                # Calculate unit outward vector pointing away from structure center
-                dx = pos.x() - center_x
-                dy = pos.y() - center_y
-                dist = math.hypot(dx, dy)
-                if dist > 1e-4:
-                    ux, uy = dx / dist, dy / dist
-                else:
-                    ux, uy = 0.0, -1.0
+            # Calculate unit outward vector for the 5' terminus node
+            dx1 = pos_first.x() - center_x
+            dy1 = pos_first.y() - center_y
+            dist1 = math.hypot(dx1, dy1)
+            ux1, uy1 = (dx1 / dist1, dy1 / dist1) if dist1 > 1e-4 else (0.0, -1.0)
 
-                # Project label radially outward past node perimeter
-                offset_dist = 28.0
-                ox = ux * offset_dist - 8.0
-                oy = uy * offset_dist - 8.0
-
-                label = QtWidgets.QGraphicsSimpleTextItem(text_value, node)
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(13)
-                font.setBold(True)
-                label.setFont(font)
-                label.setBrush(QtGui.QBrush(term_color))
-                label.setPos(ox, oy)
-                label.setZValue(8.0)
-                DssrUI.no_mouse(label)
-
-                br = label.boundingRect()
-                chain_rects.append(
-                    QtCore.QRectF(
-                        pos.x() + ox,
-                        pos.y() + oy,
-                        br.width(),
-                        br.height(),
-                    )
+            # 5′ terminus label
+            node_first = self.nodes[first]
+            ox1 = ux1 * 28.0 - 8.0
+            oy1 = uy1 * 28.0 - 8.0
+            label_5 = QtWidgets.QGraphicsSimpleTextItem("5′", node_first)
+            font_term = QtGui.QFont("Sans Serif")
+            font_term.setPointSize(13)
+            font_term.setBold(True)
+            label_5.setFont(font_term)
+            label_5.setBrush(QtGui.QBrush(term_color))
+            label_5.setPos(ox1, oy1)
+            label_5.setZValue(8.0)
+            DssrUI.no_mouse(label_5)
+            br_5 = label_5.boundingRect()
+            chain_rects.append(
+                QtCore.QRectF(
+                    pos_first.x() + ox1,
+                    pos_first.y() + oy1,
+                    br_5.width(),
+                    br_5.height(),
                 )
+            )
 
-            # Chain identifier tag for multi-chain complexes
+            # 3′ terminus label
+            pos_last = self.nodes[last].pos()
+            dx2 = pos_last.x() - center_x
+            dy2 = pos_last.y() - center_y
+            dist2 = math.hypot(dx2, dy2)
+            ux2, uy2 = (dx2 / dist2, dy2 / dist2) if dist2 > 1e-4 else (0.0, -1.0)
+
+            node_last = self.nodes[last]
+            ox2 = ux2 * 28.0 - 8.0
+            oy2 = uy2 * 28.0 - 8.0
+            label_3 = QtWidgets.QGraphicsSimpleTextItem("3′", node_last)
+            label_3.setFont(font_term)
+            label_3.setBrush(QtGui.QBrush(term_color))
+            label_3.setPos(ox2, oy2)
+            label_3.setZValue(8.0)
+            DssrUI.no_mouse(label_3)
+            br_3 = label_3.boundingRect()
+            chain_rects.append(
+                QtCore.QRectF(
+                    pos_last.x() + ox2, pos_last.y() + oy2, br_3.width(), br_3.height()
+                )
+            )
+
+            # Radial outward projection for multi-chain complex tags
             if len(segments) > 1:
-                first_node = self.nodes[first]
-                pos_first = first_node.pos()
                 chain = str(self.model.nts[first].get("chain", "")).strip()
                 text_value = "chain %s" % (chain or segment_number)
+                label_ch = QtWidgets.QGraphicsSimpleTextItem(text_value, node_first)
+                font_ch = QtGui.QFont("Sans Serif")
+                font_ch.setPointSize(11)
+                font_ch.setBold(True)
+                label_ch.setFont(font_ch)
+                label_ch.setBrush(QtGui.QBrush(term_color))
 
-                label = QtWidgets.QGraphicsSimpleTextItem(text_value, first_node)
-                font = QtGui.QFont("Sans Serif")
-                font.setPointSize(11)
-                font.setBold(True)
-                label.setFont(font)
-                label.setBrush(QtGui.QBrush(term_color))
-                label.setPos(-48.0, -52.0)
-                label.setZValue(8.0)
-                DssrUI.no_mouse(label)
+                br_ch = label_ch.boundingRect()
+                # Offset radially outward past the 5' marker
+                ox_ch = ux1 * 50.0 - 0.5 * br_ch.width()
+                oy_ch = uy1 * 50.0 - 0.5 * br_ch.height()
 
-                br = label.boundingRect()
+                label_ch.setPos(ox_ch, oy_ch)
+                label_ch.setZValue(8.0)
+                DssrUI.no_mouse(label_ch)
                 chain_rects.append(
                     QtCore.QRectF(
-                        pos_first.x() - 48.0,
-                        pos_first.y() - 52.0,
-                        br.width(),
-                        br.height(),
+                        pos_first.x() + ox_ch,
+                        pos_first.y() + oy_ch,
+                        br_ch.width(),
+                        br_ch.height(),
                     )
                 )
 
