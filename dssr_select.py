@@ -6734,8 +6734,11 @@ class Dssr2DEditor(QtWidgets.QWidget):
         try:
             QtWidgets.QApplication.clipboard().setText(text)
             self.set_status("DBN copied to clipboard")
+            print("dssr_2d: copied sequence and secondary structure (DBN) to clipboard")
         except Exception as e:
-            self.set_status("Clipboard error: %s" % DssrUtils.error_msg(e))
+            err = "Clipboard error: %s" % DssrUtils.error_msg(e)
+            self.set_status(err)
+            print("dssr_2d: %s" % err)
 
     def export_image(self):
         filters = "PNG image (*.png)"
