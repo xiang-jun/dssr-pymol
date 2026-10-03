@@ -1876,7 +1876,9 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         left.addSpacing(10)
 
         self.filter_edit = QtWidgets.QLineEdit()
-        self.filter_edit.setPlaceholderText('Filter (e.g. can, nc, "wc", wobble)...')
+        self.filter_edit.setPlaceholderText(
+            'Filter (e.g. can, nc, "wc", wobble, Hoogsteen)...'
+        )
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         left.addWidget(self.filter_edit)
@@ -2820,7 +2822,10 @@ class DssrGuiDialog(QtWidgets.QDialog if QtWidgets else object):
         if obj is self.list_widget and event.type() == QtCore.QEvent.KeyPress:
             if event.key() == QtCore.Qt.Key_Escape:
                 self._clear_active_selection()
-                return True  # Consume Esc so list navigation does not close the dialog
+                return True
+            if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                self._on_item_double_clicked(self.list_widget.currentItem())
+                return True
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
